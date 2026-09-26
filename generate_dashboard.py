@@ -4,6 +4,7 @@ import re
 import json
 import pandas as pd
 import numpy as np
+import anthropic
 
 REPORTS_DIR = "./reports"
 
@@ -40,9 +41,66 @@ def load_september_targets(target_file="Sep_Target.xlsx"):
         print(f"Target load error: {e}")
         return {}
 
+def generate_claude_insights(store_summary, total_sales, total_target, overall_ach, network_atv, network_upt):
+    api_key = os.getenv("ANTHROPIC_API_KEY")
+    if not api_key:
+        print("[!] Warning: ANTHROPIC_API_KEY not found in environment.")
+        return {
+            "critical": "Impulse purchase strategy needed for stores with high traffic but below-average basket values.",
+            "attention": "High ATV locations require visual merchandising optimization to drive higher customer walk-in conversion.",
+            "opportunity": "Flagship stores continue to drive network growth; maintain full product availability on key SKUs."
+        }
+
+    top_stores = store_summary.head(3)[['Organization Name', 'sales', 'ach_pct', 'atv', 'upt']].to_dict(orient="records")
+    bottom_stores = store_summary.tail(3)[['Organization Name', 'sales', 'ach_pct', 'atv', 'upt']].to_dict(orient="records")
+
+    prompt = f"""
+    You are a Retail Operations Executive. Based on the store performance below:
+    - Total Sales: {total_sales:,.2f} SAR
+    - Total Target: {total_target:,.0f} SAR
+    - Network Achievement: {overall_ach:.1f}%
+    - Network ATV: {network_atv:.2f} SAR
+    - Network UPT: {network_upt:.2f}
+    - Top Stores: {top_stores}
+    - Low Performing Stores: {bottom_stores}
+
+    Provide 3 punchy, professional, and actionable business insights (1 sentence each):
+    1. Critical Issues: direct operational problem or underperformer risk.
+    2. Attention Required: basket size, UPT, or traffic conversion warning.
+    3. Opportunities: merchandising or replenishment leverage for top volume drivers.
+
+    Respond ONLY with valid JSON in this exact structure:
+    {{
+        "critical": "...",
+        "attention": "...",
+        "opportunity": "..."
+    }}
+    """
+
+    try:
+        client = anthropic.Anthropic(api_key=api_key)
+        response = client.messages.create(
+            model="claude-haiku-4-5-20251001",
+            max_tokens=300,
+            messages=[{"role": "user", "content": prompt}]
+        )
+        content = response.content[0].text.strip()
+        if "```" in content:
+            content = re.search(r'\{.*\}', content, re.DOTALL).group(0)
+        insights = json.loads(content)
+        print("[✓] Claude AI insights generated successfully.")
+        return insights
+    except Exception as e:
+        print(f"[!] Claude API error: {e}")
+        return {
+            "critical": "Underperforming locations require focused cross-selling incentives to lift transaction value.",
+            "attention": "Monitor traffic to transaction conversion ratios across regional mall locations.",
+            "opportunity": "Scale high-velocity display configurations from top-performing branches."
+        }
+
 def process_and_build():
     file_path = get_latest_sales_file()
-    print(f"[*] Reading file: {file_path}")
+    print(f"[*] Reading sales file: {file_path}")
     targets_map = load_september_targets("Sep_Target.xlsx")
 
     df = pd.read_excel(file_path, skiprows=1)
@@ -57,7 +115,6 @@ def process_and_build():
         if col in df_clean.columns:
             df_clean[col] = pd.to_numeric(df_clean[col], errors='coerce').fillna(0)
 
-    # ملخص الفروع
     store_summary = df_clean.groupby(['Organization Code', 'Organization Name']).agg(
         sales=('Actual Sales Amount', 'sum'),
         units=('Sales Quantity', 'sum'),
@@ -76,7 +133,7 @@ def process_and_build():
     network_asp = (total_sales / total_units) if total_units > 0 else 0
 
     store_summary['share'] = ((store_summary['sales'] / total_sales) * 100).round(2)
-    store_summary = store_summary.sort_values(by='sales', ascending=False)
+    store_summary = store_summary.sort_values(by='sales', ascending=False).reset_index(drop=True)
 
     def match_target(row):
         code_str = str(row['Organization Code']).strip()
@@ -97,13 +154,15 @@ def process_and_build():
     sales_with_target = valid_targets['sales'].sum()
     overall_ach = (sales_with_target / total_target * 100) if total_target > 0 else 0
 
-    # بيانات الرسم البياني (أفضل 7 فروع)
+    # استدعاء Claude
+    insights = generate_claude_insights(store_summary, total_sales, total_target, overall_ach, network_atv, network_upt)
+
+    # بيانات الرسم البياني
     chart_stores = store_summary.head(7)
     chart_labels = chart_stores['Organization Name'].tolist()
     chart_sales = chart_stores['sales'].round(2).tolist()
     chart_targets = [round(r['target'], 2) if pd.notna(r['target']) else 0 for _, r in chart_stores.iterrows()]
 
-    # إنشاء صفوف الجدول مع Status وشريط التقدم
     table_rows = ""
     for idx, row in store_summary.iterrows():
         if pd.notna(row['target']):
@@ -155,7 +214,7 @@ def process_and_build():
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>MMS Executive KPI Dashboard</title>
-    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="[https://cdn.jsdelivr.net/npm/chart.js](https://cdn.jsdelivr.net/npm/chart.js)"></script>
     <style>
         :root {{
             --bg: #090d16;
@@ -172,27 +231,23 @@ def process_and_build():
         .header h1 {{ margin: 0; font-size: 24px; font-weight: 700; }}
         .header p {{ margin: 4px 0 0 0; color: var(--text-muted); font-size: 14px; }}
         
-        /* AI Insights Section */
         .section-title {{ font-size: 14px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px; color: var(--text-muted); margin-bottom: 12px; display: flex; align-items: center; gap: 8px; }}
         .insights-grid {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 16px; margin-bottom: 24px; }}
         .insight-card {{ background: var(--card); border: 1px solid var(--border); border-radius: 10px; padding: 16px; border-left: 4px solid var(--border); }}
         .insight-card.danger {{ border-left-color: #ef4444; }}
         .insight-card.warning {{ border-left-color: #f59e0b; }}
         .insight-card.success {{ border-left-color: #10b981; }}
-        .insight-title {{ font-size: 13px; font-weight: 700; margin-bottom: 6px; display: flex; align-items: center; gap: 6px; }}
+        .insight-title {{ font-size: 13px; font-weight: 700; margin-bottom: 6px; }}
         .insight-body {{ font-size: 13px; color: var(--text-muted); line-height: 1.5; }}
 
-        /* KPI Cards */
         .kpi-grid {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 16px; margin-bottom: 24px; }}
         .kpi-card {{ background: var(--card); border: 1px solid var(--border); border-radius: 10px; padding: 18px; }}
         .kpi-title {{ font-size: 12px; color: var(--text-muted); font-weight: 600; text-transform: uppercase; margin-bottom: 6px; }}
         .kpi-value {{ font-size: 24px; font-weight: 700; color: #fff; }}
         .kpi-unit {{ font-size: 13px; color: var(--text-muted); font-weight: 400; }}
 
-        /* Charts */
         .chart-container {{ background: var(--card); border: 1px solid var(--border); border-radius: 10px; padding: 20px; margin-bottom: 24px; }}
 
-        /* Store Table */
         .table-wrap {{ background: var(--card); border: 1px solid var(--border); border-radius: 10px; overflow: hidden; }}
         .table-header {{ padding: 16px 20px; display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid var(--border); flex-wrap: wrap; gap: 12px; }}
         .table-header h3 {{ margin: 0; font-size: 15px; font-weight: 700; }}
@@ -202,7 +257,6 @@ def process_and_build():
         td {{ padding: 12px 14px; border-bottom: 1px solid var(--border); }}
         tr:hover td {{ background: var(--card-hover); }}
 
-        /* Badges */
         .badge {{ padding: 4px 8px; border-radius: 4px; font-size: 11px; font-weight: 600; }}
         .badge-success {{ background: rgba(16, 185, 129, 0.15); color: #10b981; }}
         .badge-warning {{ background: rgba(245, 158, 11, 0.15); color: #f59e0b; }}
@@ -211,7 +265,6 @@ def process_and_build():
 </head>
 <body>
 
-<!-- Password Overlay -->
 <div id="auth-overlay" style="position:fixed;top:0;left:0;width:100%;height:100%;background:#090d16;z-index:999999;display:flex;align-items:center;justify-content:center;font-family:sans-serif;">
   <div style="background:#131b2e;padding:32px;border-radius:12px;box-shadow:0 15px 30px rgba(0,0,0,0.6);text-align:center;width:90%;max-width:380px;border:1px solid #1e293b;">
     <h3 style="color:#fff;margin:0 0 8px 0;font-size:20px;">🔒 MMS Executive Access</h3>
@@ -247,24 +300,22 @@ def process_and_build():
     </div>
 </div>
 
-<!-- Executive Insights -->
-<div class="section-title"><span>🤖</span> AI Executive Insights</div>
+<div class="section-title"><span>🤖</span> AI Executive Insights (Powered by Claude)</div>
 <div class="insights-grid">
     <div class="insight-card danger">
         <div class="insight-title" style="color:#ef4444;">● Critical Issues</div>
-        <div class="insight-body">Stores showing high footfall but low ATV. Activate cashier impulse sell initiatives and multi-unit bundles immediately.</div>
+        <div class="insight-body">{insights.get('critical', '')}</div>
     </div>
     <div class="insight-card warning">
         <div class="insight-title" style="color:#f59e0b;">● Attention Required</div>
-        <div class="insight-body">U Walk Riyadh achieves elite ATV (78.5 SAR) but exhibits lower footfall. Optimize window visual merchandising to drive conversion.</div>
+        <div class="insight-body">{insights.get('attention', '')}</div>
     </div>
     <div class="insight-card success">
         <div class="insight-title" style="color:#10b981;">● Opportunities</div>
-        <div class="insight-body">Top 2 flagship stores lead overall chain revenue. Maintain continuous replenishment on high-velocity category gondolas.</div>
+        <div class="insight-body">{insights.get('opportunity', '')}</div>
     </div>
 </div>
 
-<!-- Executive Metrics -->
 <div class="kpi-grid">
     <div class="kpi-card">
         <div class="kpi-title">Total Sales</div>
@@ -292,13 +343,11 @@ def process_and_build():
     </div>
 </div>
 
-<!-- Performance Chart -->
 <div class="chart-container">
     <div class="section-title"><span>📊</span> Top Stores: Actual Sales vs Target</div>
     <canvas id="salesTargetChart" height="80"></canvas>
 </div>
 
-<!-- Store Table Matrix -->
 <div class="table-wrap">
     <div class="table-header">
         <div>
@@ -332,7 +381,6 @@ def process_and_build():
 </div>
 
 <script>
-  // Chart.js Setup
   const ctx = document.getElementById('salesTargetChart').getContext('2d');
   new Chart(ctx, {{
       type: 'bar',
@@ -355,9 +403,7 @@ def process_and_build():
       }},
       options: {{
           responsive: true,
-          plugins: {{
-              legend: {{ labels: {{ color: '#94a3b8' }} }}
-          }},
+          plugins: {{ legend: {{ labels: {{ color: '#94a3b8' }} }} }},
           scales: {{
               x: {{ ticks: {{ color: '#94a3b8' }}, grid: {{ display: false }} }},
               y: {{ ticks: {{ color: '#94a3b8' }}, grid: {{ color: '#1e293b' }} }}
@@ -365,7 +411,6 @@ def process_and_build():
       }}
   }});
 
-  // Search Filter
   function filterStores() {{
       const query = document.getElementById("storeSearch").value.toLowerCase();
       const rows = document.querySelectorAll("#storesTable tbody tr");
