@@ -1,0 +1,211 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>MMS Operations Command Center</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800&display=swap" rel="stylesheet">
+    <style> body { font-family: 'Inter', sans-serif; } </style>
+</head>
+<body class="bg-slate-950 text-slate-100 min-h-screen p-4 md:p-8">
+
+    <!-- Header -->
+    <div class="flex flex-col md:flex-row justify-between items-start md:items-center mb-6 pb-4 border-b border-slate-800 gap-4">
+        <div>
+            <div class="flex items-center gap-3">
+                <span class="p-2 bg-emerald-500/20 text-emerald-400 rounded-lg font-bold text-xl">⚡</span>
+                <h1 class="text-2xl md:text-3xl font-extrabold text-white tracking-tight">MMS — AI OPERATIONS DASHBOARD</h1>
+            </div>
+            <p class="text-slate-400 mt-1 text-sm">Last Update: <span class="text-emerald-400 font-semibold">2026-09-25</span> | Active Network Audit</p>
+        </div>
+        <div class="flex items-center gap-2">
+            <span class="bg-slate-900 border border-slate-700 px-3 py-1.5 rounded-lg text-xs font-semibold text-slate-300">16 Stores Live</span>
+            <span class="bg-emerald-500/10 text-emerald-400 border border-emerald-500/30 px-3 py-1.5 rounded-lg text-xs font-bold uppercase">Status: In Sync</span>
+        </div>
+    </div>
+
+    <!-- MTD Target & Gap Ribbon -->
+    <div class="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
+        <div class="bg-slate-900 border border-slate-800 rounded-xl p-4">
+            <span class="text-xs font-semibold text-slate-400 uppercase tracking-wider">MTD Net Sales</span>
+            <div class="text-xl md:text-2xl font-black text-white mt-1">SAR 2,615,158</div>
+            <span class="text-[11px] text-slate-500">VAT Included</span>
+        </div>
+        <div class="bg-slate-900 border border-slate-800 rounded-xl p-4">
+            <span class="text-xs font-semibold text-slate-400 uppercase tracking-wider">Target</span>
+            <div class="text-xl md:text-2xl font-black text-sky-400 mt-1">SAR 3,100,000</div>
+            <span class="text-[11px] text-slate-500">Target Budget</span>
+        </div>
+        <div class="bg-slate-900 border border-slate-800 rounded-xl p-4">
+            <span class="text-xs font-semibold text-slate-400 uppercase tracking-wider">Achievement %</span>
+            <div class="text-xl md:text-2xl font-black text-emerald-400 mt-1">84.4%</div>
+            <span class="text-[11px] text-slate-500">Projected EOM: SAR 3,138,189</span>
+        </div>
+        <div class="bg-slate-900 border border-slate-800 rounded-xl p-4">
+            <span class="text-xs font-semibold text-slate-400 uppercase tracking-wider">Gap to Target</span>
+            <div class="text-xl md:text-2xl font-black text-rose-400 mt-1">SAR -484,842</div>
+            <span class="text-[11px] text-slate-500">Net Gap</span>
+        </div>
+    </div>
+
+    <!-- AI Directives -->
+    <div class="bg-slate-900 border border-slate-800 rounded-xl p-5 mb-6">
+        <h3 class="text-sm font-bold text-white uppercase tracking-wider mb-3 flex items-center gap-2">
+            <span>🤖</span> AI Executive Insights
+        </h3>
+        <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+            <div class="bg-slate-950/70 border border-rose-500/20 p-3.5 rounded-xl">
+                <span class="text-rose-400 font-bold text-xs flex items-center gap-1.5 mb-1">🔴 Critical Issues</span>
+                <p class="text-xs text-slate-300 leading-relaxed">Tabuk (43.1 SAR) & Yasmin (45.4 SAR) show high footfall but low ATV. Activate cashier impulse push immediately.</p>
+            </div>
+            <div class="bg-slate-950/70 border border-amber-500/20 p-3.5 rounded-xl">
+                <span class="text-amber-400 font-bold text-xs flex items-center gap-1.5 mb-1">🟡 Attention Required</span>
+                <p class="text-xs text-slate-300 leading-relaxed">U Walk Riyadh achieves elite ATV (78.7 SAR) but has lower footfall. Optimize window merchandising.</p>
+            </div>
+            <div class="bg-slate-950/70 border border-emerald-500/20 p-3.5 rounded-xl">
+                <span class="text-emerald-400 font-bold text-xs flex items-center gap-1.5 mb-1">🟢 Opportunities</span>
+                <p class="text-xs text-slate-300 leading-relaxed">Solitaire and Dhahran lead chain revenue (32% share). Maintain replenishment on top category gondolas.</p>
+            </div>
+        </div>
+    </div>
+
+    <!-- Core KPIs (Transactions / ATV / UPT / ASP) -->
+    <div class="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
+        <div class="bg-slate-900 border border-slate-800 rounded-xl p-4">
+            <span class="text-xs text-slate-400">Total Transactions</span>
+            <div class="text-xl font-bold text-white mt-1">45,298</div>
+        </div>
+        <div class="bg-slate-900 border border-slate-800 rounded-xl p-4">
+            <span class="text-xs text-slate-400">Network ATV</span>
+            <div class="text-xl font-bold text-amber-400 mt-1">SAR 57.73</div>
+        </div>
+        <div class="bg-slate-900 border border-slate-800 rounded-xl p-4">
+            <span class="text-xs text-slate-400">Network UPT</span>
+            <div class="text-xl font-bold text-indigo-400 mt-1">2.96</div>
+        </div>
+        <div class="bg-slate-900 border border-slate-800 rounded-xl p-4">
+            <span class="text-xs text-slate-400">Average Unit Price (ASP)</span>
+            <div class="text-xl font-bold text-purple-400 mt-1">SAR 19.53</div>
+        </div>
+    </div>
+
+    <!-- Store Table -->
+    <div class="bg-slate-900 border border-slate-800 rounded-xl p-5 mb-6">
+        <div class="flex flex-col md:flex-row justify-between items-start md:items-center mb-4 gap-3">
+            <div>
+                <h3 class="text-sm font-bold text-white uppercase tracking-wider">Store Performance Matrix</h3>
+                <p class="text-xs text-slate-400">Ranked by revenue with status badges</p>
+            </div>
+            <input type="text" id="storeSearch" placeholder="Search store name or code..." class="bg-slate-950 border border-slate-700 text-xs text-slate-200 px-3 py-2 rounded-lg focus:outline-none focus:border-sky-500 w-full md:w-64">
+        </div>
+        <div class="overflow-x-auto">
+            <table class="w-full text-left text-xs md:text-sm">
+                <thead>
+                    <tr class="text-slate-400 border-b border-slate-800 bg-slate-950/60 uppercase text-[11px] tracking-wider">
+                        <th class="py-3 px-3">#</th>
+                        <th class="py-3 px-3">Store Code</th>
+                        <th class="py-3 px-3">Store Name</th>
+                        <th class="py-3 px-3">Sales (SAR)</th>
+                        <th class="py-3 px-3">Share %</th>
+                        <th class="py-3 px-3">Transactions</th>
+                        <th class="py-3 px-3">ATV (SAR)</th>
+                        <th class="py-3 px-3">UPT</th>
+                        <th class="py-3 px-3 text-center">Status</th>
+                    </tr>
+                </thead>
+                <tbody class="divide-y divide-slate-800 text-slate-200" id="storeTableBody"></tbody>
+            </table>
+        </div>
+    </div>
+
+    <!-- Charts -->
+    <div class="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
+        <div class="bg-slate-900 border border-slate-800 rounded-xl p-5">
+            <h3 class="text-xs font-bold text-slate-300 uppercase tracking-wider mb-4">Daily Sales Run-Rate Trend</h3>
+            <div class="h-60"><canvas id="trendChart"></canvas></div>
+        </div>
+        <div class="bg-slate-900 border border-slate-800 rounded-xl p-5">
+            <h3 class="text-xs font-bold text-slate-300 uppercase tracking-wider mb-4">Peak Hourly Transactions (Cashier Load)</h3>
+            <div class="h-60"><canvas id="hourlyChart"></canvas></div>
+        </div>
+    </div>
+
+    <script>
+        const payload = {"as_of_date": "2026-09-25", "total_sales": 2615157.5, "target": 3100000.0, "gap": -484842.5, "achievement": 84.4, "forecast_eom": 3138189.0, "txns": 45298, "units": 133872, "atv": 57.73, "upt": 2.96, "asp": 19.53, "stores": [{"Organization Code": "K108", "Organization Name": "MMS SLT", "sales": 445475.5, "units": 19132, "txns": 5132, "atv": 86.8, "upt": 3.73, "asp": 23.28, "share": 17.03}, {"Organization Code": "K301", "Organization Name": "MMS MOD", "sales": 388245.65, "units": 18083, "txns": 7047, "atv": 55.09, "upt": 2.57, "asp": 21.47, "share": 14.85}, {"Organization Code": "K205", "Organization Name": "MMS UWJ", "sales": 209321.25, "units": 10048, "txns": 3857, "atv": 54.27, "upt": 2.61, "asp": 20.83, "share": 8.0}, {"Organization Code": "K211", "Organization Name": "MMS MDN", "sales": 187306.0, "units": 10035, "txns": 3543, "atv": 52.87, "upt": 2.83, "asp": 18.67, "share": 7.16}, {"Organization Code": "K101", "Organization Name": "MMS TVM", "sales": 183985.45, "units": 9744, "txns": 3735, "atv": 49.26, "upt": 2.61, "asp": 18.88, "share": 7.04}, {"Organization Code": "K110", "Organization Name": "MMS UWR", "sales": 173796.0, "units": 8264, "txns": 2213, "atv": 78.53, "upt": 3.73, "asp": 21.03, "share": 6.65}, {"Organization Code": "K201", "Organization Name": "MMS JDP", "sales": 160568.0, "units": 10216, "txns": 3381, "atv": 47.49, "upt": 3.02, "asp": 15.72, "share": 6.14}, {"Organization Code": "K202", "Organization Name": "MMS YSM", "sales": 147636.0, "units": 7989, "txns": 3249, "atv": 45.44, "upt": 2.46, "asp": 18.48, "share": 5.65}, {"Organization Code": "K208", "Organization Name": "MMS JMT", "sales": 131033.0, "units": 6992, "txns": 2699, "atv": 48.55, "upt": 2.59, "asp": 18.74, "share": 5.01}, {"Organization Code": "K401", "Organization Name": "MMS NJP", "sales": 114791.0, "units": 7283, "txns": 1708, "atv": 67.21, "upt": 4.26, "asp": 15.76, "share": 4.39}, {"Organization Code": "K404", "Organization Name": "MMS ABHA", "sales": 98693.0, "units": 5392, "txns": 2036, "atv": 48.47, "upt": 2.65, "asp": 18.3, "share": 3.77}, {"Organization Code": "K102", "Organization Name": "MMS TLM", "sales": 96102.0, "units": 4818, "txns": 1371, "atv": 70.1, "upt": 3.51, "asp": 19.95, "share": 3.67}, {"Organization Code": "K501", "Organization Name": "MMS TBK", "sales": 94432.9, "units": 6296, "txns": 2189, "atv": 43.14, "upt": 2.88, "asp": 15.0, "share": 3.61}, {"Organization Code": "K109", "Organization Name": "MMS LST", "sales": 94252.75, "units": 4638, "txns": 1389, "atv": 67.86, "upt": 3.34, "asp": 20.32, "share": 3.6}, {"Organization Code": "K210", "Organization Name": "MMS SLM", "sales": 56048.0, "units": 3167, "txns": 1169, "atv": 47.95, "upt": 2.71, "asp": 17.7, "share": 2.14}, {"Organization Code": "K403", "Organization Name": "MMS RMJ", "sales": 33471.0, "units": 1775, "txns": 580, "atv": 57.71, "upt": 3.06, "asp": 18.86, "share": 1.28}], "hourly": [{"Hour": 0, "sales": 1474.0, "txns": 8}, {"Hour": 8, "sales": 44.0, "txns": 2}, {"Hour": 9, "sales": 10636.0, "txns": 181}, {"Hour": 10, "sales": 39216.75, "txns": 660}, {"Hour": 11, "sales": 66312.25, "txns": 1018}, {"Hour": 12, "sales": 67422.0, "txns": 1098}, {"Hour": 13, "sales": 75122.25, "txns": 1223}, {"Hour": 14, "sales": 101119.9, "txns": 1612}, {"Hour": 15, "sales": 126025.65, "txns": 2050}, {"Hour": 16, "sales": 171193.85, "txns": 2821}, {"Hour": 17, "sales": 234639.75, "txns": 4050}, {"Hour": 18, "sales": 286625.8, "txns": 4924}, {"Hour": 19, "sales": 332726.25, "txns": 5861}, {"Hour": 20, "sales": 360245.1, "txns": 6336}, {"Hour": 21, "sales": 348451.15, "txns": 6319}, {"Hour": 22, "sales": 290240.3, "txns": 5256}, {"Hour": 23, "sales": 103662.5, "txns": 1879}], "categories": [{"product_category": "Beauty_&_Cleaning", "sales": 880146.3, "units": 57106}, {"product_category": "Children’S_Goods", "sales": 868555.0, "units": 30580}, {"product_category": "Stationery", "sales": 228447.34, "units": 15933}, {"product_category": "Home_&_Daily_Use", "sales": 219363.36, "units": 10086}, {"product_category": "Bags", "sales": 111927.5, "units": 3369}, {"product_category": "Fashion_Accessories", "sales": 103803.0, "units": 4375}, {"product_category": "3C_Electronics", "sales": 84378.5, "units": 2268}, {"product_category": "Apparel_Accessories", "sales": 65430.5, "units": 3381}, {"product_category": "Home_Textile", "sales": 49368.0, "units": 2099}, {"product_category": "MAKE_UP", "sales": 3388.0, "units": 82}, {"product_category": "GWP", "sales": 350.0, "units": 24}, {"product_category": "N2", "sales": 0.0, "units": 1}, {"product_category": "Product_Accessories", "sales": 0.0, "units": 4568}], "daily_trend": [{"Date": "2026-09-01", "sales": 87039.0, "txns": 1514}, {"Date": "2026-09-02", "sales": 95481.5, "txns": 1637}, {"Date": "2026-09-03", "sales": 139583.25, "txns": 2424}, {"Date": "2026-09-04", "sales": 194744.75, "txns": 3155}, {"Date": "2026-09-05", "sales": 134171.25, "txns": 2191}, {"Date": "2026-09-06", "sales": 58101.7, "txns": 1034}, {"Date": "2026-09-07", "sales": 62922.0, "txns": 1118}, {"Date": "2026-09-08", "sales": 67602.75, "txns": 1193}, {"Date": "2026-09-09", "sales": 75438.75, "txns": 1331}, {"Date": "2026-09-10", "sales": 128088.0, "txns": 2366}, {"Date": "2026-09-11", "sales": 166385.35, "txns": 3001}, {"Date": "2026-09-12", "sales": 116646.35, "txns": 1933}, {"Date": "2026-09-13", "sales": 53353.75, "txns": 916}, {"Date": "2026-09-14", "sales": 51891.65, "txns": 990}, {"Date": "2026-09-15", "sales": 60517.5, "txns": 1082}, {"Date": "2026-09-16", "sales": 72072.65, "txns": 1212}, {"Date": "2026-09-17", "sales": 114306.25, "txns": 2069}, {"Date": "2026-09-18", "sales": 156758.25, "txns": 2592}, {"Date": "2026-09-19", "sales": 91712.3, "txns": 1619}, {"Date": "2026-09-20", "sales": 50190.5, "txns": 907}, {"Date": "2026-09-21", "sales": 64566.5, "txns": 1253}, {"Date": "2026-09-22", "sales": 106696.25, "txns": 1845}, {"Date": "2026-09-23", "sales": 161930.75, "txns": 2808}, {"Date": "2026-09-24", "sales": 154883.5, "txns": 2649}, {"Date": "2026-09-25", "sales": 150073.0, "txns": 2459}]};
+        const tbody = document.getElementById('storeTableBody');
+
+        function renderStores(query = '') {
+            tbody.innerHTML = '';
+            const filtered = payload.stores.filter(s => 
+                s['Organization Name'].toLowerCase().includes(query.toLowerCase()) ||
+                s['Organization Code'].toLowerCase().includes(query.toLowerCase())
+            );
+
+            filtered.forEach((s, idx) => {
+                let badge = '<span class="px-2 py-0.5 rounded text-[11px] font-bold bg-amber-500/10 text-amber-400 border border-amber-500/30">🟡 Normal</span>';
+                if (s.atv >= 70) badge = '<span class="px-2 py-0.5 rounded text-[11px] font-bold bg-emerald-500/10 text-emerald-400 border border-emerald-500/30">🟢 Strong</span>';
+                else if (s.atv < 50) badge = '<span class="px-2 py-0.5 rounded text-[11px] font-bold bg-rose-500/10 text-rose-400 border border-rose-500/30">🔴 Low Basket</span>';
+
+                const tr = document.createElement('tr');
+                tr.className = "hover:bg-slate-800/40 transition";
+                tr.innerHTML = `
+                    <td class="py-3 px-3 text-slate-500 font-semibold">${idx + 1}</td>
+                    <td class="py-3 px-3 font-mono text-sky-400 text-xs">${s['Organization Code']}</td>
+                    <td class="py-3 px-3 font-bold text-white">${s['Organization Name']}</td>
+                    <td class="py-3 px-3 font-mono font-bold text-emerald-400">${s.sales.toLocaleString('en-US', {maximumFractionDigits: 0})}</td>
+                    <td class="py-3 px-3 font-semibold text-slate-300">${s.share}%</td>
+                    <td class="py-3 px-3 font-mono">${s.txns.toLocaleString()}</td>
+                    <td class="py-3 px-3 font-mono font-bold ${s.atv < 50 ? 'text-rose-400' : (s.atv >= 70 ? 'text-emerald-400' : 'text-slate-200')}">${s.atv.toFixed(2)}</td>
+                    <td class="py-3 px-3 font-mono text-indigo-300">${s.upt.toFixed(2)}</td>
+                    <td class="py-3 px-3 text-center">${badge}</td>
+                `;
+                tbody.appendChild(tr);
+            });
+        }
+        renderStores();
+        document.getElementById('storeSearch').addEventListener('input', (e) => renderStores(e.target.value));
+
+        // Trend Chart
+        new Chart(document.getElementById('trendChart'), {
+            type: 'line',
+            data: {
+                labels: payload.daily_trend.map(d => d.Date.slice(5)),
+                datasets: [{
+                    data: payload.daily_trend.map(d => d.sales),
+                    borderColor: '#10b981',
+                    backgroundColor: 'rgba(16, 185, 129, 0.1)',
+                    borderWidth: 2,
+                    fill: true,
+                    tension: 0.25
+                }]
+            },
+            options: {
+                responsive: true, maintainAspectRatio: false,
+                plugins: { legend: { display: false } },
+                scales: { x: { grid: { color: '#1e293b' }, ticks: { color: '#94a3b8' } }, y: { grid: { color: '#1e293b' }, ticks: { color: '#94a3b8' } } }
+            }
+        });
+
+        // Hourly Chart
+        new Chart(document.getElementById('hourlyChart'), {
+            type: 'bar',
+            data: {
+                labels: payload.hourly.map(h => `${h.Hour}:00`),
+                datasets: [{
+                    label: 'Transactions',
+                    data: payload.hourly.map(h => h.txns),
+                    backgroundColor: '#0ea5e9',
+                    borderRadius: 4
+                }]
+            },
+            options: {
+                responsive: true, maintainAspectRatio: false,
+                plugins: { legend: { display: false } },
+                scales: { x: { grid: { color: '#1e293b' }, ticks: { color: '#94a3b8' } }, y: { grid: { color: '#1e293b' }, ticks: { color: '#94a3b8' } } }
+            }
+        });
+    </script>
+</body>
+</html>
