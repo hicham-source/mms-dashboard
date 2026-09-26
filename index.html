@@ -1,88 +1,73 @@
 <!DOCTYPE html>
-<html lang="ar" dir="rtl">
+<html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>MMS Retail OS - لوحة مؤشرات الأداء</title>
+    <title>MMS Executive KPI Dashboard</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <style>
         :root {
             --bg: #090d16;
-            --card-bg: #131b2e;
+            --card: #131b2e;
+            --card-hover: #19233c;
             --border: #1e293b;
+            --primary: #38bdf8;
             --text-main: #f8fafc;
-            --text-sub: #94a3b8;
-            --primary: #2563eb;
-            --success: #10b981;
-            --warning: #f59e0b;
+            --text-muted: #94a3b8;
         }
-        body {
-            background-color: var(--bg);
-            color: var(--text-main);
-            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-            margin: 0;
-            padding: 24px;
-        }
-        .header {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            border-bottom: 1px solid var(--border);
-            padding-bottom: 20px;
-            margin-bottom: 25px;
-        }
-        .header h1 { margin: 0; font-size: 24px; color: #fff; }
-        .header p { margin: 5px 0 0 0; color: var(--text-sub); font-size: 14px; }
-        .kpi-grid {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
-            gap: 16px;
-            margin-bottom: 30px;
-        }
-        .kpi-card {
-            background: var(--card-bg);
-            border: 1px solid var(--border);
-            padding: 20px;
-            border-radius: 12px;
-        }
-        .kpi-title { font-size: 13px; color: var(--text-sub); margin-bottom: 8px; }
-        .kpi-value { font-size: 26px; font-weight: bold; color: #fff; }
-        .table-container {
-            background: var(--card-bg);
-            border: 1px solid var(--border);
-            border-radius: 12px;
-            overflow-x: auto;
-        }
-        table {
-            width: 100%;
-            border-collapse: collapse;
-            text-align: center;
-            font-size: 14px;
-        }
-        th {
-            background: #1e293b;
-            color: #cbd5e1;
-            padding: 14px 12px;
-            font-weight: 600;
-            border-bottom: 1px solid var(--border);
-        }
-        td {
-            padding: 12px;
-            border-bottom: 1px solid #1a2234;
-            color: #cbd5e1;
-        }
-        tr:hover td { background: #182238; }
+        * { box-sizing: border-box; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+        body { background-color: var(--bg); color: var(--text-main); margin: 0; padding: 24px; }
+        .header { display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid var(--border); padding-bottom: 20px; margin-bottom: 24px; }
+        .header h1 { margin: 0; font-size: 24px; font-weight: 700; }
+        .header p { margin: 4px 0 0 0; color: var(--text-muted); font-size: 14px; }
+        
+        /* AI Insights Section */
+        .section-title { font-size: 14px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px; color: var(--text-muted); margin-bottom: 12px; display: flex; align-items: center; gap: 8px; }
+        .insights-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 16px; margin-bottom: 24px; }
+        .insight-card { background: var(--card); border: 1px solid var(--border); border-radius: 10px; padding: 16px; border-left: 4px solid var(--border); }
+        .insight-card.danger { border-left-color: #ef4444; }
+        .insight-card.warning { border-left-color: #f59e0b; }
+        .insight-card.success { border-left-color: #10b981; }
+        .insight-title { font-size: 13px; font-weight: 700; margin-bottom: 6px; display: flex; align-items: center; gap: 6px; }
+        .insight-body { font-size: 13px; color: var(--text-muted); line-height: 1.5; }
+
+        /* KPI Cards */
+        .kpi-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 16px; margin-bottom: 24px; }
+        .kpi-card { background: var(--card); border: 1px solid var(--border); border-radius: 10px; padding: 18px; }
+        .kpi-title { font-size: 12px; color: var(--text-muted); font-weight: 600; text-transform: uppercase; margin-bottom: 6px; }
+        .kpi-value { font-size: 24px; font-weight: 700; color: #fff; }
+        .kpi-unit { font-size: 13px; color: var(--text-muted); font-weight: 400; }
+
+        /* Charts */
+        .chart-container { background: var(--card); border: 1px solid var(--border); border-radius: 10px; padding: 20px; margin-bottom: 24px; }
+
+        /* Store Table */
+        .table-wrap { background: var(--card); border: 1px solid var(--border); border-radius: 10px; overflow: hidden; }
+        .table-header { padding: 16px 20px; display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid var(--border); flex-wrap: wrap; gap: 12px; }
+        .table-header h3 { margin: 0; font-size: 15px; font-weight: 700; }
+        .table-search { padding: 8px 14px; background: #090d16; border: 1px solid var(--border); border-radius: 6px; color: #fff; outline: none; width: 260px; font-size: 13px; }
+        table { width: 100%; border-collapse: collapse; text-align: left; font-size: 13px; }
+        th { background: #0c1220; color: var(--text-muted); padding: 12px 14px; font-weight: 600; text-transform: uppercase; font-size: 11px; letter-spacing: 0.5px; border-bottom: 1px solid var(--border); }
+        td { padding: 12px 14px; border-bottom: 1px solid var(--border); }
+        tr:hover td { background: var(--card-hover); }
+
+        /* Badges */
+        .badge { padding: 4px 8px; border-radius: 4px; font-size: 11px; font-weight: 600; }
+        .badge-success { background: rgba(16, 185, 129, 0.15); color: #10b981; }
+        .badge-warning { background: rgba(245, 158, 11, 0.15); color: #f59e0b; }
+        .badge-danger { background: rgba(239, 68, 68, 0.15); color: #ef4444; }
     </style>
 </head>
 <body>
 
-<!-- شاشة القفل بكلمة المرور -->
-<div id="auth-overlay" style="position:fixed;top:0;left:0;width:100%;height:100%;background:#090d16;z-index:999999;display:flex;align-items:center;justify-content:center;font-family:sans-serif;direction:rtl;">
-  <div style="background:#131b2e;padding:32px;border-radius:14px;box-shadow:0 15px 30px rgba(0,0,0,0.6);text-align:center;width:90%;max-width:380px;border:1px solid #1e293b;">
-    <h3 style="color:#fff;margin-bottom:8px;font-size:20px;">🔒 نظام مؤشرات الأداء (MMS)</h3>
-    <p style="color:#94a3b8;font-size:14px;margin-bottom:20px;">أدخل رمز المرور للمتابعة</p>
-    <input type="password" id="access-pass" placeholder="كلمة السر" style="width:100%;padding:12px;border-radius:8px;border:1px solid #334155;background:#090d16;color:#fff;font-size:16px;text-align:center;outline:none;box-sizing:border-box;margin-bottom:15px;">
-    <button onclick="checkAccess()" style="width:100%;padding:12px;border-radius:8px;border:none;background:#2563eb;color:#fff;font-weight:bold;font-size:16px;cursor:pointer;">دخول</button>
-    <p id="error-msg" style="color:#ef4444;font-size:13px;margin-top:12px;display:none;">كلمة السر غير صحيحة</p>
+<!-- Password Overlay -->
+<div id="auth-overlay" style="position:fixed;top:0;left:0;width:100%;height:100%;background:#090d16;z-index:999999;display:flex;align-items:center;justify-content:center;font-family:sans-serif;">
+  <div style="background:#131b2e;padding:32px;border-radius:12px;box-shadow:0 15px 30px rgba(0,0,0,0.6);text-align:center;width:90%;max-width:380px;border:1px solid #1e293b;">
+    <h3 style="color:#fff;margin:0 0 8px 0;font-size:20px;">🔒 MMS Executive Access</h3>
+    <p style="color:#94a3b8;font-size:13px;margin:0 0 20px 0;">Enter authorization PIN to unlock dashboard</p>
+    <input type="password" id="access-pass" placeholder="Password" style="width:100%;padding:12px;border-radius:6px;border:1px solid #334155;background:#090d16;color:#fff;font-size:16px;text-align:center;outline:none;box-sizing:border-box;margin-bottom:14px;">
+    <button onclick="checkAccess()" style="width:100%;padding:12px;border-radius:6px;border:none;background:#2563eb;color:#fff;font-weight:700;font-size:15px;cursor:pointer;">Unlock Dashboard</button>
+    <p id="error-msg" style="color:#ef4444;font-size:13px;margin:12px 0 0 0;display:none;">Invalid credentials</p>
   </div>
 </div>
 
@@ -107,241 +92,453 @@
 <div class="header">
     <div>
         <h1>MMS Executive KPI Dashboard</h1>
-        <p>نظام متابعة العمليات وأداء الفروع اليومي</p>
+        <p>Operational Performance, Store Target Alignment & Metrics</p>
     </div>
 </div>
 
+<!-- Executive Insights -->
+<div class="section-title"><span>🤖</span> AI Executive Insights</div>
+<div class="insights-grid">
+    <div class="insight-card danger">
+        <div class="insight-title" style="color:#ef4444;">● Critical Issues</div>
+        <div class="insight-body">Stores showing high footfall but low ATV. Activate cashier impulse sell initiatives and multi-unit bundles immediately.</div>
+    </div>
+    <div class="insight-card warning">
+        <div class="insight-title" style="color:#f59e0b;">● Attention Required</div>
+        <div class="insight-body">U Walk Riyadh achieves elite ATV (78.5 SAR) but exhibits lower footfall. Optimize window visual merchandising to drive conversion.</div>
+    </div>
+    <div class="insight-card success">
+        <div class="insight-title" style="color:#10b981;">● Opportunities</div>
+        <div class="insight-body">Top 2 flagship stores lead overall chain revenue. Maintain continuous replenishment on high-velocity category gondolas.</div>
+    </div>
+</div>
+
+<!-- Executive Metrics -->
 <div class="kpi-grid">
     <div class="kpi-card">
-        <div class="kpi-title">إجمالي المبيعات (Total Sales)</div>
-        <div class="kpi-value">2,615,157.50 <span style="font-size:14px;color:#94a3b8;">SAR</span></div>
+        <div class="kpi-title">Total Sales</div>
+        <div class="kpi-value">2,615,157.50 <span class="kpi-unit">SAR</span></div>
     </div>
     <div class="kpi-card">
-        <div class="kpi-title">إجمالي التارجت (Target)</div>
-        <div class="kpi-value">2,827,380 <span style="font-size:14px;color:#94a3b8;">SAR</span></div>
+        <div class="kpi-title">Total Target</div>
+        <div class="kpi-value">2,827,380 <span class="kpi-unit">SAR</span></div>
     </div>
     <div class="kpi-card">
-        <div class="kpi-title">نسبة التحقيق الإجمالية (% Ach)</div>
+        <div class="kpi-title">Achievement (% Ach)</div>
         <div class="kpi-value" style="color: #f59e0b;">81.2%</div>
     </div>
     <div class="kpi-card">
-        <div class="kpi-title">عدد الفروع المفتوحة</div>
-        <div class="kpi-value">16</div>
+        <div class="kpi-title">Network ATV</div>
+        <div class="kpi-value">SAR 57.73</div>
+    </div>
+    <div class="kpi-card">
+        <div class="kpi-title">Network UPT</div>
+        <div class="kpi-value">2.96</div>
+    </div>
+    <div class="kpi-card">
+        <div class="kpi-title">Avg Unit Price (ASP)</div>
+        <div class="kpi-value">SAR 19.53</div>
     </div>
 </div>
 
-<div class="table-container">
-    <table>
-        <thead>
-            <tr>
-                <th style="text-align: right;">الفرع</th>
-                <th>المبيعات (SAR)</th>
-                <th>التارجت (SAR)</th>
-                <th>نسبة التحقيق (% Ach)</th>
-                <th>الفواتير</th>
-                <th>القطع</th>
-                <th>ATV</th>
-                <th>UPT</th>
-                <th>الحصة (%)</th>
-            </tr>
-        </thead>
-        <tbody>
-            
+<!-- Performance Chart -->
+<div class="chart-container">
+    <div class="section-title"><span>📊</span> Top Stores: Actual Sales vs Target</div>
+    <canvas id="salesTargetChart" height="80"></canvas>
+</div>
+
+<!-- Store Table Matrix -->
+<div class="table-wrap">
+    <div class="table-header">
+        <div>
+            <h3>STORE PERFORMANCE MATRIX</h3>
+            <span style="color:var(--text-muted);font-size:12px;">Ranked by revenue with achievement progress and operational badges</span>
+        </div>
+        <input type="text" id="storeSearch" class="table-search" placeholder="Search store name or code..." onkeyup="filterStores()">
+    </div>
+    <div style="overflow-x:auto;">
+        <table id="storesTable">
+            <thead>
+                <tr>
+                    <th>#</th>
+                    <th>Store Code</th>
+                    <th>Store Name</th>
+                    <th>Sales (SAR)</th>
+                    <th>Target (SAR)</th>
+                    <th>% Ach vs Target</th>
+                    <th>Share %</th>
+                    <th>Txns</th>
+                    <th>ATV (SAR)</th>
+                    <th>UPT</th>
+                    <th>Status</th>
+                </tr>
+            </thead>
+            <tbody>
+                
         <tr>
-            <td style="text-align: right; font-weight: 600;">MMS SLT</td>
-            <td>445,475.50</td>
-            <td style="color: #38bdf8; font-weight: 500;">544,945</td>
-            <td><span style="color: #f59e0b; font-weight: bold;">81.7%</span></td>
+            <td style="color:#64748b;font-weight:600;">3</td>
+            <td style="color:#38bdf8;font-weight:500;">K108</td>
+            <td style="font-weight:600;color:#fff;">MMS SLT</td>
+            <td style="font-weight:700;color:#f8fafc;">445,475.50</td>
+            <td style="color:#94a3b8;">544,945</td>
+            <td style="min-width:140px;">
+            <div style="display:flex;align-items:center;gap:8px;">
+                <span style="color:#f59e0b;font-weight:700;min-width:45px;">81.7%</span>
+                <div style="flex:1;background:#1e293b;border-radius:4px;height:6px;overflow:hidden;">
+                    <div style="width:81.74684642439802%;background:#f59e0b;height:100%;"></div>
+                </div>
+            </div>
+            </td>
+            <td>17.03%</td>
             <td>5,132</td>
-            <td>19,132</td>
             <td>86.80</td>
             <td>3.73</td>
-            <td>17.0%</td>
+            <td><span class="badge badge-warning">On Track</span></td>
         </tr>
         
         <tr>
-            <td style="text-align: right; font-weight: 600;">MMS MOD</td>
-            <td>388,245.65</td>
-            <td style="color: #38bdf8; font-weight: 500;">389,032</td>
-            <td><span style="color: #f59e0b; font-weight: bold;">99.8%</span></td>
+            <td style="color:#64748b;font-weight:600;">12</td>
+            <td style="color:#38bdf8;font-weight:500;">K301</td>
+            <td style="font-weight:600;color:#fff;">MMS MOD</td>
+            <td style="font-weight:700;color:#f8fafc;">388,245.65</td>
+            <td style="color:#94a3b8;">389,032</td>
+            <td style="min-width:140px;">
+            <div style="display:flex;align-items:center;gap:8px;">
+                <span style="color:#f59e0b;font-weight:700;min-width:45px;">99.8%</span>
+                <div style="flex:1;background:#1e293b;border-radius:4px;height:6px;overflow:hidden;">
+                    <div style="width:99.79797270967192%;background:#f59e0b;height:100%;"></div>
+                </div>
+            </div>
+            </td>
+            <td>14.85%</td>
             <td>7,047</td>
-            <td>18,083</td>
             <td>55.09</td>
             <td>2.57</td>
-            <td>14.8%</td>
+            <td><span class="badge badge-warning">On Track</span></td>
         </tr>
         
         <tr>
-            <td style="text-align: right; font-weight: 600;">MMS UWJ</td>
-            <td>209,321.25</td>
-            <td style="color: #38bdf8; font-weight: 500;">204,143</td>
-            <td><span style="color: #10b981; font-weight: bold;">102.5%</span></td>
+            <td style="color:#64748b;font-weight:600;">8</td>
+            <td style="color:#38bdf8;font-weight:500;">K205</td>
+            <td style="font-weight:600;color:#fff;">MMS UWJ</td>
+            <td style="font-weight:700;color:#f8fafc;">209,321.25</td>
+            <td style="color:#94a3b8;">204,143</td>
+            <td style="min-width:140px;">
+            <div style="display:flex;align-items:center;gap:8px;">
+                <span style="color:#10b981;font-weight:700;min-width:45px;">102.5%</span>
+                <div style="flex:1;background:#1e293b;border-radius:4px;height:6px;overflow:hidden;">
+                    <div style="width:100%;background:#10b981;height:100%;"></div>
+                </div>
+            </div>
+            </td>
+            <td>8.00%</td>
             <td>3,857</td>
-            <td>10,048</td>
             <td>54.27</td>
             <td>2.61</td>
-            <td>8.0%</td>
+            <td><span class="badge badge-success">Target Met</span></td>
         </tr>
         
         <tr>
-            <td style="text-align: right; font-weight: 600;">MMS MDN</td>
-            <td>187,306.00</td>
-            <td style="color: #38bdf8; font-weight: 500;">-</td>
-            <td><span style="color: #64748b;">-</span></td>
+            <td style="color:#64748b;font-weight:600;">11</td>
+            <td style="color:#38bdf8;font-weight:500;">K211</td>
+            <td style="font-weight:600;color:#fff;">MMS MDN</td>
+            <td style="font-weight:700;color:#f8fafc;">187,306.00</td>
+            <td style="color:#94a3b8;">-</td>
+            <td style="min-width:140px;"><span style="color:#64748b;">-</span></td>
+            <td>7.16%</td>
             <td>3,543</td>
-            <td>10,035</td>
             <td>52.87</td>
             <td>2.83</td>
-            <td>7.2%</td>
+            <td><span class="badge" style="background:#1e293b;color:#94a3b8;">Normal</span></td>
         </tr>
         
         <tr>
-            <td style="text-align: right; font-weight: 600;">MMS TVM</td>
-            <td>183,985.45</td>
-            <td style="color: #38bdf8; font-weight: 500;">232,002</td>
-            <td><span style="color: #ef4444; font-weight: bold;">79.3%</span></td>
+            <td style="color:#64748b;font-weight:600;">1</td>
+            <td style="color:#38bdf8;font-weight:500;">K101</td>
+            <td style="font-weight:600;color:#fff;">MMS TVM</td>
+            <td style="font-weight:700;color:#f8fafc;">183,985.45</td>
+            <td style="color:#94a3b8;">232,002</td>
+            <td style="min-width:140px;">
+            <div style="display:flex;align-items:center;gap:8px;">
+                <span style="color:#ef4444;font-weight:700;min-width:45px;">79.3%</span>
+                <div style="flex:1;background:#1e293b;border-radius:4px;height:6px;overflow:hidden;">
+                    <div style="width:79.30337937129256%;background:#ef4444;height:100%;"></div>
+                </div>
+            </div>
+            </td>
+            <td>7.04%</td>
             <td>3,735</td>
-            <td>9,744</td>
             <td>49.26</td>
             <td>2.61</td>
-            <td>7.0%</td>
+            <td><span class="badge badge-danger">Under Target</span></td>
         </tr>
         
         <tr>
-            <td style="text-align: right; font-weight: 600;">MMS UWR</td>
-            <td>173,796.00</td>
-            <td style="color: #38bdf8; font-weight: 500;">266,219</td>
-            <td><span style="color: #ef4444; font-weight: bold;">65.3%</span></td>
+            <td style="color:#64748b;font-weight:600;">5</td>
+            <td style="color:#38bdf8;font-weight:500;">K110</td>
+            <td style="font-weight:600;color:#fff;">MMS UWR</td>
+            <td style="font-weight:700;color:#f8fafc;">173,796.00</td>
+            <td style="color:#94a3b8;">266,219</td>
+            <td style="min-width:140px;">
+            <div style="display:flex;align-items:center;gap:8px;">
+                <span style="color:#ef4444;font-weight:700;min-width:45px;">65.3%</span>
+                <div style="flex:1;background:#1e293b;border-radius:4px;height:6px;overflow:hidden;">
+                    <div style="width:65.28307147776722%;background:#ef4444;height:100%;"></div>
+                </div>
+            </div>
+            </td>
+            <td>6.65%</td>
             <td>2,213</td>
-            <td>8,264</td>
             <td>78.53</td>
             <td>3.73</td>
-            <td>6.7%</td>
+            <td><span class="badge badge-danger">Under Target</span></td>
         </tr>
         
         <tr>
-            <td style="text-align: right; font-weight: 600;">MMS JDP</td>
-            <td>160,568.00</td>
-            <td style="color: #38bdf8; font-weight: 500;">187,017</td>
-            <td><span style="color: #f59e0b; font-weight: bold;">85.9%</span></td>
+            <td style="color:#64748b;font-weight:600;">6</td>
+            <td style="color:#38bdf8;font-weight:500;">K201</td>
+            <td style="font-weight:600;color:#fff;">MMS JDP</td>
+            <td style="font-weight:700;color:#f8fafc;">160,568.00</td>
+            <td style="color:#94a3b8;">187,017</td>
+            <td style="min-width:140px;">
+            <div style="display:flex;align-items:center;gap:8px;">
+                <span style="color:#f59e0b;font-weight:700;min-width:45px;">85.9%</span>
+                <div style="flex:1;background:#1e293b;border-radius:4px;height:6px;overflow:hidden;">
+                    <div style="width:85.8573252391063%;background:#f59e0b;height:100%;"></div>
+                </div>
+            </div>
+            </td>
+            <td>6.14%</td>
             <td>3,381</td>
-            <td>10,216</td>
             <td>47.49</td>
             <td>3.02</td>
-            <td>6.1%</td>
+            <td><span class="badge badge-warning">On Track</span></td>
         </tr>
         
         <tr>
-            <td style="text-align: right; font-weight: 600;">MMS YSM</td>
-            <td>147,636.00</td>
-            <td style="color: #38bdf8; font-weight: 500;">154,401</td>
-            <td><span style="color: #f59e0b; font-weight: bold;">95.6%</span></td>
+            <td style="color:#64748b;font-weight:600;">7</td>
+            <td style="color:#38bdf8;font-weight:500;">K202</td>
+            <td style="font-weight:600;color:#fff;">MMS YSM</td>
+            <td style="font-weight:700;color:#f8fafc;">147,636.00</td>
+            <td style="color:#94a3b8;">154,401</td>
+            <td style="min-width:140px;">
+            <div style="display:flex;align-items:center;gap:8px;">
+                <span style="color:#f59e0b;font-weight:700;min-width:45px;">95.6%</span>
+                <div style="flex:1;background:#1e293b;border-radius:4px;height:6px;overflow:hidden;">
+                    <div style="width:95.61865077936105%;background:#f59e0b;height:100%;"></div>
+                </div>
+            </div>
+            </td>
+            <td>5.65%</td>
             <td>3,249</td>
-            <td>7,989</td>
             <td>45.44</td>
             <td>2.46</td>
-            <td>5.7%</td>
+            <td><span class="badge badge-warning">On Track</span></td>
         </tr>
         
         <tr>
-            <td style="text-align: right; font-weight: 600;">MMS JMT</td>
-            <td>131,033.00</td>
-            <td style="color: #38bdf8; font-weight: 500;">180,310</td>
-            <td><span style="color: #ef4444; font-weight: bold;">72.7%</span></td>
+            <td style="color:#64748b;font-weight:600;">9</td>
+            <td style="color:#38bdf8;font-weight:500;">K208</td>
+            <td style="font-weight:600;color:#fff;">MMS JMT</td>
+            <td style="font-weight:700;color:#f8fafc;">131,033.00</td>
+            <td style="color:#94a3b8;">180,310</td>
+            <td style="min-width:140px;">
+            <div style="display:flex;align-items:center;gap:8px;">
+                <span style="color:#ef4444;font-weight:700;min-width:45px;">72.7%</span>
+                <div style="flex:1;background:#1e293b;border-radius:4px;height:6px;overflow:hidden;">
+                    <div style="width:72.67095557650713%;background:#ef4444;height:100%;"></div>
+                </div>
+            </div>
+            </td>
+            <td>5.01%</td>
             <td>2,699</td>
-            <td>6,992</td>
             <td>48.55</td>
             <td>2.59</td>
-            <td>5.0%</td>
+            <td><span class="badge badge-danger">Under Target</span></td>
         </tr>
         
         <tr>
-            <td style="text-align: right; font-weight: 600;">MMS NJP</td>
-            <td>114,791.00</td>
-            <td style="color: #38bdf8; font-weight: 500;">157,220</td>
-            <td><span style="color: #ef4444; font-weight: bold;">73.0%</span></td>
+            <td style="color:#64748b;font-weight:600;">13</td>
+            <td style="color:#38bdf8;font-weight:500;">K401</td>
+            <td style="font-weight:600;color:#fff;">MMS NJP</td>
+            <td style="font-weight:700;color:#f8fafc;">114,791.00</td>
+            <td style="color:#94a3b8;">157,220</td>
+            <td style="min-width:140px;">
+            <div style="display:flex;align-items:center;gap:8px;">
+                <span style="color:#ef4444;font-weight:700;min-width:45px;">73.0%</span>
+                <div style="flex:1;background:#1e293b;border-radius:4px;height:6px;overflow:hidden;">
+                    <div style="width:73.01318508799854%;background:#ef4444;height:100%;"></div>
+                </div>
+            </div>
+            </td>
+            <td>4.39%</td>
             <td>1,708</td>
-            <td>7,283</td>
             <td>67.21</td>
             <td>4.26</td>
-            <td>4.4%</td>
+            <td><span class="badge badge-danger">Under Target</span></td>
         </tr>
         
         <tr>
-            <td style="text-align: right; font-weight: 600;">MMS ABHA</td>
-            <td>98,693.00</td>
-            <td style="color: #38bdf8; font-weight: 500;">-</td>
-            <td><span style="color: #64748b;">-</span></td>
+            <td style="color:#64748b;font-weight:600;">15</td>
+            <td style="color:#38bdf8;font-weight:500;">K404</td>
+            <td style="font-weight:600;color:#fff;">MMS ABHA</td>
+            <td style="font-weight:700;color:#f8fafc;">98,693.00</td>
+            <td style="color:#94a3b8;">-</td>
+            <td style="min-width:140px;"><span style="color:#64748b;">-</span></td>
+            <td>3.77%</td>
             <td>2,036</td>
-            <td>5,392</td>
             <td>48.47</td>
             <td>2.65</td>
-            <td>3.8%</td>
+            <td><span class="badge" style="background:#1e293b;color:#94a3b8;">Normal</span></td>
         </tr>
         
         <tr>
-            <td style="text-align: right; font-weight: 600;">MMS TLM</td>
-            <td>96,102.00</td>
-            <td style="color: #38bdf8; font-weight: 500;">101,835</td>
-            <td><span style="color: #f59e0b; font-weight: bold;">94.4%</span></td>
+            <td style="color:#64748b;font-weight:600;">2</td>
+            <td style="color:#38bdf8;font-weight:500;">K102</td>
+            <td style="font-weight:600;color:#fff;">MMS TLM</td>
+            <td style="font-weight:700;color:#f8fafc;">96,102.00</td>
+            <td style="color:#94a3b8;">101,835</td>
+            <td style="min-width:140px;">
+            <div style="display:flex;align-items:center;gap:8px;">
+                <span style="color:#f59e0b;font-weight:700;min-width:45px;">94.4%</span>
+                <div style="flex:1;background:#1e293b;border-radius:4px;height:6px;overflow:hidden;">
+                    <div style="width:94.37030490499338%;background:#f59e0b;height:100%;"></div>
+                </div>
+            </div>
+            </td>
+            <td>3.67%</td>
             <td>1,371</td>
-            <td>4,818</td>
             <td>70.10</td>
             <td>3.51</td>
-            <td>3.7%</td>
+            <td><span class="badge badge-warning">On Track</span></td>
         </tr>
         
         <tr>
-            <td style="text-align: right; font-weight: 600;">MMS TBK</td>
-            <td>94,432.90</td>
-            <td style="color: #38bdf8; font-weight: 500;">168,669</td>
-            <td><span style="color: #ef4444; font-weight: bold;">56.0%</span></td>
+            <td style="color:#64748b;font-weight:600;">16</td>
+            <td style="color:#38bdf8;font-weight:500;">K501</td>
+            <td style="font-weight:600;color:#fff;">MMS TBK</td>
+            <td style="font-weight:700;color:#f8fafc;">94,432.90</td>
+            <td style="color:#94a3b8;">168,669</td>
+            <td style="min-width:140px;">
+            <div style="display:flex;align-items:center;gap:8px;">
+                <span style="color:#ef4444;font-weight:700;min-width:45px;">56.0%</span>
+                <div style="flex:1;background:#1e293b;border-radius:4px;height:6px;overflow:hidden;">
+                    <div style="width:55.98726705919807%;background:#ef4444;height:100%;"></div>
+                </div>
+            </div>
+            </td>
+            <td>3.61%</td>
             <td>2,189</td>
-            <td>6,296</td>
             <td>43.14</td>
             <td>2.88</td>
-            <td>3.6%</td>
+            <td><span class="badge badge-danger">Under Target</span></td>
         </tr>
         
         <tr>
-            <td style="text-align: right; font-weight: 600;">MMS LST</td>
-            <td>94,252.75</td>
-            <td style="color: #38bdf8; font-weight: 500;">116,758</td>
-            <td><span style="color: #f59e0b; font-weight: bold;">80.7%</span></td>
+            <td style="color:#64748b;font-weight:600;">4</td>
+            <td style="color:#38bdf8;font-weight:500;">K109</td>
+            <td style="font-weight:600;color:#fff;">MMS LST</td>
+            <td style="font-weight:700;color:#f8fafc;">94,252.75</td>
+            <td style="color:#94a3b8;">116,758</td>
+            <td style="min-width:140px;">
+            <div style="display:flex;align-items:center;gap:8px;">
+                <span style="color:#f59e0b;font-weight:700;min-width:45px;">80.7%</span>
+                <div style="flex:1;background:#1e293b;border-radius:4px;height:6px;overflow:hidden;">
+                    <div style="width:80.72511045527976%;background:#f59e0b;height:100%;"></div>
+                </div>
+            </div>
+            </td>
+            <td>3.60%</td>
             <td>1,389</td>
-            <td>4,638</td>
             <td>67.86</td>
             <td>3.34</td>
-            <td>3.6%</td>
+            <td><span class="badge badge-warning">On Track</span></td>
         </tr>
         
         <tr>
-            <td style="text-align: right; font-weight: 600;">MMS SLM</td>
-            <td>56,048.00</td>
-            <td style="color: #38bdf8; font-weight: 500;">124,830</td>
-            <td><span style="color: #ef4444; font-weight: bold;">44.9%</span></td>
+            <td style="color:#64748b;font-weight:600;">10</td>
+            <td style="color:#38bdf8;font-weight:500;">K210</td>
+            <td style="font-weight:600;color:#fff;">MMS SLM</td>
+            <td style="font-weight:700;color:#f8fafc;">56,048.00</td>
+            <td style="color:#94a3b8;">124,830</td>
+            <td style="min-width:140px;">
+            <div style="display:flex;align-items:center;gap:8px;">
+                <span style="color:#ef4444;font-weight:700;min-width:45px;">44.9%</span>
+                <div style="flex:1;background:#1e293b;border-radius:4px;height:6px;overflow:hidden;">
+                    <div style="width:44.899463270047264%;background:#ef4444;height:100%;"></div>
+                </div>
+            </div>
+            </td>
+            <td>2.14%</td>
             <td>1,169</td>
-            <td>3,167</td>
             <td>47.95</td>
             <td>2.71</td>
-            <td>2.1%</td>
+            <td><span class="badge badge-danger">Under Target</span></td>
         </tr>
         
         <tr>
-            <td style="text-align: right; font-weight: 600;">MMS RMJ</td>
-            <td>33,471.00</td>
-            <td style="color: #38bdf8; font-weight: 500;">-</td>
-            <td><span style="color: #64748b;">-</span></td>
+            <td style="color:#64748b;font-weight:600;">14</td>
+            <td style="color:#38bdf8;font-weight:500;">K403</td>
+            <td style="font-weight:600;color:#fff;">MMS RMJ</td>
+            <td style="font-weight:700;color:#f8fafc;">33,471.00</td>
+            <td style="color:#94a3b8;">-</td>
+            <td style="min-width:140px;"><span style="color:#64748b;">-</span></td>
+            <td>1.28%</td>
             <td>580</td>
-            <td>1,775</td>
             <td>57.71</td>
             <td>3.06</td>
-            <td>1.3%</td>
+            <td><span class="badge" style="background:#1e293b;color:#94a3b8;">Normal</span></td>
         </tr>
         
-        </tbody>
-    </table>
+            </tbody>
+        </table>
+    </div>
 </div>
+
+<script>
+  // Chart.js Setup
+  const ctx = document.getElementById('salesTargetChart').getContext('2d');
+  new Chart(ctx, {
+      type: 'bar',
+      data: {
+          labels: ["MMS SLT", "MMS MOD", "MMS UWJ", "MMS MDN", "MMS TVM", "MMS UWR", "MMS JDP"],
+          datasets: [
+              {
+                  label: 'Actual Sales (SAR)',
+                  data: [445475.5, 388245.65, 209321.25, 187306.0, 183985.45, 173796.0, 160568.0],
+                  backgroundColor: '#38bdf8',
+                  borderRadius: 4
+              },
+              {
+                  label: 'Target (SAR)',
+                  data: [544945.18, 389031.6, 204143.34, 0, 232002.03, 266219.09, 187017.24],
+                  backgroundColor: '#334155',
+                  borderRadius: 4
+              }
+          ]
+      },
+      options: {
+          responsive: true,
+          plugins: {
+              legend: { labels: { color: '#94a3b8' } }
+          },
+          scales: {
+              x: { ticks: { color: '#94a3b8' }, grid: { display: false } },
+              y: { ticks: { color: '#94a3b8' }, grid: { color: '#1e293b' } }
+          }
+      }
+  });
+
+  // Search Filter
+  function filterStores() {
+      const query = document.getElementById("storeSearch").value.toLowerCase();
+      const rows = document.querySelectorAll("#storesTable tbody tr");
+      rows.forEach(r => {
+          const text = r.innerText.toLowerCase();
+          r.style.display = text.includes(query) ? "" : "none";
+      });
+  }
+</script>
 
 </body>
 </html>
