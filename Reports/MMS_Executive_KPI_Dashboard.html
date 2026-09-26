@@ -4,7 +4,12 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>MMS Executive KPI Dashboard</title>
-    <script src="[https://cdnjs.cloudflare.com/ajax/libs/Chart.js/3.9.1/chart.min.js](https://cdnjs.cloudflare.com/ajax/libs/Chart.js/3.9.1/chart.min.js)"></script>
+    <script src="[https://cdn.jsdelivr.net/npm/chart.js@3.9.1/dist/chart.min.js](https://cdn.jsdelivr.net/npm/chart.js@3.9.1/dist/chart.min.js)"></script>
+    <script>
+      if (typeof Chart === 'undefined') {
+        document.write('<script src="[https://cdnjs.cloudflare.com/ajax/libs/Chart.js/3.9.1/chart.min.js](https://cdnjs.cloudflare.com/ajax/libs/Chart.js/3.9.1/chart.min.js)"><\/script>');
+      }
+    </script>
     <style>
         :root {
             --bg: #090d16;
@@ -36,7 +41,7 @@
         .kpi-value { font-size: 24px; font-weight: 700; color: #fff; }
         .kpi-unit { font-size: 13px; color: var(--text-muted); font-weight: 400; }
 
-        .chart-container { background: var(--card); border: 1px solid var(--border); border-radius: 10px; padding: 20px; margin-bottom: 24px; min-height: 380px; }
+        .chart-container { background: var(--card); border: 1px solid var(--border); border-radius: 10px; padding: 20px; margin-bottom: 24px; }
 
         .table-wrap { background: var(--card); border: 1px solid var(--border); border-radius: 10px; overflow: hidden; }
         .table-header { padding: 16px 20px; display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid var(--border); flex-wrap: wrap; gap: 12px; }
@@ -76,15 +81,15 @@
 <div class="insights-grid">
     <div class="insight-card danger">
         <div class="insight-title" style="color:#ef4444;">● Critical Issues</div>
-        <div class="insight-body">MMS SLM is severely underperforming at 44.9% achievement with only 56K SAR in sales, indicating urgent need for management intervention, staffing review, or store viability assessment.</div>
+        <div class="insight-body">MMS SLM is critically underperforming at 44.9% achievement with sales of only 56K SAR, requiring immediate intervention on inventory availability, staffing, or location viability.</div>
     </div>
     <div class="insight-card warning">
         <div class="insight-title" style="color:#f59e0b;">● Attention Required</div>
-        <div class="insight-body">Network UPT of 2.96 is below optimal performance; MMS MOD and MMS UPT show weakness in basket building (2.57-2.61 UPT) despite strong sales, suggesting cross-sell and upsell training gaps.</div>
+        <div class="insight-body">Network UPT of 2.96 and ASP of 19.53 SAR lag significantly behind top performer MMS SLT (3.73 UPT, 23.28 ASP), indicating inconsistent product mix and cross-selling execution across the network.</div>
     </div>
     <div class="insight-card success">
         <div class="insight-title" style="color:#10b981;">● Opportunities</div>
-        <div class="insight-body">MMS SLT demonstrates exceptional performance with 3.73 UPT and 86.8 ATV—replicate its merchandising strategy, floor layout, and staff engagement model across underperforming stores to drive network-wide basket growth.</div>
+        <div class="insight-body">Replicate MMS UWJ's high-performing model (102.5% achievement) and MMS MOD's strong sales velocity (388K SAR) by scaling their proven merchandising and inventory strategies to underperforming locations like MMS SLM and MMS RMJ.</div>
     </div>
 </div>
 
@@ -110,14 +115,14 @@
         <div class="kpi-value">2.96</div>
     </div>
     <div class="kpi-card">
-        <div class="kpi-title">Avg Unit Price (ASP)</div>
+        <div class="kpi-title">Network ASP</div>
         <div class="kpi-value">SAR 19.53</div>
     </div>
 </div>
 
 <div class="chart-container">
     <div class="section-title"><span>📊</span> Top Stores: Actual Sales vs Target</div>
-    <div style="position:relative; height:300px; width:100%;">
+    <div style="position:relative; width:100%; height:320px;">
         <canvas id="salesTargetChart"></canvas>
     </div>
 </div>
@@ -144,6 +149,7 @@
                     <th>Txns</th>
                     <th>ATV (SAR)</th>
                     <th>UPT</th>
+                    <th>ASP (SAR)</th>
                     <th>Status</th>
                 </tr>
             </thead>
@@ -167,6 +173,7 @@
             <td>5,132</td>
             <td>86.80</td>
             <td>3.73</td>
+            <td style="color:#38bdf8;font-weight:600;">23.28</td>
             <td><span class="badge badge-warning">On Track</span></td>
         </tr>
         
@@ -188,6 +195,7 @@
             <td>7,047</td>
             <td>55.09</td>
             <td>2.57</td>
+            <td style="color:#38bdf8;font-weight:600;">21.47</td>
             <td><span class="badge badge-warning">On Track</span></td>
         </tr>
         
@@ -209,6 +217,7 @@
             <td>3,857</td>
             <td>54.27</td>
             <td>2.61</td>
+            <td style="color:#38bdf8;font-weight:600;">20.83</td>
             <td><span class="badge badge-success">Target Met</span></td>
         </tr>
         
@@ -223,6 +232,7 @@
             <td>3,543</td>
             <td>52.87</td>
             <td>2.83</td>
+            <td style="color:#38bdf8;font-weight:600;">18.67</td>
             <td><span class="badge" style="background:#1e293b;color:#94a3b8;">Normal</span></td>
         </tr>
         
@@ -244,6 +254,7 @@
             <td>3,735</td>
             <td>49.26</td>
             <td>2.61</td>
+            <td style="color:#38bdf8;font-weight:600;">18.88</td>
             <td><span class="badge badge-danger">Under Target</span></td>
         </tr>
         
@@ -265,6 +276,7 @@
             <td>2,213</td>
             <td>78.53</td>
             <td>3.73</td>
+            <td style="color:#38bdf8;font-weight:600;">21.03</td>
             <td><span class="badge badge-danger">Under Target</span></td>
         </tr>
         
@@ -286,6 +298,7 @@
             <td>3,381</td>
             <td>47.49</td>
             <td>3.02</td>
+            <td style="color:#38bdf8;font-weight:600;">15.72</td>
             <td><span class="badge badge-warning">On Track</span></td>
         </tr>
         
@@ -307,6 +320,7 @@
             <td>3,249</td>
             <td>45.44</td>
             <td>2.46</td>
+            <td style="color:#38bdf8;font-weight:600;">18.48</td>
             <td><span class="badge badge-warning">On Track</span></td>
         </tr>
         
@@ -328,6 +342,7 @@
             <td>2,699</td>
             <td>48.55</td>
             <td>2.59</td>
+            <td style="color:#38bdf8;font-weight:600;">18.74</td>
             <td><span class="badge badge-danger">Under Target</span></td>
         </tr>
         
@@ -349,6 +364,7 @@
             <td>1,708</td>
             <td>67.21</td>
             <td>4.26</td>
+            <td style="color:#38bdf8;font-weight:600;">15.76</td>
             <td><span class="badge badge-danger">Under Target</span></td>
         </tr>
         
@@ -363,6 +379,7 @@
             <td>2,036</td>
             <td>48.47</td>
             <td>2.65</td>
+            <td style="color:#38bdf8;font-weight:600;">18.30</td>
             <td><span class="badge" style="background:#1e293b;color:#94a3b8;">Normal</span></td>
         </tr>
         
@@ -384,6 +401,7 @@
             <td>1,371</td>
             <td>70.10</td>
             <td>3.51</td>
+            <td style="color:#38bdf8;font-weight:600;">19.95</td>
             <td><span class="badge badge-warning">On Track</span></td>
         </tr>
         
@@ -405,6 +423,7 @@
             <td>2,189</td>
             <td>43.14</td>
             <td>2.88</td>
+            <td style="color:#38bdf8;font-weight:600;">15.00</td>
             <td><span class="badge badge-danger">Under Target</span></td>
         </tr>
         
@@ -426,6 +445,7 @@
             <td>1,389</td>
             <td>67.86</td>
             <td>3.34</td>
+            <td style="color:#38bdf8;font-weight:600;">20.32</td>
             <td><span class="badge badge-warning">On Track</span></td>
         </tr>
         
@@ -447,6 +467,7 @@
             <td>1,169</td>
             <td>47.95</td>
             <td>2.71</td>
+            <td style="color:#38bdf8;font-weight:600;">17.70</td>
             <td><span class="badge badge-danger">Under Target</span></td>
         </tr>
         
@@ -461,6 +482,7 @@
             <td>580</td>
             <td>57.71</td>
             <td>3.06</td>
+            <td style="color:#38bdf8;font-weight:600;">18.86</td>
             <td><span class="badge" style="background:#1e293b;color:#94a3b8;">Normal</span></td>
         </tr>
         
@@ -471,10 +493,14 @@
 
 <script>
   const PASS = "MMS2026";
-  let chartLoaded = false;
+  let chartDrawn = false;
 
   function renderChart() {
-    if (chartLoaded) return;
+    if (chartDrawn) return;
+    if (typeof Chart === 'undefined') {
+      setTimeout(renderChart, 100);
+      return;
+    }
     const canvas = document.getElementById('salesTargetChart');
     if (!canvas) return;
 
@@ -511,9 +537,9 @@
               }
           }
       });
-      chartLoaded = true;
+      chartDrawn = true;
     } catch(e) {
-      console.error("Chart error:", e);
+      console.error("Chart Error:", e);
     }
   }
 
@@ -522,7 +548,7 @@
     if (val === PASS) {
       sessionStorage.setItem("mms_auth", "ok");
       document.getElementById("auth-overlay").style.display = "none";
-      setTimeout(renderChart, 100);
+      renderChart();
     } else {
       document.getElementById("error-msg").style.display = "block";
     }
@@ -532,12 +558,9 @@
     if (e.key === "Enter") checkAccess();
   });
 
-  // إذا كان المستخدم قد دخل مسبقاً
   if (sessionStorage.getItem("mms_auth") === "ok") {
     document.getElementById("auth-overlay").style.display = "none";
-    window.addEventListener('DOMContentLoaded', () => { setTimeout(renderChart, 100); });
-    window.addEventListener('load', () => { setTimeout(renderChart, 100); });
-    setTimeout(renderChart, 300);
+    renderChart();
   }
 
   function filterStores() {

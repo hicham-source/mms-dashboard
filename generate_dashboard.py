@@ -41,18 +41,18 @@ def load_september_targets(target_file="Sep_Target.xlsx"):
         print(f"Target load error: {e}")
         return {}
 
-def generate_claude_insights(store_summary, total_sales, total_target, overall_ach, network_atv, network_upt):
+def generate_claude_insights(store_summary, total_sales, total_target, overall_ach, network_atv, network_upt, network_asp):
     api_key = os.getenv("ANTHROPIC_API_KEY")
     if not api_key:
         print("[!] Warning: ANTHROPIC_API_KEY not found in environment.")
         return {
             "critical": "Stores showing high footfall but low ATV require immediate cashier upselling initiatives.",
-            "attention": "High ATV locations require visual merchandising optimization to drive higher walk-in conversion.",
+            "attention": f"Network ASP stands at {network_asp:.2f} SAR; optimize product assortment to drive higher transaction realization.",
             "opportunity": "Top performing stores continue to lead network revenue; maintain full stock availability on high-velocity items."
         }
 
-    top_stores = store_summary.head(3)[['Organization Name', 'sales', 'ach_pct', 'atv', 'upt']].to_dict(orient="records")
-    bottom_stores = store_summary.tail(3)[['Organization Name', 'sales', 'ach_pct', 'atv', 'upt']].to_dict(orient="records")
+    top_stores = store_summary.head(3)[['Organization Name', 'sales', 'ach_pct', 'atv', 'upt', 'asp']].to_dict(orient="records")
+    bottom_stores = store_summary.tail(3)[['Organization Name', 'sales', 'ach_pct', 'atv', 'upt', 'asp']].to_dict(orient="records")
 
     prompt = f"""
     You are a Retail Operations Executive. Based on the store performance below:
@@ -61,12 +61,13 @@ def generate_claude_insights(store_summary, total_sales, total_target, overall_a
     - Network Achievement: {overall_ach:.1f}%
     - Network ATV: {network_atv:.2f} SAR
     - Network UPT: {network_upt:.2f}
+    - Network ASP: {network_asp:.2f} SAR
     - Top Stores: {top_stores}
     - Low Performing Stores: {bottom_stores}
 
     Provide 3 punchy, professional, and actionable business insights (1 sentence each):
     1. Critical Issues: direct operational problem or underperformer risk.
-    2. Attention Required: basket size, UPT, or traffic conversion warning.
+    2. Attention Required: basket size, UPT, ASP variations, or traffic conversion warning.
     3. Opportunities: merchandising or replenishment leverage for top volume drivers.
 
     Respond ONLY with valid JSON in this exact structure:
@@ -94,7 +95,7 @@ def generate_claude_insights(store_summary, total_sales, total_target, overall_a
         print(f"[!] Claude API error: {e}")
         return {
             "critical": "Underperforming locations require focused cross-selling incentives to lift transaction value.",
-            "attention": "Monitor traffic to transaction conversion ratios across regional mall locations.",
+            "attention": f"Network ASP is {network_asp:.2f} SAR; evaluate markdown and pricing compliance across outlying branches.",
             "opportunity": "Scale high-velocity display configurations from top-performing branches."
         }
 
@@ -129,7 +130,7 @@ def process_and_build():
     total_txns = store_summary['txns'].sum()
     total_units = store_summary['units'].sum()
     network_atv = (total_sales / total_txns) if total_txns > 0 else 0
-    network_upt = (total_units / total_txns) if total_units > 0 else 0
+    network_upt = (total_units / total_txns) if total_txns > 0 else 0
     network_asp = (total_sales / total_units) if total_units > 0 else 0
 
     store_summary['share'] = ((store_summary['sales'] / total_sales) * 100).round(2)
@@ -154,7 +155,7 @@ def process_and_build():
     sales_with_target = valid_targets['sales'].sum()
     overall_ach = (sales_with_target / total_target * 100) if total_target > 0 else 0
 
-    insights = generate_claude_insights(store_summary, total_sales, total_target, overall_ach, network_atv, network_upt)
+    insights = generate_claude_insights(store_summary, total_sales, total_target, overall_ach, network_atv, network_upt, network_asp)
 
     chart_stores = store_summary.head(8)
     chart_labels = chart_stores['Organization Name'].tolist()
@@ -202,6 +203,7 @@ def process_and_build():
             <td>{int(row['txns']):,}</td>
             <td>{row['atv']:,.2f}</td>
             <td>{row['upt']:,.2f}</td>
+            <td style="color:#38bdf8;font-weight:600;">{row['asp']:,.2f}</td>
             <td>{status_badge}</td>
         </tr>
         """
@@ -212,7 +214,12 @@ def process_and_build():
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>MMS Executive KPI Dashboard</title>
-    <script src="[https://cdnjs.cloudflare.com/ajax/libs/Chart.js/3.9.1/chart.min.js](https://cdnjs.cloudflare.com/ajax/libs/Chart.js/3.9.1/chart.min.js)"></script>
+    <script src="[https://cdn.jsdelivr.net/npm/chart.js@3.9.1/dist/chart.min.js](https://cdn.jsdelivr.net/npm/chart.js@3.9.1/dist/chart.min.js)"></script>
+    <script>
+      if (typeof Chart === 'undefined') {{
+        document.write('<script src="[https://cdnjs.cloudflare.com/ajax/libs/Chart.js/3.9.1/chart.min.js](https://cdnjs.cloudflare.com/ajax/libs/Chart.js/3.9.1/chart.min.js)"><\\/script>');
+      }}
+    </script>
     <style>
         :root {{
             --bg: #090d16;
@@ -244,7 +251,7 @@ def process_and_build():
         .kpi-value {{ font-size: 24px; font-weight: 700; color: #fff; }}
         .kpi-unit {{ font-size: 13px; color: var(--text-muted); font-weight: 400; }}
 
-        .chart-container {{ background: var(--card); border: 1px solid var(--border); border-radius: 10px; padding: 20px; margin-bottom: 24px; min-height: 380px; }}
+        .chart-container {{ background: var(--card); border: 1px solid var(--border); border-radius: 10px; padding: 20px; margin-bottom: 24px; }}
 
         .table-wrap {{ background: var(--card); border: 1px solid var(--border); border-radius: 10px; overflow: hidden; }}
         .table-header {{ padding: 16px 20px; display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid var(--border); flex-wrap: wrap; gap: 12px; }}
@@ -318,14 +325,14 @@ def process_and_build():
         <div class="kpi-value">{network_upt:.2f}</div>
     </div>
     <div class="kpi-card">
-        <div class="kpi-title">Avg Unit Price (ASP)</div>
+        <div class="kpi-title">Network ASP</div>
         <div class="kpi-value">SAR {network_asp:.2f}</div>
     </div>
 </div>
 
 <div class="chart-container">
     <div class="section-title"><span>📊</span> Top Stores: Actual Sales vs Target</div>
-    <div style="position:relative; height:300px; width:100%;">
+    <div style="position:relative; width:100%; height:320px;">
         <canvas id="salesTargetChart"></canvas>
     </div>
 </div>
@@ -352,6 +359,7 @@ def process_and_build():
                     <th>Txns</th>
                     <th>ATV (SAR)</th>
                     <th>UPT</th>
+                    <th>ASP (SAR)</th>
                     <th>Status</th>
                 </tr>
             </thead>
@@ -364,10 +372,14 @@ def process_and_build():
 
 <script>
   const PASS = "MMS2026";
-  let chartLoaded = false;
+  let chartDrawn = false;
 
   function renderChart() {{
-    if (chartLoaded) return;
+    if (chartDrawn) return;
+    if (typeof Chart === 'undefined') {{
+      setTimeout(renderChart, 100);
+      return;
+    }}
     const canvas = document.getElementById('salesTargetChart');
     if (!canvas) return;
 
@@ -404,9 +416,9 @@ def process_and_build():
               }}
           }}
       }});
-      chartLoaded = true;
+      chartDrawn = true;
     }} catch(e) {{
-      console.error("Chart error:", e);
+      console.error("Chart Error:", e);
     }}
   }}
 
@@ -415,7 +427,7 @@ def process_and_build():
     if (val === PASS) {{
       sessionStorage.setItem("mms_auth", "ok");
       document.getElementById("auth-overlay").style.display = "none";
-      setTimeout(renderChart, 100);
+      renderChart();
     }} else {{
       document.getElementById("error-msg").style.display = "block";
     }}
@@ -425,12 +437,9 @@ def process_and_build():
     if (e.key === "Enter") checkAccess();
   }});
 
-  // إذا كان المستخدم قد دخل مسبقاً
   if (sessionStorage.getItem("mms_auth") === "ok") {{
     document.getElementById("auth-overlay").style.display = "none";
-    window.addEventListener('DOMContentLoaded', () => {{ setTimeout(renderChart, 100); }});
-    window.addEventListener('load', () => {{ setTimeout(renderChart, 100); }});
-    setTimeout(renderChart, 300);
+    renderChart();
   }}
 
   function filterStores() {{
