@@ -315,6 +315,37 @@ def write_html(data, output_file):
         }});
     </script>
 </body>
+<div id="auth-overlay" style="position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: #0f172a; z-index: 999999; display: flex; align-items: center; justify-content: center; font-family: sans-serif; direction: rtl;">
+  <div style="background: #1e293b; padding: 30px; border-radius: 12px; box-shadow: 0 10px 25px rgba(0,0,0,0.5); text-align: center; width: 90%; max-width: 380px; border: 1px solid #334155;">
+    <h3 style="color: #f8fafc; margin-bottom: 8px; font-size: 20px;">🔒 نظام مؤشرات الأداء (MMS)</h3>
+    <p style="color: #94a3b8; font-size: 14px; margin-bottom: 20px;">الرجاء إدخال رمز المرور للمتابعة</p>
+    <input type="password" id="access-pass" placeholder="أدخل كلمة السر" style="width: 100%; padding: 12px; border-radius: 8px; border: 1px solid #475569; background: #0f172a; color: #fff; font-size: 16px; text-align: center; outline: none; box-sizing: border-box; margin-bottom: 15px;">
+    <button onclick="checkAccess()" style="width: 100%; padding: 12px; border-radius: 8px; border: none; background: #2563eb; color: #fff; font-weight: bold; font-size: 16px; cursor: pointer;">دخول</button>
+    <p id="error-msg" style="color: #ef4444; font-size: 13px; margin-top: 12px; display: none;">كلمة السر غير صحيحة، حاول مجدداً</p>
+  </div>
+</div>
+
+<script>
+  const CORRECT_PASS = "MMS2026";
+
+  if (sessionStorage.getItem("mms_authorized") === "true") {{
+    document.getElementById("auth-overlay").style.display = "none";
+  }}
+
+  function checkAccess() {{
+    const input = document.getElementById("access-pass").value;
+    if (input === CORRECT_PASS) {{
+      sessionStorage.setItem("mms_authorized", "true");
+      document.getElementById("auth-overlay").style.display = "none";
+    }} else {{
+      document.getElementById("error-msg").style.display = "block";
+    }}
+  }}
+
+  document.getElementById("access-pass").addEventListener("keypress", function(e) {{
+    if (e.key === "Enter") checkAccess();
+  }});
+</script>
 </html>"""
 
     with open(output_file, "w", encoding="utf-8") as f:
