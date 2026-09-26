@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>MMS Executive KPI Dashboard</title>
-    <script src="[https://cdn.jsdelivr.net/npm/chart.js](https://cdn.jsdelivr.net/npm/chart.js)"></script>
+    <script src="[https://cdnjs.cloudflare.com/ajax/libs/Chart.js/3.9.1/chart.min.js](https://cdnjs.cloudflare.com/ajax/libs/Chart.js/3.9.1/chart.min.js)"></script>
     <style>
         :root {
             --bg: #090d16;
@@ -36,7 +36,7 @@
         .kpi-value { font-size: 24px; font-weight: 700; color: #fff; }
         .kpi-unit { font-size: 13px; color: var(--text-muted); font-weight: 400; }
 
-        .chart-container { background: var(--card); border: 1px solid var(--border); border-radius: 10px; padding: 20px; margin-bottom: 24px; }
+        .chart-container { background: var(--card); border: 1px solid var(--border); border-radius: 10px; padding: 20px; margin-bottom: 24px; min-height: 380px; }
 
         .table-wrap { background: var(--card); border: 1px solid var(--border); border-radius: 10px; overflow: hidden; }
         .table-header { padding: 16px 20px; display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid var(--border); flex-wrap: wrap; gap: 12px; }
@@ -55,7 +55,7 @@
 </head>
 <body>
 
-<div id="auth-overlay" style="position:fixed;top:0;left:0;width:100%;height:100%;background:#090d16;z-index:999999;display:flex;align-items:center;justify-content:center;font-family:sans-serif;">
+<div id="auth-overlay" style="position:fixed;top:0;left:0;width:100%;height:100%;background:#090d16;z-index:999999;display:flex;align-items:center;justify-content:center;">
   <div style="background:#131b2e;padding:32px;border-radius:12px;box-shadow:0 15px 30px rgba(0,0,0,0.6);text-align:center;width:90%;max-width:380px;border:1px solid #1e293b;">
     <h3 style="color:#fff;margin:0 0 8px 0;font-size:20px;">🔒 MMS Executive Access</h3>
     <p style="color:#94a3b8;font-size:13px;margin:0 0 20px 0;">Enter authorization PIN to unlock dashboard</p>
@@ -76,15 +76,15 @@
 <div class="insights-grid">
     <div class="insight-card danger">
         <div class="insight-title" style="color:#ef4444;">● Critical Issues</div>
-        <div class="insight-body">MMS SLM is severely underperforming at 44.9% achievement and requires immediate intervention to prevent further deterioration of network performance.</div>
+        <div class="insight-body">MMS SLM is severely underperforming at 44.9% achievement with only 56K SAR in sales, indicating urgent need for management intervention, staffing review, or store viability assessment.</div>
     </div>
     <div class="insight-card warning">
         <div class="insight-title" style="color:#f59e0b;">● Attention Required</div>
-        <div class="insight-body">Network ATV of 57.73 SAR is significantly below top performer MMS SLT (86.8 SAR), indicating a critical gap in basket-building capability across most stores that must be addressed through targeted merchandising strategies.</div>
+        <div class="insight-body">Network UPT of 2.96 is below optimal performance; MMS MOD and MMS UPT show weakness in basket building (2.57-2.61 UPT) despite strong sales, suggesting cross-sell and upsell training gaps.</div>
     </div>
     <div class="insight-card success">
         <div class="insight-title" style="color:#10b981;">● Opportunities</div>
-        <div class="insight-body">Replicate MMS SLT's high-performing model (3.73 UPT and 86.8 ATV) across the network, particularly in MMS MOD and MMS UWJ, to unlock an estimated 15-20% incremental sales uplift from existing traffic.</div>
+        <div class="insight-body">MMS SLT demonstrates exceptional performance with 3.73 UPT and 86.8 ATV—replicate its merchandising strategy, floor layout, and staff engagement model across underperforming stores to drive network-wide basket growth.</div>
     </div>
 </div>
 
@@ -117,7 +117,7 @@
 
 <div class="chart-container">
     <div class="section-title"><span>📊</span> Top Stores: Actual Sales vs Target</div>
-    <div style="position:relative; height:320px; width:100%;">
+    <div style="position:relative; height:300px; width:100%;">
         <canvas id="salesTargetChart"></canvas>
     </div>
 </div>
@@ -471,55 +471,58 @@
 
 <script>
   const PASS = "MMS2026";
-  let chartInstance = null;
+  let chartLoaded = false;
 
-  function renderSalesChart() {
+  function renderChart() {
+    if (chartLoaded) return;
     const canvas = document.getElementById('salesTargetChart');
     if (!canvas) return;
-    if (chartInstance) chartInstance.destroy();
-    
-    const ctx = canvas.getContext('2d');
-    chartInstance = new Chart(ctx, {
-        type: 'bar',
-        data: {
-            labels: ["MMS SLT", "MMS MOD", "MMS UWJ", "MMS MDN", "MMS TVM", "MMS UWR", "MMS JDP"],
-            datasets: [
-                {
-                    label: 'Actual Sales (SAR)',
-                    data: [445475.5, 388245.65, 209321.25, 187306.0, 183985.45, 173796.0, 160568.0],
-                    backgroundColor: '#38bdf8',
-                    borderRadius: 4
-                },
-                {
-                    label: 'Target (SAR)',
-                    data: [544945.18, 389031.6, 204143.34, 0, 232002.03, 266219.09, 187017.24],
-                    backgroundColor: '#334155',
-                    borderRadius: 4
-                }
-            ]
-        },
-        options: {
-            responsive: true,
-            maintainAspectRatio: false,
-            plugins: { legend: { labels: { color: '#94a3b8' } } },
-            scales: {
-                x: { ticks: { color: '#94a3b8' }, grid: { display: false } },
-                y: { ticks: { color: '#94a3b8' }, grid: { color: '#1e293b' } }
-            }
-        }
-    });
-  }
 
-  if (sessionStorage.getItem("mms_auth") === "ok") {
-    document.getElementById("auth-overlay").style.display = "none";
-    setTimeout(renderSalesChart, 150);
+    try {
+      const ctx = canvas.getContext('2d');
+      new Chart(ctx, {
+          type: 'bar',
+          data: {
+              labels: ["MMS SLT", "MMS MOD", "MMS UWJ", "MMS MDN", "MMS TVM", "MMS UWR", "MMS JDP", "MMS YSM"],
+              datasets: [
+                  {
+                      label: 'Actual Sales (SAR)',
+                      data: [445475.5, 388245.65, 209321.25, 187306.0, 183985.45, 173796.0, 160568.0, 147636.0],
+                      backgroundColor: '#38bdf8',
+                      borderRadius: 4
+                  },
+                  {
+                      label: 'Target (SAR)',
+                      data: [544945.18, 389031.6, 204143.34, 0, 232002.03, 266219.09, 187017.24, 154400.84],
+                      backgroundColor: '#334155',
+                      borderRadius: 4
+                  }
+              ]
+          },
+          options: {
+              responsive: true,
+              maintainAspectRatio: false,
+              plugins: {
+                  legend: { labels: { color: '#94a3b8' } }
+              },
+              scales: {
+                  x: { ticks: { color: '#94a3b8' }, grid: { display: false } },
+                  y: { ticks: { color: '#94a3b8' }, grid: { color: '#1e293b' } }
+              }
+          }
+      });
+      chartLoaded = true;
+    } catch(e) {
+      console.error("Chart error:", e);
+    }
   }
 
   function checkAccess() {
-    if (document.getElementById("access-pass").value === PASS) {
+    const val = document.getElementById("access-pass").value;
+    if (val === PASS) {
       sessionStorage.setItem("mms_auth", "ok");
       document.getElementById("auth-overlay").style.display = "none";
-      setTimeout(renderSalesChart, 150);
+      setTimeout(renderChart, 100);
     } else {
       document.getElementById("error-msg").style.display = "block";
     }
@@ -528,6 +531,14 @@
   document.getElementById("access-pass").addEventListener("keypress", function(e) {
     if (e.key === "Enter") checkAccess();
   });
+
+  // إذا كان المستخدم قد دخل مسبقاً
+  if (sessionStorage.getItem("mms_auth") === "ok") {
+    document.getElementById("auth-overlay").style.display = "none";
+    window.addEventListener('DOMContentLoaded', () => { setTimeout(renderChart, 100); });
+    window.addEventListener('load', () => { setTimeout(renderChart, 100); });
+    setTimeout(renderChart, 300);
+  }
 
   function filterStores() {
       const query = document.getElementById("storeSearch").value.toLowerCase();

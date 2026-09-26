@@ -46,9 +46,9 @@ def generate_claude_insights(store_summary, total_sales, total_target, overall_a
     if not api_key:
         print("[!] Warning: ANTHROPIC_API_KEY not found in environment.")
         return {
-            "critical": "Stores showing high footfall but low ATV. Activate cashier impulse sell initiatives and multi-unit bundles immediately.",
-            "attention": "High ATV locations require visual merchandising optimization to drive higher customer walk-in conversion.",
-            "opportunity": "Top performing stores lead chain revenue. Maintain continuous replenishment on high-velocity category gondolas."
+            "critical": "Stores showing high footfall but low ATV require immediate cashier upselling initiatives.",
+            "attention": "High ATV locations require visual merchandising optimization to drive higher walk-in conversion.",
+            "opportunity": "Top performing stores continue to lead network revenue; maintain full stock availability on high-velocity items."
         }
 
     top_stores = store_summary.head(3)[['Organization Name', 'sales', 'ach_pct', 'atv', 'upt']].to_dict(orient="records")
@@ -93,7 +93,7 @@ def generate_claude_insights(store_summary, total_sales, total_target, overall_a
     except Exception as e:
         print(f"[!] Claude API error: {e}")
         return {
-            "critical": "Stores showing high footfall but low ATV. Activate cashier impulse sell initiatives immediately.",
+            "critical": "Underperforming locations require focused cross-selling incentives to lift transaction value.",
             "attention": "Monitor traffic to transaction conversion ratios across regional mall locations.",
             "opportunity": "Scale high-velocity display configurations from top-performing branches."
         }
@@ -129,7 +129,7 @@ def process_and_build():
     total_txns = store_summary['txns'].sum()
     total_units = store_summary['units'].sum()
     network_atv = (total_sales / total_txns) if total_txns > 0 else 0
-    network_upt = (total_units / total_txns) if total_txns > 0 else 0
+    network_upt = (total_units / total_txns) if total_units > 0 else 0
     network_asp = (total_sales / total_units) if total_units > 0 else 0
 
     store_summary['share'] = ((store_summary['sales'] / total_sales) * 100).round(2)
@@ -154,11 +154,9 @@ def process_and_build():
     sales_with_target = valid_targets['sales'].sum()
     overall_ach = (sales_with_target / total_target * 100) if total_target > 0 else 0
 
-    # استدعاء تحليل Claude
     insights = generate_claude_insights(store_summary, total_sales, total_target, overall_ach, network_atv, network_upt)
 
-    # بيانات الرسم البياني
-    chart_stores = store_summary.head(7)
+    chart_stores = store_summary.head(8)
     chart_labels = chart_stores['Organization Name'].tolist()
     chart_sales = chart_stores['sales'].round(2).tolist()
     chart_targets = [round(r['target'], 2) if pd.notna(r['target']) else 0 for _, r in chart_stores.iterrows()]
@@ -214,7 +212,7 @@ def process_and_build():
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>MMS Executive KPI Dashboard</title>
-    <script src="[https://cdn.jsdelivr.net/npm/chart.js](https://cdn.jsdelivr.net/npm/chart.js)"></script>
+    <script src="[https://cdnjs.cloudflare.com/ajax/libs/Chart.js/3.9.1/chart.min.js](https://cdnjs.cloudflare.com/ajax/libs/Chart.js/3.9.1/chart.min.js)"></script>
     <style>
         :root {{
             --bg: #090d16;
@@ -246,7 +244,7 @@ def process_and_build():
         .kpi-value {{ font-size: 24px; font-weight: 700; color: #fff; }}
         .kpi-unit {{ font-size: 13px; color: var(--text-muted); font-weight: 400; }}
 
-        .chart-container {{ background: var(--card); border: 1px solid var(--border); border-radius: 10px; padding: 20px; margin-bottom: 24px; }}
+        .chart-container {{ background: var(--card); border: 1px solid var(--border); border-radius: 10px; padding: 20px; margin-bottom: 24px; min-height: 380px; }}
 
         .table-wrap {{ background: var(--card); border: 1px solid var(--border); border-radius: 10px; overflow: hidden; }}
         .table-header {{ padding: 16px 20px; display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid var(--border); flex-wrap: wrap; gap: 12px; }}
@@ -265,7 +263,7 @@ def process_and_build():
 </head>
 <body>
 
-<div id="auth-overlay" style="position:fixed;top:0;left:0;width:100%;height:100%;background:#090d16;z-index:999999;display:flex;align-items:center;justify-content:center;font-family:sans-serif;">
+<div id="auth-overlay" style="position:fixed;top:0;left:0;width:100%;height:100%;background:#090d16;z-index:999999;display:flex;align-items:center;justify-content:center;">
   <div style="background:#131b2e;padding:32px;border-radius:12px;box-shadow:0 15px 30px rgba(0,0,0,0.6);text-align:center;width:90%;max-width:380px;border:1px solid #1e293b;">
     <h3 style="color:#fff;margin:0 0 8px 0;font-size:20px;">🔒 MMS Executive Access</h3>
     <p style="color:#94a3b8;font-size:13px;margin:0 0 20px 0;">Enter authorization PIN to unlock dashboard</p>
@@ -327,7 +325,7 @@ def process_and_build():
 
 <div class="chart-container">
     <div class="section-title"><span>📊</span> Top Stores: Actual Sales vs Target</div>
-    <div style="position:relative; height:320px; width:100%;">
+    <div style="position:relative; height:300px; width:100%;">
         <canvas id="salesTargetChart"></canvas>
     </div>
 </div>
@@ -366,55 +364,58 @@ def process_and_build():
 
 <script>
   const PASS = "MMS2026";
-  let chartInstance = null;
+  let chartLoaded = false;
 
-  function renderSalesChart() {{
+  function renderChart() {{
+    if (chartLoaded) return;
     const canvas = document.getElementById('salesTargetChart');
     if (!canvas) return;
-    if (chartInstance) chartInstance.destroy();
-    
-    const ctx = canvas.getContext('2d');
-    chartInstance = new Chart(ctx, {{
-        type: 'bar',
-        data: {{
-            labels: {json.dumps(chart_labels)},
-            datasets: [
-                {{
-                    label: 'Actual Sales (SAR)',
-                    data: {json.dumps(chart_sales)},
-                    backgroundColor: '#38bdf8',
-                    borderRadius: 4
-                }},
-                {{
-                    label: 'Target (SAR)',
-                    data: {json.dumps(chart_targets)},
-                    backgroundColor: '#334155',
-                    borderRadius: 4
-                }}
-            ]
-        }},
-        options: {{
-            responsive: true,
-            maintainAspectRatio: false,
-            plugins: {{ legend: {{ labels: {{ color: '#94a3b8' }} }} }},
-            scales: {{
-                x: {{ ticks: {{ color: '#94a3b8' }}, grid: {{ display: false }} }},
-                y: {{ ticks: {{ color: '#94a3b8' }}, grid: {{ color: '#1e293b' }} }}
-            }}
-        }}
-    }});
-  }}
 
-  if (sessionStorage.getItem("mms_auth") === "ok") {{
-    document.getElementById("auth-overlay").style.display = "none";
-    setTimeout(renderSalesChart, 150);
+    try {{
+      const ctx = canvas.getContext('2d');
+      new Chart(ctx, {{
+          type: 'bar',
+          data: {{
+              labels: {json.dumps(chart_labels)},
+              datasets: [
+                  {{
+                      label: 'Actual Sales (SAR)',
+                      data: {json.dumps(chart_sales)},
+                      backgroundColor: '#38bdf8',
+                      borderRadius: 4
+                  }},
+                  {{
+                      label: 'Target (SAR)',
+                      data: {json.dumps(chart_targets)},
+                      backgroundColor: '#334155',
+                      borderRadius: 4
+                  }}
+              ]
+          }},
+          options: {{
+              responsive: true,
+              maintainAspectRatio: false,
+              plugins: {{
+                  legend: {{ labels: {{ color: '#94a3b8' }} }}
+              }},
+              scales: {{
+                  x: {{ ticks: {{ color: '#94a3b8' }}, grid: {{ display: false }} }},
+                  y: {{ ticks: {{ color: '#94a3b8' }}, grid: {{ color: '#1e293b' }} }}
+              }}
+          }}
+      }});
+      chartLoaded = true;
+    }} catch(e) {{
+      console.error("Chart error:", e);
+    }}
   }}
 
   function checkAccess() {{
-    if (document.getElementById("access-pass").value === PASS) {{
+    const val = document.getElementById("access-pass").value;
+    if (val === PASS) {{
       sessionStorage.setItem("mms_auth", "ok");
       document.getElementById("auth-overlay").style.display = "none";
-      setTimeout(renderSalesChart, 150);
+      setTimeout(renderChart, 100);
     }} else {{
       document.getElementById("error-msg").style.display = "block";
     }}
@@ -423,6 +424,14 @@ def process_and_build():
   document.getElementById("access-pass").addEventListener("keypress", function(e) {{
     if (e.key === "Enter") checkAccess();
   }});
+
+  // إذا كان المستخدم قد دخل مسبقاً
+  if (sessionStorage.getItem("mms_auth") === "ok") {{
+    document.getElementById("auth-overlay").style.display = "none";
+    window.addEventListener('DOMContentLoaded', () => {{ setTimeout(renderChart, 100); }});
+    window.addEventListener('load', () => {{ setTimeout(renderChart, 100); }});
+    setTimeout(renderChart, 300);
+  }}
 
   function filterStores() {{
       const query = document.getElementById("storeSearch").value.toLowerCase();
