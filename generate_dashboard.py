@@ -157,10 +157,37 @@ def process_and_build():
 
     insights = generate_claude_insights(store_summary, total_sales, total_target, overall_ach, network_atv, network_upt, network_asp)
 
-    chart_stores = store_summary.head(8)
-    chart_labels = chart_stores['Organization Name'].tolist()
-    chart_sales = chart_stores['sales'].round(2).tolist()
-    chart_targets = [round(r['target'], 2) if pd.notna(r['target']) else 0 for _, r in chart_stores.iterrows()]
+    # بناء أشرطة المقارنة التفاعلية (HTML/CSS Bar Visualization) بدقة وبدون أي اعتماديات خارجية تفشل في التحميل
+    chart_stores = store_summary.head(7)
+    max_val = max(chart_stores['sales'].max(), chart_stores['target'].fillna(0).max())
+    if max_val == 0:
+        max_val = 1
+
+    bars_html = ""
+    for _, r in chart_stores.iterrows():
+        s_val = r['sales']
+        t_val = r['target'] if pd.notna(r['target']) else 0
+        s_pct = (s_val / max_val) * 100
+        t_pct = (t_val / max_val) * 100
+        
+        bars_html += f"""
+        <div style="margin-bottom: 14px;">
+            <div style="display:flex; justify-content:space-between; font-size:12px; font-weight:600; margin-bottom:5px;">
+                <span style="color:#f8fafc;">{r['Organization Name']}</span>
+                <span style="color:#94a3b8;">Sales: <strong style="color:#38bdf8;">{s_val:,.0f} SAR</strong> / Target: <strong style="color:#64748b;">{t_val:,.0f} SAR</strong></span>
+            </div>
+            <div style="display:flex; flex-direction:column; gap:4px;">
+                <!-- Actual Sales Bar -->
+                <div style="background:#090d16; border-radius:4px; height:12px; width:100%; overflow:hidden;">
+                    <div style="background:#38bdf8; width:{s_pct:.1f}%; height:100%; border-radius:4px;"></div>
+                </div>
+                <!-- Target Bar -->
+                <div style="background:#090d16; border-radius:4px; height:8px; width:100%; overflow:hidden;">
+                    <div style="background:#475569; width:{t_pct:.1f}%; height:100%; border-radius:4px;"></div>
+                </div>
+            </div>
+        </div>
+        """
 
     table_rows = ""
     for idx, row in store_summary.iterrows():
@@ -214,12 +241,6 @@ def process_and_build():
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>MMS Executive KPI Dashboard</title>
-    <script src="[https://cdn.jsdelivr.net/npm/chart.js@3.9.1/dist/chart.min.js](https://cdn.jsdelivr.net/npm/chart.js@3.9.1/dist/chart.min.js)"></script>
-    <script>
-      if (typeof Chart === 'undefined') {{
-        document.write('<script src="[https://cdnjs.cloudflare.com/ajax/libs/Chart.js/3.9.1/chart.min.js](https://cdnjs.cloudflare.com/ajax/libs/Chart.js/3.9.1/chart.min.js)"><\\/script>');
-      }}
-    </script>
     <style>
         :root {{
             --bg: #090d16;
@@ -236,7 +257,7 @@ def process_and_build():
         .header h1 {{ margin: 0; font-size: 24px; font-weight: 700; }}
         .header p {{ margin: 4px 0 0 0; color: var(--text-muted); font-size: 14px; }}
         
-        .section-title {{ font-size: 14px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px; color: var(--text-muted); margin-bottom: 12px; display: flex; align-items: center; gap: 8px; }}
+        .section-title {{ font-size: 14px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px; color: var(--text-muted); margin-bottom: 14px; display: flex; align-items: center; justify-content:space-between; }}
         .insights-grid {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 16px; margin-bottom: 24px; }}
         .insight-card {{ background: var(--card); border: 1px solid var(--border); border-radius: 10px; padding: 16px; border-left: 4px solid var(--border); }}
         .insight-card.danger {{ border-left-color: #ef4444; }}
@@ -251,7 +272,7 @@ def process_and_build():
         .kpi-value {{ font-size: 24px; font-weight: 700; color: #fff; }}
         .kpi-unit {{ font-size: 13px; color: var(--text-muted); font-weight: 400; }}
 
-        .chart-container {{ background: var(--card); border: 1px solid var(--border); border-radius: 10px; padding: 20px; margin-bottom: 24px; }}
+        .chart-container {{ background: var(--card); border: 1px solid var(--border); border-radius: 10px; padding: 22px; margin-bottom: 24px; }}
 
         .table-wrap {{ background: var(--card); border: 1px solid var(--border); border-radius: 10px; overflow: hidden; }}
         .table-header {{ padding: 16px 20px; display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid var(--border); flex-wrap: wrap; gap: 12px; }}
@@ -287,7 +308,7 @@ def process_and_build():
     </div>
 </div>
 
-<div class="section-title"><span>🤖</span> AI Executive Insights (Powered by Claude)</div>
+<div class="section-title"><span>🤖 AI Executive Insights (Powered by Claude)</span></div>
 <div class="insights-grid">
     <div class="insight-card danger">
         <div class="insight-title" style="color:#ef4444;">● Critical Issues</div>
@@ -331,9 +352,15 @@ def process_and_build():
 </div>
 
 <div class="chart-container">
-    <div class="section-title"><span>📊</span> Top Stores: Actual Sales vs Target</div>
-    <div style="position:relative; width:100%; height:320px;">
-        <canvas id="salesTargetChart"></canvas>
+    <div class="section-title">
+        <span>📊 Top Stores: Actual Sales vs Target</span>
+        <div style="font-size:12px; font-weight:500; display:flex; gap:16px;">
+            <span style="display:flex; align-items:center; gap:6px;"><span style="display:inline-block; width:12px; height:12px; background:#38bdf8; border-radius:2px;"></span> Actual Sales (SAR)</span>
+            <span style="display:flex; align-items:center; gap:6px;"><span style="display:inline-block; width:12px; height:12px; background:#475569; border-radius:2px;"></span> September Target (SAR)</span>
+        </div>
+    </div>
+    <div style="margin-top: 15px;">
+        {bars_html}
     </div>
 </div>
 
@@ -372,62 +399,12 @@ def process_and_build():
 
 <script>
   const PASS = "MMS2026";
-  let chartDrawn = false;
-
-  function renderChart() {{
-    if (chartDrawn) return;
-    if (typeof Chart === 'undefined') {{
-      setTimeout(renderChart, 100);
-      return;
-    }}
-    const canvas = document.getElementById('salesTargetChart');
-    if (!canvas) return;
-
-    try {{
-      const ctx = canvas.getContext('2d');
-      new Chart(ctx, {{
-          type: 'bar',
-          data: {{
-              labels: {json.dumps(chart_labels)},
-              datasets: [
-                  {{
-                      label: 'Actual Sales (SAR)',
-                      data: {json.dumps(chart_sales)},
-                      backgroundColor: '#38bdf8',
-                      borderRadius: 4
-                  }},
-                  {{
-                      label: 'Target (SAR)',
-                      data: {json.dumps(chart_targets)},
-                      backgroundColor: '#334155',
-                      borderRadius: 4
-                  }}
-              ]
-          }},
-          options: {{
-              responsive: true,
-              maintainAspectRatio: false,
-              plugins: {{
-                  legend: {{ labels: {{ color: '#94a3b8' }} }}
-              }},
-              scales: {{
-                  x: {{ ticks: {{ color: '#94a3b8' }}, grid: {{ display: false }} }},
-                  y: {{ ticks: {{ color: '#94a3b8' }}, grid: {{ color: '#1e293b' }} }}
-              }}
-          }}
-      }});
-      chartDrawn = true;
-    }} catch(e) {{
-      console.error("Chart Error:", e);
-    }}
-  }}
 
   function checkAccess() {{
     const val = document.getElementById("access-pass").value;
     if (val === PASS) {{
       sessionStorage.setItem("mms_auth", "ok");
       document.getElementById("auth-overlay").style.display = "none";
-      renderChart();
     }} else {{
       document.getElementById("error-msg").style.display = "block";
     }}
@@ -439,7 +416,6 @@ def process_and_build():
 
   if (sessionStorage.getItem("mms_auth") === "ok") {{
     document.getElementById("auth-overlay").style.display = "none";
-    renderChart();
   }}
 
   function filterStores() {{
