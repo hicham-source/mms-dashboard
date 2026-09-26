@@ -4,12 +4,6 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>MMS Executive KPI Dashboard</title>
-    <script src="[https://cdn.jsdelivr.net/npm/chart.js@3.9.1/dist/chart.min.js](https://cdn.jsdelivr.net/npm/chart.js@3.9.1/dist/chart.min.js)"></script>
-    <script>
-      if (typeof Chart === 'undefined') {
-        document.write('<script src="[https://cdnjs.cloudflare.com/ajax/libs/Chart.js/3.9.1/chart.min.js](https://cdnjs.cloudflare.com/ajax/libs/Chart.js/3.9.1/chart.min.js)"><\/script>');
-      }
-    </script>
     <style>
         :root {
             --bg: #090d16;
@@ -26,7 +20,7 @@
         .header h1 { margin: 0; font-size: 24px; font-weight: 700; }
         .header p { margin: 4px 0 0 0; color: var(--text-muted); font-size: 14px; }
         
-        .section-title { font-size: 14px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px; color: var(--text-muted); margin-bottom: 12px; display: flex; align-items: center; gap: 8px; }
+        .section-title { font-size: 14px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px; color: var(--text-muted); margin-bottom: 14px; display: flex; align-items: center; justify-content:space-between; flex-wrap:wrap; gap:10px; }
         .insights-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 16px; margin-bottom: 24px; }
         .insight-card { background: var(--card); border: 1px solid var(--border); border-radius: 10px; padding: 16px; border-left: 4px solid var(--border); }
         .insight-card.danger { border-left-color: #ef4444; }
@@ -41,7 +35,7 @@
         .kpi-value { font-size: 24px; font-weight: 700; color: #fff; }
         .kpi-unit { font-size: 13px; color: var(--text-muted); font-weight: 400; }
 
-        .chart-container { background: var(--card); border: 1px solid var(--border); border-radius: 10px; padding: 20px; margin-bottom: 24px; }
+        .chart-container { background: var(--card); border: 1px solid var(--border); border-radius: 10px; padding: 22px; margin-bottom: 24px; }
 
         .table-wrap { background: var(--card); border: 1px solid var(--border); border-radius: 10px; overflow: hidden; }
         .table-header { padding: 16px 20px; display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid var(--border); flex-wrap: wrap; gap: 12px; }
@@ -77,19 +71,19 @@
     </div>
 </div>
 
-<div class="section-title"><span>🤖</span> AI Executive Insights (Powered by Claude)</div>
+<div class="section-title"><span>🤖 AI Executive Insights (Powered by Claude)</span></div>
 <div class="insights-grid">
     <div class="insight-card danger">
         <div class="insight-title" style="color:#ef4444;">● Critical Issues</div>
-        <div class="insight-body">MMS SLM is critically underperforming at 44.9% achievement with sales of only 56K SAR, requiring immediate intervention on inventory availability, staffing, or location viability.</div>
+        <div class="insight-body">MMS SLM is critically underperforming at 44.9% achievement with 56K SAR in sales, requiring immediate intervention on stock availability, staffing, or location viability assessment.</div>
     </div>
     <div class="insight-card warning">
         <div class="insight-title" style="color:#f59e0b;">● Attention Required</div>
-        <div class="insight-body">Network UPT of 2.96 and ASP of 19.53 SAR lag significantly behind top performer MMS SLT (3.73 UPT, 23.28 ASP), indicating inconsistent product mix and cross-selling execution across the network.</div>
+        <div class="insight-body">Network ASP of 19.53 SAR is 15% below top performer MMS SLT (23.28 SAR), indicating inconsistent product mix or pricing strategy execution across stores that's leaving margin opportunity on the table.</div>
     </div>
     <div class="insight-card success">
         <div class="insight-title" style="color:#10b981;">● Opportunities</div>
-        <div class="insight-body">Replicate MMS UWJ's high-performing model (102.5% achievement) and MMS MOD's strong sales velocity (388K SAR) by scaling their proven merchandising and inventory strategies to underperforming locations like MMS SLM and MMS RMJ.</div>
+        <div class="insight-body">Replicate MMS SLT's high-value model (86.8 ATV, 3.73 UPT) across underperforming locations through category rationalization and premium SKU placement to unlock 200K+ SAR additional sales potential.</div>
     </div>
 </div>
 
@@ -121,9 +115,123 @@
 </div>
 
 <div class="chart-container">
-    <div class="section-title"><span>📊</span> Top Stores: Actual Sales vs Target</div>
-    <div style="position:relative; width:100%; height:320px;">
-        <canvas id="salesTargetChart"></canvas>
+    <div class="section-title">
+        <span>📊 Top Stores: Actual Sales vs Target</span>
+        <div style="font-size:12px; font-weight:500; display:flex; gap:16px;">
+            <span style="display:flex; align-items:center; gap:6px;"><span style="display:inline-block; width:12px; height:12px; background:#38bdf8; border-radius:2px;"></span> Actual Sales (SAR)</span>
+            <span style="display:flex; align-items:center; gap:6px;"><span style="display:inline-block; width:12px; height:12px; background:#334155; border-radius:2px;"></span> Target (SAR)</span>
+        </div>
+    </div>
+    <div style="overflow-x:auto; width:100%;">
+        
+    <svg viewBox="0 0 900 320" style="width:100%; height:auto; display:block;">
+        
+        <line x1="60" y1="260.0" x2="880" y2="260.0" stroke="#1e293b" stroke-width="1" />
+        <text x="50" y="264.0" fill="#94a3b8" font-size="11" text-anchor="end">0</text>
+        
+        <line x1="60" y1="202.5" x2="880" y2="202.5" stroke="#1e293b" stroke-width="1" />
+        <text x="50" y="206.5" fill="#94a3b8" font-size="11" text-anchor="end">156,671</text>
+        
+        <line x1="60" y1="145.0" x2="880" y2="145.0" stroke="#1e293b" stroke-width="1" />
+        <text x="50" y="149.0" fill="#94a3b8" font-size="11" text-anchor="end">313,343</text>
+        
+        <line x1="60" y1="87.5" x2="880" y2="87.5" stroke="#1e293b" stroke-width="1" />
+        <text x="50" y="91.5" fill="#94a3b8" font-size="11" text-anchor="end">470,015</text>
+        
+        <line x1="60" y1="30.0" x2="880" y2="30.0" stroke="#1e293b" stroke-width="1" />
+        <text x="50" y="34.0" fill="#94a3b8" font-size="11" text-anchor="end">626,686</text>
+        
+        
+        <!-- Actual Sales Bar -->
+        <rect x="81.2" y="96.5" width="28.0" height="163.5" rx="3" fill="#38bdf8">
+            <title>MMS SLT Sales: 445,475.50 SAR</title>
+        </rect>
+        <!-- Target Bar -->
+        <rect x="113.2" y="60.0" width="28.0" height="200.0" rx="3" fill="#334155">
+            <title>MMS SLT Target: 544,945.18 SAR</title>
+        </rect>
+        <!-- Label -->
+        <text x="111.2" y="295" fill="#cbd5e1" font-size="11" font-weight="600" text-anchor="middle">SLT</text>
+        
+        <!-- Actual Sales Bar -->
+        <rect x="183.8" y="117.5" width="28.0" height="142.5" rx="3" fill="#38bdf8">
+            <title>MMS MOD Sales: 388,245.65 SAR</title>
+        </rect>
+        <!-- Target Bar -->
+        <rect x="215.8" y="117.2" width="28.0" height="142.8" rx="3" fill="#334155">
+            <title>MMS MOD Target: 389,031.60 SAR</title>
+        </rect>
+        <!-- Label -->
+        <text x="213.8" y="295" fill="#cbd5e1" font-size="11" font-weight="600" text-anchor="middle">MOD</text>
+        
+        <!-- Actual Sales Bar -->
+        <rect x="286.2" y="183.2" width="28.0" height="76.8" rx="3" fill="#38bdf8">
+            <title>MMS UWJ Sales: 209,321.25 SAR</title>
+        </rect>
+        <!-- Target Bar -->
+        <rect x="318.2" y="185.1" width="28.0" height="74.9" rx="3" fill="#334155">
+            <title>MMS UWJ Target: 204,143.34 SAR</title>
+        </rect>
+        <!-- Label -->
+        <text x="316.2" y="295" fill="#cbd5e1" font-size="11" font-weight="600" text-anchor="middle">UWJ</text>
+        
+        <!-- Actual Sales Bar -->
+        <rect x="388.8" y="191.3" width="28.0" height="68.7" rx="3" fill="#38bdf8">
+            <title>MMS MDN Sales: 187,306.00 SAR</title>
+        </rect>
+        <!-- Target Bar -->
+        <rect x="420.8" y="260.0" width="28.0" height="0.0" rx="3" fill="#334155">
+            <title>MMS MDN Target: 0.00 SAR</title>
+        </rect>
+        <!-- Label -->
+        <text x="418.8" y="295" fill="#cbd5e1" font-size="11" font-weight="600" text-anchor="middle">MDN</text>
+        
+        <!-- Actual Sales Bar -->
+        <rect x="491.2" y="192.5" width="28.0" height="67.5" rx="3" fill="#38bdf8">
+            <title>MMS TVM Sales: 183,985.45 SAR</title>
+        </rect>
+        <!-- Target Bar -->
+        <rect x="523.2" y="174.9" width="28.0" height="85.1" rx="3" fill="#334155">
+            <title>MMS TVM Target: 232,002.03 SAR</title>
+        </rect>
+        <!-- Label -->
+        <text x="521.2" y="295" fill="#cbd5e1" font-size="11" font-weight="600" text-anchor="middle">TVM</text>
+        
+        <!-- Actual Sales Bar -->
+        <rect x="593.8" y="196.2" width="28.0" height="63.8" rx="3" fill="#38bdf8">
+            <title>MMS UWR Sales: 173,796.00 SAR</title>
+        </rect>
+        <!-- Target Bar -->
+        <rect x="625.8" y="162.3" width="28.0" height="97.7" rx="3" fill="#334155">
+            <title>MMS UWR Target: 266,219.09 SAR</title>
+        </rect>
+        <!-- Label -->
+        <text x="623.8" y="295" fill="#cbd5e1" font-size="11" font-weight="600" text-anchor="middle">UWR</text>
+        
+        <!-- Actual Sales Bar -->
+        <rect x="696.2" y="201.1" width="28.0" height="58.9" rx="3" fill="#38bdf8">
+            <title>MMS JDP Sales: 160,568.00 SAR</title>
+        </rect>
+        <!-- Target Bar -->
+        <rect x="728.2" y="191.4" width="28.0" height="68.6" rx="3" fill="#334155">
+            <title>MMS JDP Target: 187,017.24 SAR</title>
+        </rect>
+        <!-- Label -->
+        <text x="726.2" y="295" fill="#cbd5e1" font-size="11" font-weight="600" text-anchor="middle">JDP</text>
+        
+        <!-- Actual Sales Bar -->
+        <rect x="798.8" y="205.8" width="28.0" height="54.2" rx="3" fill="#38bdf8">
+            <title>MMS YSM Sales: 147,636.00 SAR</title>
+        </rect>
+        <!-- Target Bar -->
+        <rect x="830.8" y="203.3" width="28.0" height="56.7" rx="3" fill="#334155">
+            <title>MMS YSM Target: 154,400.84 SAR</title>
+        </rect>
+        <!-- Label -->
+        <text x="828.8" y="295" fill="#cbd5e1" font-size="11" font-weight="600" text-anchor="middle">YSM</text>
+        
+    </svg>
+    
     </div>
 </div>
 
@@ -493,62 +601,12 @@
 
 <script>
   const PASS = "MMS2026";
-  let chartDrawn = false;
-
-  function renderChart() {
-    if (chartDrawn) return;
-    if (typeof Chart === 'undefined') {
-      setTimeout(renderChart, 100);
-      return;
-    }
-    const canvas = document.getElementById('salesTargetChart');
-    if (!canvas) return;
-
-    try {
-      const ctx = canvas.getContext('2d');
-      new Chart(ctx, {
-          type: 'bar',
-          data: {
-              labels: ["MMS SLT", "MMS MOD", "MMS UWJ", "MMS MDN", "MMS TVM", "MMS UWR", "MMS JDP", "MMS YSM"],
-              datasets: [
-                  {
-                      label: 'Actual Sales (SAR)',
-                      data: [445475.5, 388245.65, 209321.25, 187306.0, 183985.45, 173796.0, 160568.0, 147636.0],
-                      backgroundColor: '#38bdf8',
-                      borderRadius: 4
-                  },
-                  {
-                      label: 'Target (SAR)',
-                      data: [544945.18, 389031.6, 204143.34, 0, 232002.03, 266219.09, 187017.24, 154400.84],
-                      backgroundColor: '#334155',
-                      borderRadius: 4
-                  }
-              ]
-          },
-          options: {
-              responsive: true,
-              maintainAspectRatio: false,
-              plugins: {
-                  legend: { labels: { color: '#94a3b8' } }
-              },
-              scales: {
-                  x: { ticks: { color: '#94a3b8' }, grid: { display: false } },
-                  y: { ticks: { color: '#94a3b8' }, grid: { color: '#1e293b' } }
-              }
-          }
-      });
-      chartDrawn = true;
-    } catch(e) {
-      console.error("Chart Error:", e);
-    }
-  }
 
   function checkAccess() {
     const val = document.getElementById("access-pass").value;
     if (val === PASS) {
       sessionStorage.setItem("mms_auth", "ok");
       document.getElementById("auth-overlay").style.display = "none";
-      renderChart();
     } else {
       document.getElementById("error-msg").style.display = "block";
     }
@@ -560,7 +618,6 @@
 
   if (sessionStorage.getItem("mms_auth") === "ok") {
     document.getElementById("auth-overlay").style.display = "none";
-    renderChart();
   }
 
   function filterStores() {

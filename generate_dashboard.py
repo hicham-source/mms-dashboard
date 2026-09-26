@@ -99,6 +99,69 @@ def generate_claude_insights(store_summary, total_sales, total_target, overall_a
             "opportunity": "Scale high-velocity display configurations from top-performing branches."
         }
 
+def build_svg_bar_chart(chart_stores):
+    # رسم مخطط أعمدة SVG نقي بنسبة 100% يظهر بدون أي جافاسكربت
+    svg_w, svg_h = 900, 320
+    pad_left, pad_right, pad_top, pad_bottom = 60, 20, 30, 60
+    plot_w = svg_w - pad_left - pad_right
+    plot_h = svg_h - pad_top - pad_bottom
+
+    max_val = max(chart_stores['sales'].max(), chart_stores['target'].fillna(0).max()) * 1.15
+    if max_val == 0:
+        max_val = 1
+
+    n_stores = len(chart_stores)
+    slot_w = plot_w / max(n_stores, 1)
+    bar_w = min(slot_w * 0.35, 28)
+
+    # شبكة الخطوط الأفقية
+    grid_lines = ""
+    for i in range(5):
+        val = (max_val / 4) * i
+        y_pos = pad_top + plot_h - (i * (plot_h / 4))
+        grid_lines += f"""
+        <line x1="{pad_left}" y1="{y_pos}" x2="{svg_w - pad_right}" y2="{y_pos}" stroke="#1e293b" stroke-width="1" />
+        <text x="{pad_left - 10}" y="{y_pos + 4}" fill="#94a3b8" font-size="11" text-anchor="end">{int(val):,}</text>
+        """
+
+    bars_svg = ""
+    for idx, (_, r) in enumerate(chart_stores.iterrows()):
+        slot_center = pad_left + (idx + 0.5) * slot_w
+        s_val = r['sales']
+        t_val = r['target'] if pd.notna(r['target']) else 0
+
+        s_h = (s_val / max_val) * plot_h
+        t_h = (t_val / max_val) * plot_h
+
+        s_x = slot_center - bar_w - 2
+        s_y = pad_top + plot_h - s_h
+
+        t_x = slot_center + 2
+        t_y = pad_top + plot_h - t_h
+
+        name = str(r['Organization Name']).replace("MMS ", "")
+
+        bars_svg += f"""
+        <!-- Actual Sales Bar -->
+        <rect x="{s_x:.1f}" y="{s_y:.1f}" width="{bar_w:.1f}" height="{s_h:.1f}" rx="3" fill="#38bdf8">
+            <title>{r['Organization Name']} Sales: {s_val:,.2f} SAR</title>
+        </rect>
+        <!-- Target Bar -->
+        <rect x="{t_x:.1f}" y="{t_y:.1f}" width="{bar_w:.1f}" height="{t_h:.1f}" rx="3" fill="#334155">
+            <title>{r['Organization Name']} Target: {t_val:,.2f} SAR</title>
+        </rect>
+        <!-- Label -->
+        <text x="{slot_center:.1f}" y="{svg_h - 25}" fill="#cbd5e1" font-size="11" font-weight="600" text-anchor="middle">{name}</text>
+        """
+
+    svg = f"""
+    <svg viewBox="0 0 {svg_w} {svg_h}" style="width:100%; height:auto; display:block;">
+        {grid_lines}
+        {bars_svg}
+    </svg>
+    """
+    return svg
+
 def process_and_build():
     file_path = get_latest_sales_file()
     print(f"[*] Reading sales file: {file_path}")
@@ -130,7 +193,7 @@ def process_and_build():
     total_txns = store_summary['txns'].sum()
     total_units = store_summary['units'].sum()
     network_atv = (total_sales / total_txns) if total_txns > 0 else 0
-    network_upt = (total_units / total_txns) if total_txns > 0 else 0
+    network_upt = (total_units / total_txns) if total_units > 0 else 0
     network_asp = (total_sales / total_units) if total_units > 0 else 0
 
     store_summary['share'] = ((store_summary['sales'] / total_sales) * 100).round(2)
@@ -157,37 +220,8 @@ def process_and_build():
 
     insights = generate_claude_insights(store_summary, total_sales, total_target, overall_ach, network_atv, network_upt, network_asp)
 
-    # بناء أشرطة المقارنة التفاعلية (HTML/CSS Bar Visualization) بدقة وبدون أي اعتماديات خارجية تفشل في التحميل
-    chart_stores = store_summary.head(7)
-    max_val = max(chart_stores['sales'].max(), chart_stores['target'].fillna(0).max())
-    if max_val == 0:
-        max_val = 1
-
-    bars_html = ""
-    for _, r in chart_stores.iterrows():
-        s_val = r['sales']
-        t_val = r['target'] if pd.notna(r['target']) else 0
-        s_pct = (s_val / max_val) * 100
-        t_pct = (t_val / max_val) * 100
-        
-        bars_html += f"""
-        <div style="margin-bottom: 14px;">
-            <div style="display:flex; justify-content:space-between; font-size:12px; font-weight:600; margin-bottom:5px;">
-                <span style="color:#f8fafc;">{r['Organization Name']}</span>
-                <span style="color:#94a3b8;">Sales: <strong style="color:#38bdf8;">{s_val:,.0f} SAR</strong> / Target: <strong style="color:#64748b;">{t_val:,.0f} SAR</strong></span>
-            </div>
-            <div style="display:flex; flex-direction:column; gap:4px;">
-                <!-- Actual Sales Bar -->
-                <div style="background:#090d16; border-radius:4px; height:12px; width:100%; overflow:hidden;">
-                    <div style="background:#38bdf8; width:{s_pct:.1f}%; height:100%; border-radius:4px;"></div>
-                </div>
-                <!-- Target Bar -->
-                <div style="background:#090d16; border-radius:4px; height:8px; width:100%; overflow:hidden;">
-                    <div style="background:#475569; width:{t_pct:.1f}%; height:100%; border-radius:4px;"></div>
-                </div>
-            </div>
-        </div>
-        """
+    chart_stores = store_summary.head(8)
+    chart_svg_markup = build_svg_bar_chart(chart_stores)
 
     table_rows = ""
     for idx, row in store_summary.iterrows():
@@ -257,7 +291,7 @@ def process_and_build():
         .header h1 {{ margin: 0; font-size: 24px; font-weight: 700; }}
         .header p {{ margin: 4px 0 0 0; color: var(--text-muted); font-size: 14px; }}
         
-        .section-title {{ font-size: 14px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px; color: var(--text-muted); margin-bottom: 14px; display: flex; align-items: center; justify-content:space-between; }}
+        .section-title {{ font-size: 14px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px; color: var(--text-muted); margin-bottom: 14px; display: flex; align-items: center; justify-content:space-between; flex-wrap:wrap; gap:10px; }}
         .insights-grid {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 16px; margin-bottom: 24px; }}
         .insight-card {{ background: var(--card); border: 1px solid var(--border); border-radius: 10px; padding: 16px; border-left: 4px solid var(--border); }}
         .insight-card.danger {{ border-left-color: #ef4444; }}
@@ -356,11 +390,11 @@ def process_and_build():
         <span>📊 Top Stores: Actual Sales vs Target</span>
         <div style="font-size:12px; font-weight:500; display:flex; gap:16px;">
             <span style="display:flex; align-items:center; gap:6px;"><span style="display:inline-block; width:12px; height:12px; background:#38bdf8; border-radius:2px;"></span> Actual Sales (SAR)</span>
-            <span style="display:flex; align-items:center; gap:6px;"><span style="display:inline-block; width:12px; height:12px; background:#475569; border-radius:2px;"></span> September Target (SAR)</span>
+            <span style="display:flex; align-items:center; gap:6px;"><span style="display:inline-block; width:12px; height:12px; background:#334155; border-radius:2px;"></span> Target (SAR)</span>
         </div>
     </div>
-    <div style="margin-top: 15px;">
-        {bars_html}
+    <div style="overflow-x:auto; width:100%;">
+        {chart_svg_markup}
     </div>
 </div>
 
