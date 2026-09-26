@@ -65,24 +65,6 @@
   </div>
 </div>
 
-<script>
-  const PASS = "MMS2026";
-  if (sessionStorage.getItem("mms_auth") === "ok") {
-    document.getElementById("auth-overlay").style.display = "none";
-  }
-  function checkAccess() {
-    if (document.getElementById("access-pass").value === PASS) {
-      sessionStorage.setItem("mms_auth", "ok");
-      document.getElementById("auth-overlay").style.display = "none";
-    } else {
-      document.getElementById("error-msg").style.display = "block";
-    }
-  }
-  document.getElementById("access-pass").addEventListener("keypress", function(e) {
-    if (e.key === "Enter") checkAccess();
-  });
-</script>
-
 <div class="header">
     <div>
         <h1>MMS Executive KPI Dashboard</h1>
@@ -94,15 +76,15 @@
 <div class="insights-grid">
     <div class="insight-card danger">
         <div class="insight-title" style="color:#ef4444;">● Critical Issues</div>
-        <div class="insight-body">MMS SLM is critically underperforming at 44.9% achievement with sales of only 56,048 SAR, requiring immediate diagnostic review of staffing, inventory, or local market conditions.</div>
+        <div class="insight-body">MMS SLM is severely underperforming at 44.9% achievement and requires immediate intervention to prevent further deterioration of network performance.</div>
     </div>
     <div class="insight-card warning">
         <div class="insight-title" style="color:#f59e0b;">● Attention Required</div>
-        <div class="insight-body">Network ATV of 57.73 SAR lags significantly behind top performer MMS SLT (86.8 SAR), indicating a 50% uplift opportunity through enhanced product bundling and upselling across underperforming locations.</div>
+        <div class="insight-body">Network ATV of 57.73 SAR is significantly below top performer MMS SLT (86.8 SAR), indicating a critical gap in basket-building capability across most stores that must be addressed through targeted merchandising strategies.</div>
     </div>
     <div class="insight-card success">
         <div class="insight-title" style="color:#10b981;">● Opportunities</div>
-        <div class="insight-body">MMS SLT's exceptional performance (445K sales, 3.73 UPT, 86.8 ATV) demonstrates a proven playbook—replicate its merchandising and customer engagement model across the network to close the 18.8% gap to target.</div>
+        <div class="insight-body">Replicate MMS SLT's high-performing model (3.73 UPT and 86.8 ATV) across the network, particularly in MMS MOD and MMS UWJ, to unlock an estimated 15-20% incremental sales uplift from existing traffic.</div>
     </div>
 </div>
 
@@ -135,7 +117,9 @@
 
 <div class="chart-container">
     <div class="section-title"><span>📊</span> Top Stores: Actual Sales vs Target</div>
-    <canvas id="salesTargetChart" height="80"></canvas>
+    <div style="position:relative; height:320px; width:100%;">
+        <canvas id="salesTargetChart"></canvas>
+    </div>
 </div>
 
 <div class="table-wrap">
@@ -486,34 +470,63 @@
 </div>
 
 <script>
-  const ctx = document.getElementById('salesTargetChart').getContext('2d');
-  new Chart(ctx, {
-      type: 'bar',
-      data: {
-          labels: ["MMS SLT", "MMS MOD", "MMS UWJ", "MMS MDN", "MMS TVM", "MMS UWR", "MMS JDP"],
-          datasets: [
-              {
-                  label: 'Actual Sales (SAR)',
-                  data: [445475.5, 388245.65, 209321.25, 187306.0, 183985.45, 173796.0, 160568.0],
-                  backgroundColor: '#38bdf8',
-                  borderRadius: 4
-              },
-              {
-                  label: 'Target (SAR)',
-                  data: [544945.18, 389031.6, 204143.34, 0, 232002.03, 266219.09, 187017.24],
-                  backgroundColor: '#334155',
-                  borderRadius: 4
-              }
-          ]
-      },
-      options: {
-          responsive: true,
-          plugins: { legend: { labels: { color: '#94a3b8' } } },
-          scales: {
-              x: { ticks: { color: '#94a3b8' }, grid: { display: false } },
-              y: { ticks: { color: '#94a3b8' }, grid: { color: '#1e293b' } }
-          }
-      }
+  const PASS = "MMS2026";
+  let chartInstance = null;
+
+  function renderSalesChart() {
+    const canvas = document.getElementById('salesTargetChart');
+    if (!canvas) return;
+    if (chartInstance) chartInstance.destroy();
+    
+    const ctx = canvas.getContext('2d');
+    chartInstance = new Chart(ctx, {
+        type: 'bar',
+        data: {
+            labels: ["MMS SLT", "MMS MOD", "MMS UWJ", "MMS MDN", "MMS TVM", "MMS UWR", "MMS JDP"],
+            datasets: [
+                {
+                    label: 'Actual Sales (SAR)',
+                    data: [445475.5, 388245.65, 209321.25, 187306.0, 183985.45, 173796.0, 160568.0],
+                    backgroundColor: '#38bdf8',
+                    borderRadius: 4
+                },
+                {
+                    label: 'Target (SAR)',
+                    data: [544945.18, 389031.6, 204143.34, 0, 232002.03, 266219.09, 187017.24],
+                    backgroundColor: '#334155',
+                    borderRadius: 4
+                }
+            ]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: { legend: { labels: { color: '#94a3b8' } } },
+            scales: {
+                x: { ticks: { color: '#94a3b8' }, grid: { display: false } },
+                y: { ticks: { color: '#94a3b8' }, grid: { color: '#1e293b' } }
+            }
+        }
+    });
+  }
+
+  if (sessionStorage.getItem("mms_auth") === "ok") {
+    document.getElementById("auth-overlay").style.display = "none";
+    setTimeout(renderSalesChart, 150);
+  }
+
+  function checkAccess() {
+    if (document.getElementById("access-pass").value === PASS) {
+      sessionStorage.setItem("mms_auth", "ok");
+      document.getElementById("auth-overlay").style.display = "none";
+      setTimeout(renderSalesChart, 150);
+    } else {
+      document.getElementById("error-msg").style.display = "block";
+    }
+  }
+
+  document.getElementById("access-pass").addEventListener("keypress", function(e) {
+    if (e.key === "Enter") checkAccess();
   });
 
   function filterStores() {

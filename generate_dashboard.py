@@ -46,9 +46,9 @@ def generate_claude_insights(store_summary, total_sales, total_target, overall_a
     if not api_key:
         print("[!] Warning: ANTHROPIC_API_KEY not found in environment.")
         return {
-            "critical": "Impulse purchase strategy needed for stores with high traffic but below-average basket values.",
+            "critical": "Stores showing high footfall but low ATV. Activate cashier impulse sell initiatives and multi-unit bundles immediately.",
             "attention": "High ATV locations require visual merchandising optimization to drive higher customer walk-in conversion.",
-            "opportunity": "Flagship stores continue to drive network growth; maintain full product availability on key SKUs."
+            "opportunity": "Top performing stores lead chain revenue. Maintain continuous replenishment on high-velocity category gondolas."
         }
 
     top_stores = store_summary.head(3)[['Organization Name', 'sales', 'ach_pct', 'atv', 'upt']].to_dict(orient="records")
@@ -93,7 +93,7 @@ def generate_claude_insights(store_summary, total_sales, total_target, overall_a
     except Exception as e:
         print(f"[!] Claude API error: {e}")
         return {
-            "critical": "Underperforming locations require focused cross-selling incentives to lift transaction value.",
+            "critical": "Stores showing high footfall but low ATV. Activate cashier impulse sell initiatives immediately.",
             "attention": "Monitor traffic to transaction conversion ratios across regional mall locations.",
             "opportunity": "Scale high-velocity display configurations from top-performing branches."
         }
@@ -154,7 +154,7 @@ def process_and_build():
     sales_with_target = valid_targets['sales'].sum()
     overall_ach = (sales_with_target / total_target * 100) if total_target > 0 else 0
 
-    # استدعاء Claude
+    # استدعاء تحليل Claude
     insights = generate_claude_insights(store_summary, total_sales, total_target, overall_ach, network_atv, network_upt)
 
     # بيانات الرسم البياني
@@ -275,24 +275,6 @@ def process_and_build():
   </div>
 </div>
 
-<script>
-  const PASS = "MMS2026";
-  if (sessionStorage.getItem("mms_auth") === "ok") {{
-    document.getElementById("auth-overlay").style.display = "none";
-  }}
-  function checkAccess() {{
-    if (document.getElementById("access-pass").value === PASS) {{
-      sessionStorage.setItem("mms_auth", "ok");
-      document.getElementById("auth-overlay").style.display = "none";
-    }} else {{
-      document.getElementById("error-msg").style.display = "block";
-    }}
-  }}
-  document.getElementById("access-pass").addEventListener("keypress", function(e) {{
-    if (e.key === "Enter") checkAccess();
-  }});
-</script>
-
 <div class="header">
     <div>
         <h1>MMS Executive KPI Dashboard</h1>
@@ -345,7 +327,9 @@ def process_and_build():
 
 <div class="chart-container">
     <div class="section-title"><span>📊</span> Top Stores: Actual Sales vs Target</div>
-    <canvas id="salesTargetChart" height="80"></canvas>
+    <div style="position:relative; height:320px; width:100%;">
+        <canvas id="salesTargetChart"></canvas>
+    </div>
 </div>
 
 <div class="table-wrap">
@@ -381,34 +365,63 @@ def process_and_build():
 </div>
 
 <script>
-  const ctx = document.getElementById('salesTargetChart').getContext('2d');
-  new Chart(ctx, {{
-      type: 'bar',
-      data: {{
-          labels: {json.dumps(chart_labels)},
-          datasets: [
-              {{
-                  label: 'Actual Sales (SAR)',
-                  data: {json.dumps(chart_sales)},
-                  backgroundColor: '#38bdf8',
-                  borderRadius: 4
-              }},
-              {{
-                  label: 'Target (SAR)',
-                  data: {json.dumps(chart_targets)},
-                  backgroundColor: '#334155',
-                  borderRadius: 4
-              }}
-          ]
-      }},
-      options: {{
-          responsive: true,
-          plugins: {{ legend: {{ labels: {{ color: '#94a3b8' }} }} }},
-          scales: {{
-              x: {{ ticks: {{ color: '#94a3b8' }}, grid: {{ display: false }} }},
-              y: {{ ticks: {{ color: '#94a3b8' }}, grid: {{ color: '#1e293b' }} }}
-          }}
-      }}
+  const PASS = "MMS2026";
+  let chartInstance = null;
+
+  function renderSalesChart() {{
+    const canvas = document.getElementById('salesTargetChart');
+    if (!canvas) return;
+    if (chartInstance) chartInstance.destroy();
+    
+    const ctx = canvas.getContext('2d');
+    chartInstance = new Chart(ctx, {{
+        type: 'bar',
+        data: {{
+            labels: {json.dumps(chart_labels)},
+            datasets: [
+                {{
+                    label: 'Actual Sales (SAR)',
+                    data: {json.dumps(chart_sales)},
+                    backgroundColor: '#38bdf8',
+                    borderRadius: 4
+                }},
+                {{
+                    label: 'Target (SAR)',
+                    data: {json.dumps(chart_targets)},
+                    backgroundColor: '#334155',
+                    borderRadius: 4
+                }}
+            ]
+        }},
+        options: {{
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: {{ legend: {{ labels: {{ color: '#94a3b8' }} }} }},
+            scales: {{
+                x: {{ ticks: {{ color: '#94a3b8' }}, grid: {{ display: false }} }},
+                y: {{ ticks: {{ color: '#94a3b8' }}, grid: {{ color: '#1e293b' }} }}
+            }}
+        }}
+    }});
+  }}
+
+  if (sessionStorage.getItem("mms_auth") === "ok") {{
+    document.getElementById("auth-overlay").style.display = "none";
+    setTimeout(renderSalesChart, 150);
+  }}
+
+  function checkAccess() {{
+    if (document.getElementById("access-pass").value === PASS) {{
+      sessionStorage.setItem("mms_auth", "ok");
+      document.getElementById("auth-overlay").style.display = "none";
+      setTimeout(renderSalesChart, 150);
+    }} else {{
+      document.getElementById("error-msg").style.display = "block";
+    }}
+  }}
+
+  document.getElementById("access-pass").addEventListener("keypress", function(e) {{
+    if (e.key === "Enter") checkAccess();
   }});
 
   function filterStores() {{
