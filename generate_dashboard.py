@@ -579,7 +579,7 @@ def process_and_build():
         yoy_badge = f'<span style="color:{yoy_col}; font-weight:700;">{reg_yoy:+.1f}%</span>' if reg_yoy is not None else '<span style="color:#64748b;">N/A</span>'
 
         region_kpi_cards += f"""
-        <div style="background:var(--card); border:1px solid var(--border); border-top:4px solid {'#38bdf8' if 'Riyadh' in reg_name else '#818cf8'}; border-radius:12px; padding:20px; flex:1; min-width:320px;">
+        <div class="region-block" data-region="{reg_name}" style="background:var(--card); border:1px solid var(--border); border-top:4px solid {'#38bdf8' if 'Riyadh' in reg_name else '#818cf8'}; border-radius:12px; padding:20px; flex:1; min-width:320px;">
             <div style="display:flex; justify-content:space-between; align-items:flex-start; margin-bottom:12px;">
                 <div>
                     <h3 style="margin:0; font-size:17px; color:#fff;" data-translate-key="{reg_name}">{reg_name}</h3>
@@ -663,7 +663,7 @@ def process_and_build():
             """
 
         region_tables_html += f"""
-        <div class="table-wrap" style="margin-bottom:30px;">
+        <div class="table-wrap region-table-wrap" data-region="{reg_name}" style="margin-bottom:30px;">
             <div class="table-header">
                 <div>
                     <h3 style="color:#38bdf8; font-size:16px;">🏢 {reg_name.upper()}</h3>
@@ -710,7 +710,7 @@ def process_and_build():
 
     net_yoy_col = "#10b981" if network_lfl_growth >= 0 else "#ef4444"
     grand_total_html = f"""
-    <div style="background:#131b2e; border:2px solid #2563eb; border-radius:12px; padding:18px 24px; display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:16px; margin-bottom:30px;">
+    <div id="grand-total-banner" style="background:#131b2e; border:2px solid #2563eb; border-radius:12px; padding:18px 24px; display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:16px; margin-bottom:30px;">
         <div>
             <div style="font-size:13px; color:#38bdf8; font-weight:700; text-transform:uppercase;" data-translate-key="network_total">Network Grand Total (All Regions)</div>
             <div style="font-size:22px; font-weight:800; color:#fff; margin-top:2px;">{total_sales:,.0f} <span style="font-size:13px; font-weight:400; color:#94a3b8;">SAR</span></div>
@@ -769,8 +769,8 @@ def process_and_build():
         if pd.notna(row['ly_sales']):
             ly_str = f"{row['ly_sales']:,.2f}"
             yoy_val = row['yoy_growth']
-            y_col = "#10b981" if yoy_val >= 0 else "#ef4444"
-            yoy_cell = f'<span style="color:{y_col}; font-weight:700;">{yoy_val:+.1f}%</span>'
+            yoy_col = "#10b981" if yoy_val >= 0 else "#ef4444"
+            yoy_cell = f'<span style="color:{yoy_col}; font-weight:700;">{yoy_val:+.1f}%</span>'
         else:
             ly_str = '<span style="color:#64748b;" data-translate-key="new_store">New Store</span>'
             yoy_cell = '<span style="color:#64748b;">-</span>'
@@ -803,7 +803,7 @@ def process_and_build():
 
         if "Mismatch" in row['diag_title'] or "Deficit" in row['diag_title'] or "Performer" in row['diag_title']:
             decision_cards_html += f"""
-            <div style="background:var(--card); border:1px solid var(--border); border-left:4px solid {row['diag_color']}; border-radius:10px; padding:18px;">
+            <div class="decision-card-item" data-region="{row['region']}" style="background:var(--card); border:1px solid var(--border); border-left:4px solid {row['diag_color']}; border-radius:10px; padding:18px;">
                 <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px; flex-wrap:wrap; gap:8px;">
                     <div>
                         <span style="font-weight:700; color:#fff; font-size:15px;">{st_name} ({st_code})</span>
@@ -824,7 +824,7 @@ def process_and_build():
             """
 
         store_table_rows += f"""
-        <tr onclick="openStoreDetails('{st_code}')" class="clickable-row" title="Click to view detailed store category mix & directives">
+        <tr onclick="openStoreDetails('{st_code}')" class="clickable-row" data-region="{row['region']}" title="Click to view detailed store category mix & directives">
             <td style="color:#64748b;font-weight:600;">{idx+1}</td>
             <td style="color:#38bdf8;font-weight:600;">{st_code}</td>
             <td style="font-weight:600;color:#fff;">{st_name}</td>
@@ -875,6 +875,10 @@ def process_and_build():
     for c_name in main_cat_summary['main_category']:
         main_cat_options += f'<option value="{html.escape(c_name)}">{html.escape(c_name)}</option>'
 
+    store_options_html = '<option value="ALL" data-translate-key="all_stores">-- All Stores (Overview) --</option>'
+    for _, s in store_summary.iterrows():
+        store_options_html += f'<option value="{s["clean_code"]}">{s["full_name"]} ({s["clean_code"]})</option>'
+
     html_content = f"""<!DOCTYPE html>
 <html lang="en" id="html-root">
 <head>
@@ -900,6 +904,8 @@ def process_and_build():
         .top-controls {{ display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }}
         .lang-btn {{ background: #1e293b; border: 1px solid #334155; color: #fff; padding: 8px 16px; border-radius: 8px; font-weight: 700; cursor: pointer; transition: 0.2s; font-size: 13px; }}
         .lang-btn:hover {{ background: #2563eb; border-color: #2563eb; }}
+        .logout-btn {{ background: #ef444422; border: 1px solid #ef444455; color: #ef4444; padding: 8px 14px; border-radius: 8px; font-weight: 700; cursor: pointer; transition: 0.2s; font-size: 12px; }}
+        .logout-btn:hover {{ background: #ef4444; color: #fff; }}
 
         .view-toggle-bar {{ display: flex; background: #0c1220; padding: 4px; border-radius: 10px; border: 1px solid var(--border); margin-bottom: 24px; width: fit-content; gap: 4px; flex-wrap: wrap; }}
         .view-btn {{ background: transparent; border: none; color: var(--text-muted); padding: 10px 22px; border-radius: 8px; font-size: 14px; font-weight: 700; cursor: pointer; transition: 0.2s; display: flex; align-items: center; gap: 8px; }}
@@ -974,6 +980,105 @@ def process_and_build():
     </style>
 </head>
 <body>
+
+<!-- شاشة التحقق من الصلاحيات وتحديد المستخدم -->
+<div id="auth-overlay" style="position:fixed;top:0;left:0;width:100%;height:100%;background:#090d16;z-index:99999999;display:flex;align-items:center;justify-content:center;">
+  <div style="background:#131b2e;padding:32px;border-radius:12px;box-shadow:0 15px 30px rgba(0,0,0,0.6);text-align:center;width:90%;max-width:380px;border:1px solid #1e293b;">
+    <h3 style="color:#fff;margin:0 0 8px 0;font-size:20px;">🔒 MMS Secure Access</h3>
+    <p style="color:#94a3b8;font-size:13px;margin:0 0 20px 0;">Enter your authorization PIN to view report</p>
+    <input type="password" id="access-pass" placeholder="PIN Code" style="width:100%;padding:12px;border-radius:6px;border:1px solid #334155;background:#090d16;color:#fff;font-size:16px;text-align:center;outline:none;box-sizing:border-box;margin-bottom:14px;">
+    <button onclick="checkAccess()" style="width:100%;padding:12px;border-radius:6px;border:none;background:#2563eb;color:#fff;font-weight:700;font-size:15px;cursor:pointer;">Unlock Dashboard</button>
+    <p id="error-msg" style="color:#ef4444;font-size:13px;margin:12px 0 0 0;display:none;">Invalid authorization credentials</p>
+  </div>
+</div>
+
+<script>
+  const USER_ROLES = {{
+    "MMS2026": {{ role: "ADMIN", name: "Executive & Merchandising (Full Access)", region: "ALL" }},
+    "SULTAN2026": {{ role: "AREA_MGR", name: "Sultan", region: "Riyadh Central Region" }},
+    "RAJIB2026": {{ role: "AREA_MGR", name: "Rajib", region: "Western Region" }}
+  }};
+
+  function checkAccess() {{
+    var input = document.getElementById("access-pass");
+    var val = input ? input.value.trim().toUpperCase() : "";
+    var user = USER_ROLES[val];
+
+    if (user) {{
+      sessionStorage.setItem("mms_user", JSON.stringify(user));
+      applyUserPermissions(user);
+      var overlay = document.getElementById("auth-overlay");
+      if (overlay) overlay.style.display = "none";
+    }} else {{
+      var errMsg = document.getElementById("error-msg");
+      if (errMsg) errMsg.style.display = "block";
+    }}
+  }}
+
+  function applyUserPermissions(user) {{
+    var userBadge = document.getElementById("current-user-badge");
+    if (userBadge) {{
+      userBadge.innerHTML = "👤 " + user.name;
+    }}
+
+    if (user.role === "ADMIN") {{
+      return;
+    }}
+
+    // إخفاء إجمالي الشبكة السري لمدراء المناطق
+    var grandTotal = document.getElementById("grand-total-banner");
+    if (grandTotal) grandTotal.style.display = "none";
+
+    // فلترة بطاقات وجداول المناطق لتعرض فقط منطقة المدير
+    document.querySelectorAll(".region-block").forEach(function(el) {{
+      if (el.getAttribute("data-region") !== user.region) {{
+        el.style.display = "none";
+      }}
+    }});
+    document.querySelectorAll(".region-table-wrap").forEach(function(el) {{
+      if (el.getAttribute("data-region") !== user.region) {{
+        el.style.display = "none";
+      }}
+    }});
+
+    // فلترة جدول المتاجر الرئيسي ليعرض فقط فروع منطقته
+    document.querySelectorAll("#storesTable tbody tr").forEach(function(el) {{
+      if (el.getAttribute("data-region") !== user.region) {{
+        el.style.display = "none";
+      }}
+    }});
+
+    // فلترة بطاقات التوجيهات
+    document.querySelectorAll(".decision-card-item").forEach(function(el) {{
+      if (el.getAttribute("data-region") !== user.region) {{
+        el.style.display = "none";
+      }}
+    }});
+  }}
+
+  function logout() {{
+    sessionStorage.removeItem("mms_user");
+    location.reload();
+  }}
+
+  document.addEventListener("DOMContentLoaded", function() {{
+    var passInput = document.getElementById("access-pass");
+    if (passInput) {{
+      passInput.addEventListener("keypress", function(e) {{
+        if (e.key === "Enter") checkAccess();
+      }});
+    }}
+    var savedUser = sessionStorage.getItem("mms_user");
+    if (savedUser) {{
+      try {{
+        var u = JSON.parse(savedUser);
+        applyUserPermissions(u);
+        var overlay = document.getElementById("auth-overlay");
+        if (overlay) overlay.style.display = "none";
+      }} catch(e) {{}}
+    }}
+  }});
+</script>
 
 <!-- Modal 1: Commercial Deep-Dive Modal -->
 <div id="store-modal" class="app-modal">
@@ -1061,7 +1166,9 @@ def process_and_build():
         <p data-translate-key="main_subtitle">Operational Performance, Regional Hierarchy & Like-For-Like (LY) Benchmarks</p>
     </div>
     <div class="top-controls">
+        <span id="current-user-badge" style="font-size:13px; font-weight:700; color:#38bdf8; background:#1e293b; padding:8px 14px; border-radius:8px; border:1px solid #334155;">👤 Authenticating..</span>
         <button class="lang-btn" id="langToggleBtn" onclick="toggleLanguage()">🌐 العربية / English</button>
+        <button class="logout-btn" onclick="logout()">Logout</button>
     </div>
 </div>
 
@@ -1191,7 +1298,7 @@ def process_and_build():
 <div id="view-business" style="display:none;">
     <div class="section-title">
         <span data-translate-key="main_cat_title">🏷️ MUMUSO MAIN PRODUCT CATEGORIES (LEVEL 1 HIERARCHY)</span>
-        <span style="font-size:12px; color:var(--text-muted); font-weight:400;" data-translate-key="card_click_hint">Click any category card to drill down into its sub-subgroups &rarr;</span>
+        <span style="font-size:12px; color:var(--text-muted); font-weight:400;" data-translate-key="card_click_hint">Select a store from dropdown to view its overall category contribution mix</span>
     </div>
     
     <div class="cards-scroll-container">
@@ -1202,9 +1309,13 @@ def process_and_build():
         <div class="table-header">
             <div>
                 <h3 id="tableHierarchyTitle" data-translate-key="hier_matrix_title">PRODUCT HIERARCHY MATRIX (LEVEL 1: MAIN CATEGORIES)</h3>
-                <span style="color:var(--text-muted);font-size:12px;" data-translate-key="hier_hint">Select a Main Category from the dropdown or cards to view detailed Sub-Subgroups</span>
+                <span style="color:var(--text-muted);font-size:12px;" data-translate-key="hier_hint">Select a Store and Main Category to analyze specific branch assortment mix</span>
             </div>
             <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap;">
+                <!-- قائمة منسدلة خاصة بالمحلات (Store Dropdown Filter) -->
+                <select id="storeDropdownFilter" class="table-select" onchange="onStoreDropdownChange(this.value)">
+                    {store_options_html}
+                </select>
                 <select id="mainCatFilter" class="table-select" onchange="onCategoryFilterChange(this.value)">
                     {main_cat_options}
                 </select>
@@ -1264,9 +1375,9 @@ def process_and_build():
       click_row_hint: "Click any store row to view category contribution breakdown for that store",
       regional_overview: "REGIONAL LEADERSHIP & AREA MANAGER OVERVIEW",
       main_cat_title: "MUMUSO MAIN PRODUCT CATEGORIES (LEVEL 1 HIERARCHY)",
-      card_click_hint: "Click any category card to drill down into its sub-subgroups",
+      card_click_hint: "Select a store from dropdown to view its overall category contribution mix",
       hier_matrix_title: "PRODUCT HIERARCHY MATRIX (LEVEL 1: MAIN CATEGORIES)",
-      hier_hint: "Select a Main Category from the dropdown or cards to view detailed Sub-Subgroups",
+      hier_hint: "Select a Store and Main Category to analyze specific branch assortment mix",
       th_code: "Store Code",
       th_store: "Full Store Name",
       th_region: "Region",
@@ -1302,7 +1413,8 @@ def process_and_build():
       target_ach: "TARGET & ACH",
       floor_soh: "FLOOR SOH",
       display_density: "DISPLAY DENSITY",
-      all_cats: "-- All Main Categories (Overview) --"
+      all_cats: "-- All Main Categories (Overview) --",
+      all_stores: "-- All Stores (Overview) --"
     }},
     ar: {{
       main_title: "لوحة تحكم مؤشرات الأداء التجارية والمخزون - موموسو",
@@ -1327,9 +1439,9 @@ def process_and_build():
       click_row_hint: "انقر على أي سطر متجر لعرض نسبة مساهمة كل قسم في إجمالي مبيعات الفرع",
       regional_overview: "القيادة الإقليمية ونظرة مدراء المناطق",
       main_cat_title: "أقسام منتجات موموسو الرئيسية (المستوى الأول)",
-      card_click_hint: "انقر على أي بطاقة قسم لعرض التفاصيل الدقيقة للأصناف &rarr;",
+      card_click_hint: "اختر متجراً من القائمة المنسدلة لعرض نسب مساهمة الأقسام في إجمالي مبيعاته",
       hier_matrix_title: "مصفوفة الهيكل السلعي (المستوى الأول: الأقسام الرئيسية)",
-      hier_hint: "اختر قسماً رئيسياً من القائمة أو البطاقات لعرض الأصناف التفصيلية",
+      hier_hint: "اختر متجراً وقسماً رئيسياً لتحليل المزيج السلعي المخصص لذلك الفرع",
       th_code: "كود الفرع",
       th_store: "اسم الفرع الكامل",
       th_region: "المنطقة",
@@ -1365,7 +1477,8 @@ def process_and_build():
       target_ach: "التارجت والتحقيق",
       floor_soh: "المخزون في الفرع",
       display_density: "كثافة العرض",
-      all_cats: "-- جميع الأقسام الرئيسية (نظرة عامة) --"
+      all_cats: "-- جميع الأقسام الرئيسية (نظرة عامة) --",
+      all_stores: "-- جميع المتاجر (نظرة عامة) --"
     }}
   }};
 
@@ -1449,15 +1562,27 @@ def process_and_build():
   function filterByMainCategory(catName) {{
     const filter = document.getElementById("mainCatFilter");
     if (filter) filter.value = catName;
-    onCategoryFilterChange(catName);
+    updateBusinessTable();
+  }}
+
+  function onStoreDropdownChange(storeCode) {{
+    updateBusinessTable();
   }}
 
   function onCategoryFilterChange(catName) {{
+    updateBusinessTable();
+  }}
+
+  // دالة موحدة لتحديث جدول شاشة Business-Wise
+  function updateBusinessTable() {{
+    const storeCode = document.getElementById("storeDropdownFilter").value;
+    const catName = document.getElementById("mainCatFilter").value;
     const thead = document.getElementById("hierarchyTableHead");
     const tbody = document.getElementById("hierarchyTableBody");
     const title = document.getElementById("tableHierarchyTitle");
 
-    if (catName === "ALL") {{
+    // 1. إذا كان الكل مختاراً
+    if (storeCode === "ALL" && catName === "ALL") {{
       title.innerText = "PRODUCT HIERARCHY MATRIX (LEVEL 1: MAIN CATEGORIES)";
       thead.innerHTML = `
         <tr>
@@ -1474,7 +1599,40 @@ def process_and_build():
       return;
     }}
 
-    title.innerText = "SUB-SUBGROUP BREAKDOWN: " + catName.toUpperCase();
+    // 2. إذا تم اختيار متجر معين مع بقاء خيار All Categories
+    if (storeCode !== "ALL" && catName === "ALL") {{
+      const stCats = STORE_DETAILS[storeCode] || [];
+      const storeMeta = STORE_META[storeCode];
+      title.innerText = "CATEGORY CONTRIBUTION MIX FOR: " + (storeMeta ? storeMeta.name : storeCode);
+      thead.innerHTML = `
+        <tr>
+          <th>#</th>
+          <th data-translate-key="th_main_cat">Main Category</th>
+          <th data-translate-key="th_sales">Sales Revenue (SAR)</th>
+          <th data-translate-key="th_units">Sales Units</th>
+          <th data-translate-key="th_store_mix">Category Contribution in Store (%)</th>
+          <th>ASP (SAR)</th>
+        </tr>
+      `;
+      let rowsHtml = "";
+      stCats.forEach((c, idx) => {{
+        rowsHtml += `
+          <tr>
+            <td style="color:#64748b;">${{idx+1}}</td>
+            <td style="color:#38bdf8; font-weight:700;">${{c.main_category}}</td>
+            <td style="color:#38bdf8; font-weight:700;">${{c.sales}}</td>
+            <td>${{c.units}}</td>
+            <td style="color:#10b981; font-weight:800; font-size:14px;">${{c.store_mix_pct}}</td>
+            <td style="color:#f59e0b; font-weight:700;">${{c.asp}}</td>
+          </tr>
+        `;
+      }});
+      tbody.innerHTML = rowsHtml || "<tr><td colspan='6' style='text-align:center;'>No data available for this store</td></tr>";
+      return;
+    }}
+
+    // 3. إذا تم اختيار قسم معين (Sub-subgroups)
+    title.innerText = "SUB-SUBGROUP BREAKDOWN: " + catName.toUpperCase() + (storeCode !== "ALL" ? " (Filtered by Store)" : "");
     thead.innerHTML = `
       <tr>
         <th>#</th>
@@ -1487,7 +1645,11 @@ def process_and_build():
       </tr>
     `;
 
-    const filtered = SUBSUB_DATA.filter(x => x.main_category === catName);
+    let filtered = SUBSUB_DATA;
+    if (catName !== "ALL") {{
+      filtered = filtered.filter(x => x.main_category === catName);
+    }}
+
     let rowsHtml = "";
     filtered.forEach((r, idx) => {{
       const bar_w = Math.min(r.contribution * 3, 100);
@@ -1511,9 +1673,7 @@ def process_and_build():
       `;
     }});
 
-    if (tbody) {{
-      tbody.innerHTML = rowsHtml || "<tr><td colspan='7' style='text-align:center;'>No sub-subgroups found for this category</td></tr>";
-    }}
+    tbody.innerHTML = rowsHtml || "<tr><td colspan='7' style='text-align:center;'>No matching products found for this filter</td></tr>";
   }}
 
   function filterSubSubTable() {{

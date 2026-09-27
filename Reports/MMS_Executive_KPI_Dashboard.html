@@ -23,6 +23,8 @@
         .top-controls { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
         .lang-btn { background: #1e293b; border: 1px solid #334155; color: #fff; padding: 8px 16px; border-radius: 8px; font-weight: 700; cursor: pointer; transition: 0.2s; font-size: 13px; }
         .lang-btn:hover { background: #2563eb; border-color: #2563eb; }
+        .logout-btn { background: #ef444422; border: 1px solid #ef444455; color: #ef4444; padding: 8px 14px; border-radius: 8px; font-weight: 700; cursor: pointer; transition: 0.2s; font-size: 12px; }
+        .logout-btn:hover { background: #ef4444; color: #fff; }
 
         .view-toggle-bar { display: flex; background: #0c1220; padding: 4px; border-radius: 10px; border: 1px solid var(--border); margin-bottom: 24px; width: fit-content; gap: 4px; flex-wrap: wrap; }
         .view-btn { background: transparent; border: none; color: var(--text-muted); padding: 10px 22px; border-radius: 8px; font-size: 14px; font-weight: 700; cursor: pointer; transition: 0.2s; display: flex; align-items: center; gap: 8px; }
@@ -97,6 +99,105 @@
     </style>
 </head>
 <body>
+
+<!-- شاشة التحقق من الصلاحيات وتحديد المستخدم -->
+<div id="auth-overlay" style="position:fixed;top:0;left:0;width:100%;height:100%;background:#090d16;z-index:99999999;display:flex;align-items:center;justify-content:center;">
+  <div style="background:#131b2e;padding:32px;border-radius:12px;box-shadow:0 15px 30px rgba(0,0,0,0.6);text-align:center;width:90%;max-width:380px;border:1px solid #1e293b;">
+    <h3 style="color:#fff;margin:0 0 8px 0;font-size:20px;">🔒 MMS Secure Access</h3>
+    <p style="color:#94a3b8;font-size:13px;margin:0 0 20px 0;">Enter your authorization PIN to view report</p>
+    <input type="password" id="access-pass" placeholder="PIN Code" style="width:100%;padding:12px;border-radius:6px;border:1px solid #334155;background:#090d16;color:#fff;font-size:16px;text-align:center;outline:none;box-sizing:border-box;margin-bottom:14px;">
+    <button onclick="checkAccess()" style="width:100%;padding:12px;border-radius:6px;border:none;background:#2563eb;color:#fff;font-weight:700;font-size:15px;cursor:pointer;">Unlock Dashboard</button>
+    <p id="error-msg" style="color:#ef4444;font-size:13px;margin:12px 0 0 0;display:none;">Invalid authorization credentials</p>
+  </div>
+</div>
+
+<script>
+  const USER_ROLES = {
+    "MMS2026": { role: "ADMIN", name: "Executive & Merchandising (Full Access)", region: "ALL" },
+    "SULTAN2026": { role: "AREA_MGR", name: "Sultan", region: "Riyadh Central Region" },
+    "RAJIB2026": { role: "AREA_MGR", name: "Rajib", region: "Western Region" }
+  };
+
+  function checkAccess() {
+    var input = document.getElementById("access-pass");
+    var val = input ? input.value.trim().toUpperCase() : "";
+    var user = USER_ROLES[val];
+
+    if (user) {
+      sessionStorage.setItem("mms_user", JSON.stringify(user));
+      applyUserPermissions(user);
+      var overlay = document.getElementById("auth-overlay");
+      if (overlay) overlay.style.display = "none";
+    } else {
+      var errMsg = document.getElementById("error-msg");
+      if (errMsg) errMsg.style.display = "block";
+    }
+  }
+
+  function applyUserPermissions(user) {
+    var userBadge = document.getElementById("current-user-badge");
+    if (userBadge) {
+      userBadge.innerHTML = "👤 " + user.name;
+    }
+
+    if (user.role === "ADMIN") {
+      return;
+    }
+
+    // إخفاء إجمالي الشبكة السري لمدراء المناطق
+    var grandTotal = document.getElementById("grand-total-banner");
+    if (grandTotal) grandTotal.style.display = "none";
+
+    // فلترة بطاقات وجداول المناطق لتعرض فقط منطقة المدير
+    document.querySelectorAll(".region-block").forEach(function(el) {
+      if (el.getAttribute("data-region") !== user.region) {
+        el.style.display = "none";
+      }
+    });
+    document.querySelectorAll(".region-table-wrap").forEach(function(el) {
+      if (el.getAttribute("data-region") !== user.region) {
+        el.style.display = "none";
+      }
+    });
+
+    // فلترة جدول المتاجر الرئيسي ليعرض فقط فروع منطقته
+    document.querySelectorAll("#storesTable tbody tr").forEach(function(el) {
+      if (el.getAttribute("data-region") !== user.region) {
+        el.style.display = "none";
+      }
+    });
+
+    // فلترة بطاقات التوجيهات
+    document.querySelectorAll(".decision-card-item").forEach(function(el) {
+      if (el.getAttribute("data-region") !== user.region) {
+        el.style.display = "none";
+      }
+    });
+  }
+
+  function logout() {
+    sessionStorage.removeItem("mms_user");
+    location.reload();
+  }
+
+  document.addEventListener("DOMContentLoaded", function() {
+    var passInput = document.getElementById("access-pass");
+    if (passInput) {
+      passInput.addEventListener("keypress", function(e) {
+        if (e.key === "Enter") checkAccess();
+      });
+    }
+    var savedUser = sessionStorage.getItem("mms_user");
+    if (savedUser) {
+      try {
+        var u = JSON.parse(savedUser);
+        applyUserPermissions(u);
+        var overlay = document.getElementById("auth-overlay");
+        if (overlay) overlay.style.display = "none";
+      } catch(e) {}
+    }
+  });
+</script>
 
 <!-- Modal 1: Commercial Deep-Dive Modal -->
 <div id="store-modal" class="app-modal">
@@ -184,7 +285,9 @@
         <p data-translate-key="main_subtitle">Operational Performance, Regional Hierarchy & Like-For-Like (LY) Benchmarks</p>
     </div>
     <div class="top-controls">
+        <span id="current-user-badge" style="font-size:13px; font-weight:700; color:#38bdf8; background:#1e293b; padding:8px 14px; border-radius:8px; border:1px solid #334155;">👤 Authenticating..</span>
         <button class="lang-btn" id="langToggleBtn" onclick="toggleLanguage()">🌐 العربية / English</button>
+        <button class="logout-btn" onclick="logout()">Logout</button>
     </div>
 </div>
 
@@ -192,15 +295,15 @@
 <div class="insights-grid">
     <div class="insight-card danger">
         <div class="insight-title" style="color:#ef4444;" data-translate-key="critical_issues">● Critical Issues</div>
-        <div class="insight-body">We're tracking 22% below target at 78% achievement—immediately accelerate clearance of underperforming SKUs and reallocate inventory to top-performing locations like Mall of Dhahran and Jeddah U-Walk.</div>
+        <div class="insight-body">Close the 22% gap to target immediately by accelerating inventory turns and promotional velocity across underperforming locations outside top 3 stores.</div>
     </div>
     <div class="insight-card warning">
         <div class="insight-title" style="color:#f59e0b;" data-translate-key="attention_req">● Attention Required</div>
-        <div class="insight-body">While LFL growth is strong at +17%, we must investigate the performance gap between our top 3 stores (28-41% YoY growth) and the remaining portfolio to identify best practices and systemic barriers.</div>
+        <div class="insight-body">Investigate the 40%+ YoY growth in Mall of Dhahran and Jeddah U-Walk to identify replicable success factors and apply learnings to lagging stores.</div>
     </div>
     <div class="insight-card success">
         <div class="insight-title" style="color:#10b981;" data-translate-key="opportunities">● Opportunities</div>
-        <div class="insight-body">Replicate the merchandising and category mix strategies from Jeddah U-Walk (106% achievement) and Mall of Dhahran (103% achievement) across underperforming stores to unlock 500K+ SAR incremental sales toward target.</div>
+        <div class="insight-body">Leverage strong LFL growth of +17% and top-store momentum to expand category penetration and increase basket size through strategic bundling and adjacency placements.</div>
     </div>
 </div>
 
@@ -246,7 +349,7 @@
     <div class="section-title"><span data-translate-key="critical_action">⚡ Critical Action Directives (Category Swaps & Rebalancing Priorities)</span></div>
     <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(320px, 1fr)); gap:14px; margin-bottom:24px;">
         
-            <div style="background:var(--card); border:1px solid var(--border); border-left:4px solid #10b981; border-radius:10px; padding:18px;">
+            <div class="decision-card-item" data-region="Riyadh Central Region" style="background:var(--card); border:1px solid var(--border); border-left:4px solid #10b981; border-radius:10px; padding:18px;">
                 <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px; flex-wrap:wrap; gap:8px;">
                     <div>
                         <span style="font-weight:700; color:#fff; font-size:15px;">MMS Mall of Dhahran (K301)</span>
@@ -265,7 +368,7 @@
                 </div>
             </div>
             
-            <div style="background:var(--card); border:1px solid var(--border); border-left:4px solid #10b981; border-radius:10px; padding:18px;">
+            <div class="decision-card-item" data-region="Western Region" style="background:var(--card); border:1px solid var(--border); border-left:4px solid #10b981; border-radius:10px; padding:18px;">
                 <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px; flex-wrap:wrap; gap:8px;">
                     <div>
                         <span style="font-weight:700; color:#fff; font-size:15px;">MMS Jeddah U-Walk (K205)</span>
@@ -284,7 +387,7 @@
                 </div>
             </div>
             
-            <div style="background:var(--card); border:1px solid var(--border); border-left:4px solid #f59e0b; border-radius:10px; padding:18px;">
+            <div class="decision-card-item" data-region="Western Region" style="background:var(--card); border:1px solid var(--border); border-left:4px solid #f59e0b; border-radius:10px; padding:18px;">
                 <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px; flex-wrap:wrap; gap:8px;">
                     <div>
                         <span style="font-weight:700; color:#fff; font-size:15px;">MMS Madinah (K211)</span>
@@ -303,7 +406,7 @@
                 </div>
             </div>
             
-            <div style="background:var(--card); border:1px solid var(--border); border-left:4px solid #f59e0b; border-radius:10px; padding:18px;">
+            <div class="decision-card-item" data-region="Riyadh Central Region" style="background:var(--card); border:1px solid var(--border); border-left:4px solid #f59e0b; border-radius:10px; padding:18px;">
                 <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px; flex-wrap:wrap; gap:8px;">
                     <div>
                         <span style="font-weight:700; color:#fff; font-size:15px;">MMS Riyadh U-Walk (K110)</span>
@@ -322,7 +425,7 @@
                 </div>
             </div>
             
-            <div style="background:var(--card); border:1px solid var(--border); border-left:4px solid #10b981; border-radius:10px; padding:18px;">
+            <div class="decision-card-item" data-region="Western Region" style="background:var(--card); border:1px solid var(--border); border-left:4px solid #10b981; border-radius:10px; padding:18px;">
                 <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px; flex-wrap:wrap; gap:8px;">
                     <div>
                         <span style="font-weight:700; color:#fff; font-size:15px;">MMS Jeddah Yasmin Mall (K202)</span>
@@ -341,7 +444,7 @@
                 </div>
             </div>
             
-            <div style="background:var(--card); border:1px solid var(--border); border-left:4px solid #f59e0b; border-radius:10px; padding:18px;">
+            <div class="decision-card-item" data-region="Western Region" style="background:var(--card); border:1px solid var(--border); border-left:4px solid #f59e0b; border-radius:10px; padding:18px;">
                 <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px; flex-wrap:wrap; gap:8px;">
                     <div>
                         <span style="font-weight:700; color:#fff; font-size:15px;">MMS Abha (K404)</span>
@@ -360,7 +463,7 @@
                 </div>
             </div>
             
-            <div style="background:var(--card); border:1px solid var(--border); border-left:4px solid #10b981; border-radius:10px; padding:18px;">
+            <div class="decision-card-item" data-region="Riyadh Central Region" style="background:var(--card); border:1px solid var(--border); border-left:4px solid #10b981; border-radius:10px; padding:18px;">
                 <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px; flex-wrap:wrap; gap:8px;">
                     <div>
                         <span style="font-weight:700; color:#fff; font-size:15px;">MMS Riyadh Tala Mall (K102)</span>
@@ -379,7 +482,7 @@
                 </div>
             </div>
             
-            <div style="background:var(--card); border:1px solid var(--border); border-left:4px solid #f59e0b; border-radius:10px; padding:18px;">
+            <div class="decision-card-item" data-region="Western Region" style="background:var(--card); border:1px solid var(--border); border-left:4px solid #f59e0b; border-radius:10px; padding:18px;">
                 <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px; flex-wrap:wrap; gap:8px;">
                     <div>
                         <span style="font-weight:700; color:#fff; font-size:15px;">MMS Tabuk Park (K501)</span>
@@ -398,7 +501,7 @@
                 </div>
             </div>
             
-            <div style="background:var(--card); border:1px solid var(--border); border-left:4px solid #f59e0b; border-radius:10px; padding:18px;">
+            <div class="decision-card-item" data-region="Western Region" style="background:var(--card); border:1px solid var(--border); border-left:4px solid #f59e0b; border-radius:10px; padding:18px;">
                 <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px; flex-wrap:wrap; gap:8px;">
                     <div>
                         <span style="font-weight:700; color:#fff; font-size:15px;">MMS Makkah Salam Mall (K210)</span>
@@ -417,7 +520,7 @@
                 </div>
             </div>
             
-            <div style="background:var(--card); border:1px solid var(--border); border-left:4px solid #f59e0b; border-radius:10px; padding:18px;">
+            <div class="decision-card-item" data-region="Western Region" style="background:var(--card); border:1px solid var(--border); border-left:4px solid #f59e0b; border-radius:10px; padding:18px;">
                 <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px; flex-wrap:wrap; gap:8px;">
                     <div>
                         <span style="font-weight:700; color:#fff; font-size:15px;">MMS RMJ (K403)</span>
@@ -561,7 +664,7 @@
                 </thead>
                 <tbody>
                     
-        <tr onclick="openStoreDetails('K108')" class="clickable-row" title="Click to view detailed store category mix & directives">
+        <tr onclick="openStoreDetails('K108')" class="clickable-row" data-region="Riyadh Central Region" title="Click to view detailed store category mix & directives">
             <td style="color:#64748b;font-weight:600;">1</td>
             <td style="color:#38bdf8;font-weight:600;">K108</td>
             <td style="font-weight:600;color:#fff;">MMS Riyadh Solitaire</td>
@@ -586,7 +689,7 @@
             <td style="color:#38bdf8;font-weight:600;">23.19</td>
         </tr>
         
-        <tr onclick="openStoreDetails('K301')" class="clickable-row" title="Click to view detailed store category mix & directives">
+        <tr onclick="openStoreDetails('K301')" class="clickable-row" data-region="Riyadh Central Region" title="Click to view detailed store category mix & directives">
             <td style="color:#64748b;font-weight:600;">2</td>
             <td style="color:#38bdf8;font-weight:600;">K301</td>
             <td style="font-weight:600;color:#fff;">MMS Mall of Dhahran</td>
@@ -611,7 +714,7 @@
             <td style="color:#38bdf8;font-weight:600;">21.42</td>
         </tr>
         
-        <tr onclick="openStoreDetails('K205')" class="clickable-row" title="Click to view detailed store category mix & directives">
+        <tr onclick="openStoreDetails('K205')" class="clickable-row" data-region="Western Region" title="Click to view detailed store category mix & directives">
             <td style="color:#64748b;font-weight:600;">3</td>
             <td style="color:#38bdf8;font-weight:600;">K205</td>
             <td style="font-weight:600;color:#fff;">MMS Jeddah U-Walk</td>
@@ -636,7 +739,7 @@
             <td style="color:#38bdf8;font-weight:600;">20.81</td>
         </tr>
         
-        <tr onclick="openStoreDetails('K211')" class="clickable-row" title="Click to view detailed store category mix & directives">
+        <tr onclick="openStoreDetails('K211')" class="clickable-row" data-region="Western Region" title="Click to view detailed store category mix & directives">
             <td style="color:#64748b;font-weight:600;">4</td>
             <td style="color:#38bdf8;font-weight:600;">K211</td>
             <td style="font-weight:600;color:#fff;">MMS Madinah</td>
@@ -661,7 +764,7 @@
             <td style="color:#38bdf8;font-weight:600;">18.66</td>
         </tr>
         
-        <tr onclick="openStoreDetails('K101')" class="clickable-row" title="Click to view detailed store category mix & directives">
+        <tr onclick="openStoreDetails('K101')" class="clickable-row" data-region="Riyadh Central Region" title="Click to view detailed store category mix & directives">
             <td style="color:#64748b;font-weight:600;">5</td>
             <td style="color:#38bdf8;font-weight:600;">K101</td>
             <td style="font-weight:600;color:#fff;">MMS Riyadh The View Mall</td>
@@ -686,7 +789,7 @@
             <td style="color:#38bdf8;font-weight:600;">18.88</td>
         </tr>
         
-        <tr onclick="openStoreDetails('K110')" class="clickable-row" title="Click to view detailed store category mix & directives">
+        <tr onclick="openStoreDetails('K110')" class="clickable-row" data-region="Riyadh Central Region" title="Click to view detailed store category mix & directives">
             <td style="color:#64748b;font-weight:600;">6</td>
             <td style="color:#38bdf8;font-weight:600;">K110</td>
             <td style="font-weight:600;color:#fff;">MMS Riyadh U-Walk</td>
@@ -711,7 +814,7 @@
             <td style="color:#38bdf8;font-weight:600;">21.05</td>
         </tr>
         
-        <tr onclick="openStoreDetails('K201')" class="clickable-row" title="Click to view detailed store category mix & directives">
+        <tr onclick="openStoreDetails('K201')" class="clickable-row" data-region="Western Region" title="Click to view detailed store category mix & directives">
             <td style="color:#64748b;font-weight:600;">7</td>
             <td style="color:#38bdf8;font-weight:600;">K201</td>
             <td style="font-weight:600;color:#fff;">MMS Jeddah Park</td>
@@ -736,7 +839,7 @@
             <td style="color:#38bdf8;font-weight:600;">15.59</td>
         </tr>
         
-        <tr onclick="openStoreDetails('K202')" class="clickable-row" title="Click to view detailed store category mix & directives">
+        <tr onclick="openStoreDetails('K202')" class="clickable-row" data-region="Western Region" title="Click to view detailed store category mix & directives">
             <td style="color:#64748b;font-weight:600;">8</td>
             <td style="color:#38bdf8;font-weight:600;">K202</td>
             <td style="font-weight:600;color:#fff;">MMS Jeddah Yasmin Mall</td>
@@ -761,7 +864,7 @@
             <td style="color:#38bdf8;font-weight:600;">18.46</td>
         </tr>
         
-        <tr onclick="openStoreDetails('K208')" class="clickable-row" title="Click to view detailed store category mix & directives">
+        <tr onclick="openStoreDetails('K208')" class="clickable-row" data-region="Western Region" title="Click to view detailed store category mix & directives">
             <td style="color:#64748b;font-weight:600;">9</td>
             <td style="color:#38bdf8;font-weight:600;">K208</td>
             <td style="font-weight:600;color:#fff;">MMS Jeddah Mall of Arabia</td>
@@ -786,7 +889,7 @@
             <td style="color:#38bdf8;font-weight:600;">18.80</td>
         </tr>
         
-        <tr onclick="openStoreDetails('K401')" class="clickable-row" title="Click to view detailed store category mix & directives">
+        <tr onclick="openStoreDetails('K401')" class="clickable-row" data-region="Western Region" title="Click to view detailed store category mix & directives">
             <td style="color:#64748b;font-weight:600;">10</td>
             <td style="color:#38bdf8;font-weight:600;">K401</td>
             <td style="font-weight:600;color:#fff;">MMS Najran Park</td>
@@ -811,7 +914,7 @@
             <td style="color:#38bdf8;font-weight:600;">15.72</td>
         </tr>
         
-        <tr onclick="openStoreDetails('K404')" class="clickable-row" title="Click to view detailed store category mix & directives">
+        <tr onclick="openStoreDetails('K404')" class="clickable-row" data-region="Western Region" title="Click to view detailed store category mix & directives">
             <td style="color:#64748b;font-weight:600;">11</td>
             <td style="color:#38bdf8;font-weight:600;">K404</td>
             <td style="font-weight:600;color:#fff;">MMS Abha</td>
@@ -836,7 +939,7 @@
             <td style="color:#38bdf8;font-weight:600;">18.37</td>
         </tr>
         
-        <tr onclick="openStoreDetails('K102')" class="clickable-row" title="Click to view detailed store category mix & directives">
+        <tr onclick="openStoreDetails('K102')" class="clickable-row" data-region="Riyadh Central Region" title="Click to view detailed store category mix & directives">
             <td style="color:#64748b;font-weight:600;">12</td>
             <td style="color:#38bdf8;font-weight:600;">K102</td>
             <td style="font-weight:600;color:#fff;">MMS Riyadh Tala Mall</td>
@@ -861,7 +964,7 @@
             <td style="color:#38bdf8;font-weight:600;">19.88</td>
         </tr>
         
-        <tr onclick="openStoreDetails('K501')" class="clickable-row" title="Click to view detailed store category mix & directives">
+        <tr onclick="openStoreDetails('K501')" class="clickable-row" data-region="Western Region" title="Click to view detailed store category mix & directives">
             <td style="color:#64748b;font-weight:600;">13</td>
             <td style="color:#38bdf8;font-weight:600;">K501</td>
             <td style="font-weight:600;color:#fff;">MMS Tabuk Park</td>
@@ -886,7 +989,7 @@
             <td style="color:#38bdf8;font-weight:600;">14.85</td>
         </tr>
         
-        <tr onclick="openStoreDetails('K109')" class="clickable-row" title="Click to view detailed store category mix & directives">
+        <tr onclick="openStoreDetails('K109')" class="clickable-row" data-region="Riyadh Central Region" title="Click to view detailed store category mix & directives">
             <td style="color:#64748b;font-weight:600;">14</td>
             <td style="color:#38bdf8;font-weight:600;">K109</td>
             <td style="font-weight:600;color:#fff;">MMS Riyadh Localizer</td>
@@ -911,7 +1014,7 @@
             <td style="color:#38bdf8;font-weight:600;">20.27</td>
         </tr>
         
-        <tr onclick="openStoreDetails('K210')" class="clickable-row" title="Click to view detailed store category mix & directives">
+        <tr onclick="openStoreDetails('K210')" class="clickable-row" data-region="Western Region" title="Click to view detailed store category mix & directives">
             <td style="color:#64748b;font-weight:600;">15</td>
             <td style="color:#38bdf8;font-weight:600;">K210</td>
             <td style="font-weight:600;color:#fff;">MMS Makkah Salam Mall</td>
@@ -936,7 +1039,7 @@
             <td style="color:#38bdf8;font-weight:600;">17.67</td>
         </tr>
         
-        <tr onclick="openStoreDetails('K403')" class="clickable-row" title="Click to view detailed store category mix & directives">
+        <tr onclick="openStoreDetails('K403')" class="clickable-row" data-region="Western Region" title="Click to view detailed store category mix & directives">
             <td style="color:#64748b;font-weight:600;">16</td>
             <td style="color:#38bdf8;font-weight:600;">K403</td>
             <td style="font-weight:600;color:#fff;">MMS RMJ</td>
@@ -972,7 +1075,7 @@
     <div class="section-title"><span data-translate-key="regional_overview">🌍 REGIONAL LEADERSHIP & AREA MANAGER OVERVIEW</span></div>
     <div style="display:flex; flex-wrap:wrap; gap:16px; margin-bottom:24px;">
         
-        <div style="background:var(--card); border:1px solid var(--border); border-top:4px solid #38bdf8; border-radius:12px; padding:20px; flex:1; min-width:320px;">
+        <div class="region-block" data-region="Riyadh Central Region" style="background:var(--card); border:1px solid var(--border); border-top:4px solid #38bdf8; border-radius:12px; padding:20px; flex:1; min-width:320px;">
             <div style="display:flex; justify-content:space-between; align-items:flex-start; margin-bottom:12px;">
                 <div>
                     <h3 style="margin:0; font-size:17px; color:#fff;" data-translate-key="Riyadh Central Region">Riyadh Central Region</h3>
@@ -1011,7 +1114,7 @@
             </div>
         </div>
         
-        <div style="background:var(--card); border:1px solid var(--border); border-top:4px solid #818cf8; border-radius:12px; padding:20px; flex:1; min-width:320px;">
+        <div class="region-block" data-region="Western Region" style="background:var(--card); border:1px solid var(--border); border-top:4px solid #818cf8; border-radius:12px; padding:20px; flex:1; min-width:320px;">
             <div style="display:flex; justify-content:space-between; align-items:flex-start; margin-bottom:12px;">
                 <div>
                     <h3 style="margin:0; font-size:17px; color:#fff;" data-translate-key="Western Region">Western Region</h3>
@@ -1053,7 +1156,7 @@
     </div>
 
     
-    <div style="background:#131b2e; border:2px solid #2563eb; border-radius:12px; padding:18px 24px; display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:16px; margin-bottom:30px;">
+    <div id="grand-total-banner" style="background:#131b2e; border:2px solid #2563eb; border-radius:12px; padding:18px 24px; display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:16px; margin-bottom:30px;">
         <div>
             <div style="font-size:13px; color:#38bdf8; font-weight:700; text-transform:uppercase;" data-translate-key="network_total">Network Grand Total (All Regions)</div>
             <div style="font-size:22px; font-weight:800; color:#fff; margin-top:2px;">2,699,744 <span style="font-size:13px; font-weight:400; color:#94a3b8;">SAR</span></div>
@@ -1084,7 +1187,7 @@
     
 
     
-        <div class="table-wrap" style="margin-bottom:30px;">
+        <div class="table-wrap region-table-wrap" data-region="Riyadh Central Region" style="margin-bottom:30px;">
             <div class="table-header">
                 <div>
                     <h3 style="color:#38bdf8; font-size:16px;">🏢 RIYADH CENTRAL REGION</h3>
@@ -1260,7 +1363,7 @@
             </div>
         </div>
         
-        <div class="table-wrap" style="margin-bottom:30px;">
+        <div class="table-wrap region-table-wrap" data-region="Western Region" style="margin-bottom:30px;">
             <div class="table-header">
                 <div>
                     <h3 style="color:#38bdf8; font-size:16px;">🏢 WESTERN REGION</h3>
@@ -1530,7 +1633,7 @@
 <div id="view-business" style="display:none;">
     <div class="section-title">
         <span data-translate-key="main_cat_title">🏷️ MUMUSO MAIN PRODUCT CATEGORIES (LEVEL 1 HIERARCHY)</span>
-        <span style="font-size:12px; color:var(--text-muted); font-weight:400;" data-translate-key="card_click_hint">Click any category card to drill down into its sub-subgroups &rarr;</span>
+        <span style="font-size:12px; color:var(--text-muted); font-weight:400;" data-translate-key="card_click_hint">Select a store from dropdown to view its overall category contribution mix</span>
     </div>
     
     <div class="cards-scroll-container">
@@ -1736,9 +1839,13 @@
         <div class="table-header">
             <div>
                 <h3 id="tableHierarchyTitle" data-translate-key="hier_matrix_title">PRODUCT HIERARCHY MATRIX (LEVEL 1: MAIN CATEGORIES)</h3>
-                <span style="color:var(--text-muted);font-size:12px;" data-translate-key="hier_hint">Select a Main Category from the dropdown or cards to view detailed Sub-Subgroups</span>
+                <span style="color:var(--text-muted);font-size:12px;" data-translate-key="hier_hint">Select a Store and Main Category to analyze specific branch assortment mix</span>
             </div>
             <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap;">
+                <!-- قائمة منسدلة خاصة بالمحلات (Store Dropdown Filter) -->
+                <select id="storeDropdownFilter" class="table-select" onchange="onStoreDropdownChange(this.value)">
+                    <option value="ALL" data-translate-key="all_stores">-- All Stores (Overview) --</option><option value="K108">MMS Riyadh Solitaire (K108)</option><option value="K301">MMS Mall of Dhahran (K301)</option><option value="K205">MMS Jeddah U-Walk (K205)</option><option value="K211">MMS Madinah (K211)</option><option value="K101">MMS Riyadh The View Mall (K101)</option><option value="K110">MMS Riyadh U-Walk (K110)</option><option value="K201">MMS Jeddah Park (K201)</option><option value="K202">MMS Jeddah Yasmin Mall (K202)</option><option value="K208">MMS Jeddah Mall of Arabia (K208)</option><option value="K401">MMS Najran Park (K401)</option><option value="K404">MMS Abha (K404)</option><option value="K102">MMS Riyadh Tala Mall (K102)</option><option value="K501">MMS Tabuk Park (K501)</option><option value="K109">MMS Riyadh Localizer (K109)</option><option value="K210">MMS Makkah Salam Mall (K210)</option><option value="K403">MMS RMJ (K403)</option>
+                </select>
                 <select id="mainCatFilter" class="table-select" onchange="onCategoryFilterChange(this.value)">
                     <option value="ALL" data-translate-key="all_cats">-- All Main Categories (Overview) --</option><option value="Beauty &amp; Cleaning">Beauty &amp; Cleaning</option><option value="Children&#x27;S Goods">Children&#x27;S Goods</option><option value="Stationery">Stationery</option><option value="Home &amp; Daily Use">Home &amp; Daily Use</option><option value="Bags">Bags</option><option value="Fashion Accessories">Fashion Accessories</option><option value="3C Electronics">3C Electronics</option><option value="Apparel Accessories">Apparel Accessories</option><option value="Home Textile">Home Textile</option><option value="MAKE UP">MAKE UP</option><option value="Variety Lifestyle">Variety Lifestyle</option><option value="GWP">GWP</option><option value="N2">N2</option>
                 </select>
@@ -2292,9 +2399,9 @@
       click_row_hint: "Click any store row to view category contribution breakdown for that store",
       regional_overview: "REGIONAL LEADERSHIP & AREA MANAGER OVERVIEW",
       main_cat_title: "MUMUSO MAIN PRODUCT CATEGORIES (LEVEL 1 HIERARCHY)",
-      card_click_hint: "Click any category card to drill down into its sub-subgroups",
+      card_click_hint: "Select a store from dropdown to view its overall category contribution mix",
       hier_matrix_title: "PRODUCT HIERARCHY MATRIX (LEVEL 1: MAIN CATEGORIES)",
-      hier_hint: "Select a Main Category from the dropdown or cards to view detailed Sub-Subgroups",
+      hier_hint: "Select a Store and Main Category to analyze specific branch assortment mix",
       th_code: "Store Code",
       th_store: "Full Store Name",
       th_region: "Region",
@@ -2330,7 +2437,8 @@
       target_ach: "TARGET & ACH",
       floor_soh: "FLOOR SOH",
       display_density: "DISPLAY DENSITY",
-      all_cats: "-- All Main Categories (Overview) --"
+      all_cats: "-- All Main Categories (Overview) --",
+      all_stores: "-- All Stores (Overview) --"
     },
     ar: {
       main_title: "لوحة تحكم مؤشرات الأداء التجارية والمخزون - موموسو",
@@ -2355,9 +2463,9 @@
       click_row_hint: "انقر على أي سطر متجر لعرض نسبة مساهمة كل قسم في إجمالي مبيعات الفرع",
       regional_overview: "القيادة الإقليمية ونظرة مدراء المناطق",
       main_cat_title: "أقسام منتجات موموسو الرئيسية (المستوى الأول)",
-      card_click_hint: "انقر على أي بطاقة قسم لعرض التفاصيل الدقيقة للأصناف &rarr;",
+      card_click_hint: "اختر متجراً من القائمة المنسدلة لعرض نسب مساهمة الأقسام في إجمالي مبيعاته",
       hier_matrix_title: "مصفوفة الهيكل السلعي (المستوى الأول: الأقسام الرئيسية)",
-      hier_hint: "اختر قسماً رئيسياً من القائمة أو البطاقات لعرض الأصناف التفصيلية",
+      hier_hint: "اختر متجراً وقسماً رئيسياً لتحليل المزيج السلعي المخصص لذلك الفرع",
       th_code: "كود الفرع",
       th_store: "اسم الفرع الكامل",
       th_region: "المنطقة",
@@ -2393,7 +2501,8 @@
       target_ach: "التارجت والتحقيق",
       floor_soh: "المخزون في الفرع",
       display_density: "كثافة العرض",
-      all_cats: "-- جميع الأقسام الرئيسية (نظرة عامة) --"
+      all_cats: "-- جميع الأقسام الرئيسية (نظرة عامة) --",
+      all_stores: "-- جميع المتاجر (نظرة عامة) --"
     }
   };
 
@@ -2477,15 +2586,27 @@
   function filterByMainCategory(catName) {
     const filter = document.getElementById("mainCatFilter");
     if (filter) filter.value = catName;
-    onCategoryFilterChange(catName);
+    updateBusinessTable();
+  }
+
+  function onStoreDropdownChange(storeCode) {
+    updateBusinessTable();
   }
 
   function onCategoryFilterChange(catName) {
+    updateBusinessTable();
+  }
+
+  // دالة موحدة لتحديث جدول شاشة Business-Wise
+  function updateBusinessTable() {
+    const storeCode = document.getElementById("storeDropdownFilter").value;
+    const catName = document.getElementById("mainCatFilter").value;
     const thead = document.getElementById("hierarchyTableHead");
     const tbody = document.getElementById("hierarchyTableBody");
     const title = document.getElementById("tableHierarchyTitle");
 
-    if (catName === "ALL") {
+    // 1. إذا كان الكل مختاراً
+    if (storeCode === "ALL" && catName === "ALL") {
       title.innerText = "PRODUCT HIERARCHY MATRIX (LEVEL 1: MAIN CATEGORIES)";
       thead.innerHTML = `
         <tr>
@@ -2502,7 +2623,40 @@
       return;
     }
 
-    title.innerText = "SUB-SUBGROUP BREAKDOWN: " + catName.toUpperCase();
+    // 2. إذا تم اختيار متجر معين مع بقاء خيار All Categories
+    if (storeCode !== "ALL" && catName === "ALL") {
+      const stCats = STORE_DETAILS[storeCode] || [];
+      const storeMeta = STORE_META[storeCode];
+      title.innerText = "CATEGORY CONTRIBUTION MIX FOR: " + (storeMeta ? storeMeta.name : storeCode);
+      thead.innerHTML = `
+        <tr>
+          <th>#</th>
+          <th data-translate-key="th_main_cat">Main Category</th>
+          <th data-translate-key="th_sales">Sales Revenue (SAR)</th>
+          <th data-translate-key="th_units">Sales Units</th>
+          <th data-translate-key="th_store_mix">Category Contribution in Store (%)</th>
+          <th>ASP (SAR)</th>
+        </tr>
+      `;
+      let rowsHtml = "";
+      stCats.forEach((c, idx) => {
+        rowsHtml += `
+          <tr>
+            <td style="color:#64748b;">${idx+1}</td>
+            <td style="color:#38bdf8; font-weight:700;">${c.main_category}</td>
+            <td style="color:#38bdf8; font-weight:700;">${c.sales}</td>
+            <td>${c.units}</td>
+            <td style="color:#10b981; font-weight:800; font-size:14px;">${c.store_mix_pct}</td>
+            <td style="color:#f59e0b; font-weight:700;">${c.asp}</td>
+          </tr>
+        `;
+      });
+      tbody.innerHTML = rowsHtml || "<tr><td colspan='6' style='text-align:center;'>No data available for this store</td></tr>";
+      return;
+    }
+
+    // 3. إذا تم اختيار قسم معين (Sub-subgroups)
+    title.innerText = "SUB-SUBGROUP BREAKDOWN: " + catName.toUpperCase() + (storeCode !== "ALL" ? " (Filtered by Store)" : "");
     thead.innerHTML = `
       <tr>
         <th>#</th>
@@ -2515,7 +2669,11 @@
       </tr>
     `;
 
-    const filtered = SUBSUB_DATA.filter(x => x.main_category === catName);
+    let filtered = SUBSUB_DATA;
+    if (catName !== "ALL") {
+      filtered = filtered.filter(x => x.main_category === catName);
+    }
+
     let rowsHtml = "";
     filtered.forEach((r, idx) => {
       const bar_w = Math.min(r.contribution * 3, 100);
@@ -2539,9 +2697,7 @@
       `;
     });
 
-    if (tbody) {
-      tbody.innerHTML = rowsHtml || "<tr><td colspan='7' style='text-align:center;'>No sub-subgroups found for this category</td></tr>";
-    }
+    tbody.innerHTML = rowsHtml || "<tr><td colspan='7' style='text-align:center;'>No matching products found for this filter</td></tr>";
   }
 
   function filterSubSubTable() {
