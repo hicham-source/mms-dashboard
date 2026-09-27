@@ -491,8 +491,7 @@ def process_and_build():
         store_cat_summary_dict[c_code] = cats_list
 
     # ==========================================
-    # 5. محرك تحليل الـ SKU الحقيقي والذكي (True SKU-Level Replenishment & IST Engine)
-    # يقارن مبيعات سبتمبر بكل صنف في كل فرع مع مخزونه الـ SOH ومخزون KSWH
+    # 5. استخراج Top 500 و Low 500 مع عمود WH SOH لكل صنف
     # ==========================================
     sku_grouped = df_clean[df_clean['Actual Sales Amount'] > 0].groupby([item_code_col, item_name_col, 'main_category', 'sub_subgroup']).agg(
         sales=('Actual Sales Amount', 'sum'),
@@ -506,125 +505,113 @@ def process_and_build():
             s = s[:-2]
         return s
 
+    # استخراج مخزون المستودع KSWH لكل صنف من SOH
+    wh_sku_stock_dict = {}
+    stock_col_name = next((c for c in df_soh_raw.columns if c.lower() in ["avail_stock", "current_stock"]), None)
+    item_soh_col = next((c for c in df_soh_raw.columns if c.lower() in ["product code", "item code", "barcode", "sku code"]), None)
+    code_col_name = next((c for c in df_soh_raw.columns if c.lower() in ["org code", "organization code", "org_code", "store code"]), None)
+
+    if not df_soh_raw.empty and stock_col_name and item_soh_col and code_col_name:
+        df_soh_raw['clean_sku'] = df_soh_raw[item_soh_col].apply(clean_sku_code)
+        df_soh_raw['store_code'] = df_soh_raw[code_col_name].apply(get_clean_code)
+        wh_sku_stock_dict = df_soh_raw[df_soh_raw['store_code'] == 'KSWH'].groupby('clean_sku')[stock_col_name].sum().to_dict()
+
     top500_df = sku_grouped.head(500).copy()
     top500_list = []
     for idx, r in top500_df.iterrows():
+        sku_c = clean_sku_code(r[item_code_col])
+        wh_soh_item = int(wh_sku_stock_dict.get(sku_c, 0))
         top500_list.append({
             "rank": idx + 1,
-            "code": clean_sku_code(r[item_code_col]),
+            "code": sku_c,
             "name": str(r[item_name_col])[:40],
             "main_cat": r['main_category'],
             "subsub": r['sub_subgroup'],
             "units": int(r['units']),
             "sales": round(float(r['sales']), 2),
-            "asp": float(r['asp'])
+            "asp": float(r['asp']),
+            "wh_soh": wh_soh_item
         })
 
     low500_df = sku_grouped.tail(500).sort_values(by='units', ascending=True).reset_index(drop=True)
     low500_list = []
     for idx, r in low500_df.iterrows():
+        sku_c = clean_sku_code(r[item_code_col])
+        wh_soh_item = int(wh_sku_stock_dict.get(sku_c, 0))
         low500_list.append({
             "rank": idx + 1,
-            "code": clean_sku_code(r[item_code_col]),
+            "code": sku_c,
             "name": str(r[item_name_col])[:40],
             "main_cat": r['main_category'],
             "subsub": r['sub_subgroup'],
             "units": int(r['units']),
             "sales": round(float(r['sales']), 2),
-            "asp": float(r['asp'])
+            "asp": float(r['asp']),
+            "wh_soh": wh_soh_item
         })
 
-    # بناء تحليل دقيق على مستوى الـ SKU لكل فرع بالمقارنة مع KSWH والمحلات الأخرى
+    # محرك الإمداد الاحترافي (True SKU-Level Shortage & IST Routing)
     replenishment_recommendations = []
-    
-    if not df_soh_raw.empty:
-        # تجميع مبيعات سبتمبر حسب المتجر والصنف
+    if not df_soh_raw.empty and stock_col_name and code_col_name and item_soh_col:
         store_sku_sales = df_clean.groupby(['clean_code', item_code_col, item_name_col, 'main_category'])['Sales Quantity'].sum().reset_index()
         store_sku_sales.rename(columns={'Sales Quantity': 'sept_units', item_code_col: 'item_code', item_name_col: 'item_name'}, inplace=True)
         store_sku_sales['clean_sku'] = store_sku_sales['item_code'].apply(clean_sku_code)
 
-        # استخراج مخزون الفروع من ملف SOH المفصل
-        stock_col_name = next((c for c in df_soh_raw.columns if c.lower() in ["avail_stock", "current_stock"]), None)
-        code_col_name = next((c for c in df_soh_raw.columns if c.lower() in ["org code", "organization code", "org_code", "store code"]), None)
-        item_soh_col = next((c for c in df_soh_raw.columns if c.lower() in ["product code", "item code", "barcode", "sku code"]), None)
+        merged_sku = pd.merge(
+            store_sku_sales,
+            df_soh_raw[['store_code', 'clean_sku', stock_col_name]],
+            left_on=['clean_code', 'clean_sku'],
+            right_on=['store_code', 'clean_sku'],
+            how='inner'
+        )
+        merged_sku.rename(columns={stock_col_name: 'store_soh'}, inplace=True)
+        merged_sku['sku_woc'] = merged_sku['store_soh'] / (merged_sku['sept_units'] / 4.0).replace(0, np.nan)
+        shortage_skus = merged_sku[(merged_sku['sku_woc'] < 3.0) & (merged_sku['sept_units'] >= 8)].sort_values(by='sept_units', ascending=False)
 
-        if stock_col_name and code_col_name and item_soh_col:
-            df_soh_raw['clean_sku'] = df_soh_raw[item_soh_col].apply(clean_sku_code)
-            df_soh_raw['store_code'] = df_soh_raw[code_col_name].apply(get_clean_code)
+        for _, row in shortage_skus.head(25).iterrows():
+            st_code = row['clean_code']
+            st_info = STORE_MAPPING.get(st_code, {})
+            st_name = st_info.get('full_name', st_code)
+            sku_code = row['clean_sku']
+            sku_name = str(row['item_name'])[:28]
+            cat = row['main_category']
+            monthly_sold = row['sept_units']
+            needed_qty = int(monthly_sold * 1.5)
 
-            # دمج مبيعات سبتمبر مع مخزون الـ SOH لكل صنف في كل محل
-            merged_sku = pd.merge(
-                store_sku_sales,
-                df_soh_raw[['store_code', 'clean_sku', stock_col_name]],
-                left_on=['clean_code', 'clean_sku'],
-                right_on=['store_code', 'clean_sku'],
-                how='inner'
-            )
-            merged_sku.rename(columns={stock_col_name: 'store_soh'}, inplace=True)
+            wh_available = wh_sku_stock_dict.get(sku_code, 0)
 
-            # فحص الأصناف التي تباع بكثافة ومخزونها قليل (WOC < 3 أسابيع)
-            merged_sku['sku_woc'] = merged_sku['store_soh'] / (merged_sku['sept_units'] / 4.0).replace(0, np.nan)
-            shortage_skus = merged_sku[(merged_sku['sku_woc'] < 3.0) & (merged_sku['sept_units'] >= 5)].sort_values(by='sept_units', ascending=False)
+            if wh_available >= needed_qty:
+                replenishment_recommendations.append({
+                    "type": "WH Replenishment",
+                    "store_name": f"{st_name} ({st_code})",
+                    "category_focus": f"{cat} | {sku_name} (SKU: {sku_code})",
+                    "from_source": f"Central Warehouse (KSWH - Avail: {wh_available:,} Pcs)",
+                    "suggested_units": f"{needed_qty:,} Pcs",
+                    "urgency": f"High Priority (Sold {monthly_sold} in Sep, SOH: {row['store_soh']})"
+                })
+            else:
+                surplus_branches = df_soh_raw[(df_soh_raw['clean_sku'] == sku_code) & (df_soh_raw['store_code'] != 'KSWH') & (df_soh_raw['store_code'] != st_code) & (df_soh_raw[stock_col_name] > 15)]
+                if not surplus_branches.empty:
+                    donor_row = surplus_branches.sort_values(by=stock_col_name, ascending=False).iloc[0]
+                    donor_code = donor_row['store_code']
+                    donor_info = STORE_MAPPING.get(donor_code, {})
+                    donor_name = donor_info.get('full_name', donor_code)
+                    donor_qty = int(donor_row[stock_col_name])
 
-            # التحقق من توفر الصنف في المستودع الرئيسي KSWH
-            wh_sku_stock = df_soh_raw[df_soh_raw['store_code'] == 'KSWH'].groupby('clean_sku')[stock_col_name].sum().to_dict()
-
-            for _, row in shortage_skus.head(25).iterrows():
-                st_code = row['clean_code']
-                st_info = STORE_MAPPING.get(st_code, {})
-                st_name = st_info.get('full_name', st_code)
-                sku_code = row['clean_sku']
-                sku_name = str(row['item_name'])[:30]
-                cat = row['main_category']
-                monthly_sold = row['sept_units']
-                needed_qty = int(monthly_sold * 1.5) # كمية لتغطية 6 أسابيع
-
-                wh_available = wh_sku_stock.get(sku_code, 0)
-
-                if wh_available >= needed_qty:
-                    # الحالة 1: الصنف موجود في المستودع المركزي KSWH -> امر توريد WH
                     replenishment_recommendations.append({
-                        "type": "WH Replenishment",
+                        "type": "Store Transfer (IST)",
                         "store_name": f"{st_name} ({st_code})",
                         "category_focus": f"{cat} | {sku_name} (SKU: {sku_code})",
-                        "from_source": f"Central Warehouse (KSWH - Avail: {wh_available:,} Pcs)",
-                        "suggested_units": f"{needed_qty:,} Pcs",
-                        "urgency": f"High Priority (Sold {monthly_sold} in Sep, SOH: {row['store_soh']})"
+                        "from_source": f"{donor_name} ({donor_code} - Stock: {donor_qty})",
+                        "suggested_units": f"{min(needed_qty, donor_qty // 2):,} Pcs",
+                        "urgency": f"Store-to-Store (WH Empty for SKU)"
                     })
-                else:
-                    # الحالة 2: المستودع فارغ من هذا الصنف -> مناقلة من فرع آخر (IST) يملك فائضاً
-                    surplus_branches = df_soh_raw[(df_soh_raw['clean_sku'] == sku_code) & (df_soh_raw['store_code'] != 'KSWH') & (df_soh_raw['store_code'] != st_code) & (df_soh_raw[stock_col_name] > 20)]
-                    if not surplus_branches.empty:
-                        donor_row = surplus_branches.sort_values(by=stock_col_name, ascending=False).iloc[0]
-                        donor_code = donor_row['store_code']
-                        donor_info = STORE_MAPPING.get(donor_code, {})
-                        donor_name = donor_info.get('full_name', donor_code)
-                        donor_qty = int(donor_row[stock_col_name])
-
-                        replenishment_recommendations.append({
-                            "type": "Store Transfer (IST)",
-                            "store_name": f"{st_name} ({st_code})",
-                            "category_focus": f"{cat} | {sku_name} (SKU: {sku_code})",
-                            "from_source": f"{donor_name} ({donor_code} - Stock: {donor_qty})",
-                            "suggested_units": f"{min(needed_qty, donor_qty // 2):,} Pcs",
-                            "urgency": f"Store-to-Store (WH Empty for SKU)"
-                        })
-                    else:
-                        # إذا لم يتوفر في أي فرع، نقترح طلبه كطلبية طارئة من المورد
-                        replenishment_recommendations.append({
-                            "type": "Emergency PO",
-                            "store_name": f"{st_name} ({st_code})",
-                            "category_focus": f"{cat} | {sku_name} (SKU: {sku_code})",
-                            "from_source": "External Supplier (Network Stock Out)",
-                            "suggested_units": f"{needed_qty:,} Pcs",
-                            "urgency": "Vendor Reorder Needed"
-                        })
 
     if not replenishment_recommendations:
         replenishment_recommendations.append({
             "type": "WH Replenishment",
             "store_name": "MMS Riyadh Solitaire (K108)",
-            "category_focus": "Children's Goods & Toys",
+            "category_focus": "Children's Goods & Toys | Fast Movers",
             "from_source": "Central Warehouse (KSWH)",
             "suggested_units": "1,500 Pcs",
             "urgency": "High Priority (Core SKUs Reorder)"
@@ -1044,7 +1031,7 @@ def process_and_build():
 
     repl_rows_html = ""
     for idx, rep in enumerate(replenishment_recommendations):
-        badge_col = "#38bdf8" if "WH" in rep['type'] else "#f59e0b"
+        badge_col = "#38bdf8" if "WH" in rep['type'] else "#ef4444"
         repl_rows_html += f"""
         <tr>
             <td style="color:#64748b; font-weight:700;">{idx+1}</td>
@@ -1140,6 +1127,9 @@ def process_and_build():
 
         .sub-tab-btn {{ background:#1e293b; color:#94a3b8; border:1px solid #334155; padding:8px 16px; border-radius:6px; font-weight:700; cursor:pointer; font-size:13px; }}
         .sub-tab-btn.active {{ background:#38bdf8; color:#090d16; border-color:#38bdf8; }}
+
+        .export-btn {{ background: #10b981; border: none; color: #fff; padding: 8px 16px; border-radius: 6px; font-weight: 700; cursor: pointer; font-size: 13px; transition: 0.2s; }}
+        .export-btn:hover {{ background: #059669; }}
 
         .app-modal {{ 
             position: fixed !important; 
@@ -1571,11 +1561,14 @@ def process_and_build():
             </select>
             <input type="text" id="moversSearch" class="table-search" placeholder="Search SKU code or name..." onkeyup="filterMoversTable()">
         </div>
+        <div>
+            <button class="export-btn" onclick="exportMoversToExcel()">📥 Export List to Excel</button>
+        </div>
     </div>
 
     <div class="table-wrap">
         <div style="overflow-x:auto;">
-            <table>
+            <table id="moversTable">
                 <thead>
                     <tr>
                         <th>Rank</th>
@@ -1586,6 +1579,7 @@ def process_and_build():
                         <th>Units Sold</th>
                         <th>Sales Revenue (SAR)</th>
                         <th>ASP (SAR)</th>
+                        <th>WH SOH (KSWH)</th>
                     </tr>
                 </thead>
                 <tbody id="moversTableBody"></tbody>
@@ -1807,15 +1801,34 @@ def process_and_build():
           <td style="font-weight:700; color:#fff;">${{r.units.toLocaleString()}}</td>
           <td style="font-weight:700; color:#38bdf8;">${{r.sales.toLocaleString(undefined, {{minimumFractionDigits:2, maximumFractionDigits:2}})}}</td>
           <td style="color:#f59e0b; font-weight:600;">${{r.asp.toFixed(2)}}</td>
+          <td style="font-weight:700; color:#38bdf8;">${{r.wh_soh.toLocaleString()}} Pcs</td>
         </tr>
       `;
     }});
 
-    tbody.innerHTML = html || "<tr><td colspan='8' style='text-align:center;'>No matching SKUs found</td></tr>";
+    tbody.innerHTML = html || "<tr><td colspan='9' style='text-align:center;'>No matching SKUs found</td></tr>";
   }}
 
   function filterMoversTable() {{
     renderMoversTable();
+  }}
+
+  // دالة تحميل القائمة إلى Excel / CSV
+  function exportMoversToExcel() {{
+    const data = (currentMoversType === 'top') ? TOP_500_DATA : LOW_500_DATA;
+    let csv = "Rank,Item Code,Product Name,Main Category,Sub-Category,Units Sold,Sales Revenue (SAR),ASP (SAR),WH SOH (KSWH)\\n";
+    data.forEach(r => {{
+      csv += `"${{r.rank}}","${{r.code}}","${{r.name.replace(/"/g, '""')}}","${{r.main_cat}}","${{r.subsub}}","${{r.units}}","${{r.sales}}","${{r.asp}}","${{r.wh_soh}}"\\n`;
+    }});
+
+    const blob = new Blob(["\\uFEFF" + csv], {{ type: 'text/csv;charset=utf-8;' }});
+    const link = document.createElement("a");
+    link.href = URL.createObjectURL(blob);
+    link.download = `Mumuso_${{currentMoversType.toUpperCase()}}_500_Movers.csv`;
+    link.style.display = "none";
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
   }}
 
   function filterSubSubTable() {{
