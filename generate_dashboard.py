@@ -468,32 +468,6 @@ def process_and_build():
             })
         store_cat_summary_dict[c_code] = cats_list
 
-    # تحضير Sub-Subgroups مفصلة لكل متجر لتعمل الفلترة بشكل نظيف ودون تكرار اسم القسم
-    store_full_cat_details = {}
-    grouped_st_full = df_clean.groupby(['Organization Code', 'main_category', 'sub_subgroup']).agg(
-        sales=('Actual Sales Amount', 'sum'),
-        units=('Sales Quantity', 'sum')
-    ).reset_index()
-
-    for code, grp in grouped_st_full.groupby('Organization Code'):
-        c_code = get_clean_code(code)
-        st_total = store_total_sales_map.get(c_code, grp['sales'].sum())
-        items_list = []
-        for _, r in grp.sort_values(by='sales', ascending=False).iterrows():
-            c_sales = r['sales']
-            cat_total_in_store = grp[grp['main_category'] == r['main_category']]['sales'].sum()
-            sub_contrib = (c_sales / cat_total_in_store * 100) if cat_total_in_store > 0 else 0
-            asp_item = (c_sales / r['units']) if r['units'] > 0 else 0
-            items_list.append({
-                "main_category": r['main_category'],
-                "sub_subgroup": r['sub_subgroup'],
-                "sales": f"{c_sales:,.2f}",
-                "units": f"{int(r['units']):,}",
-                "contribution": sub_contrib,
-                "asp": f"{asp_item:,.2f}"
-            })
-        store_full_cat_details[c_code] = items_list
-
     top_main_cats = set(main_cat_summary.head(3)['main_category'])
     def mumuso_commercial_engine(row):
         st_code = row['clean_code']
@@ -726,7 +700,7 @@ def process_and_build():
                             <td style="color:#fff;">{r_soh:,.0f}</td>
                             <td>{r_atv:,.2f}</td>
                             <td>{r_upt:,.2f}</td>
-                            <td style="color:#f59e0b; font-weight:700;">{r_asp:,.2f}</td>
+                            <td style="color:#f59e0b;">{r_asp:,.2f}</td>
                         </tr>
                     </tbody>
                 </table>
@@ -897,13 +871,10 @@ def process_and_build():
         """
 
     subsub_json_data = subsub_summary.to_dict(orient='records')
+    store_cat_summary_dict_json = store_cat_summary_dict
     main_cat_options = '<option value="ALL" data-translate-key="all_cats">-- All Main Categories (Overview) --</option>'
     for c_name in main_cat_summary['main_category']:
         main_cat_options += f'<option value="{html.escape(c_name)}">{html.escape(c_name)}</option>'
-
-    store_options_html = '<option value="ALL" data-translate-key="all_stores">-- All Stores (Overview) --</option>'
-    for _, s in store_summary.iterrows():
-        store_options_html += f'<option value="{s["clean_code"]}">{s["full_name"]} ({s["clean_code"]})</option>'
 
     html_content = f"""<!DOCTYPE html>
 <html lang="en" id="html-root">
@@ -1231,7 +1202,7 @@ def process_and_build():
 <div id="view-business" style="display:none;">
     <div class="section-title">
         <span data-translate-key="main_cat_title">🏷️ MUMUSO MAIN PRODUCT CATEGORIES (LEVEL 1 HIERARCHY)</span>
-        <span style="font-size:12px; color:var(--text-muted); font-weight:400;" data-translate-key="card_click_hint">Select a store from dropdown to view its overall category contribution mix</span>
+        <span style="font-size:12px; color:var(--text-muted); font-weight:400;" data-translate-key="card_click_hint">Click any category card to drill down into its sub-subgroups &rarr;</span>
     </div>
     
     <div class="cards-scroll-container">
@@ -1242,12 +1213,9 @@ def process_and_build():
         <div class="table-header">
             <div>
                 <h3 id="tableHierarchyTitle" data-translate-key="hier_matrix_title">PRODUCT HIERARCHY MATRIX (LEVEL 1: MAIN CATEGORIES)</h3>
-                <span style="color:var(--text-muted);font-size:12px;" data-translate-key="hier_hint">Select a Store and Main Category to analyze specific branch assortment mix</span>
+                <span style="color:var(--text-muted);font-size:12px;" data-translate-key="hier_hint">Select a Main Category from the dropdown or cards to view detailed Sub-Subgroups</span>
             </div>
             <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap;">
-                <select id="storeDropdownFilter" class="table-select" onchange="onStoreDropdownChange(this.value)">
-                    {store_options_html}
-                </select>
                 <select id="mainCatFilter" class="table-select" onchange="onCategoryFilterChange(this.value)">
                     {main_cat_options}
                 </select>
@@ -1305,12 +1273,12 @@ def process_and_build():
       legend_sales: "Actual Sales (SAR)",
       legend_target: "Target (SAR)",
       store_matrix_title: "STORE COMMERCIAL & DISPLAY ASSORTMENT MATRIX",
-      click_row_hint: "Click any store row to view category contribution breakdown for that store",
+      click_row_hint: "Click any store row to open detailed store intelligence",
       regional_overview: "REGIONAL LEADERSHIP & AREA MANAGER OVERVIEW",
       main_cat_title: "MUMUSO MAIN PRODUCT CATEGORIES (LEVEL 1 HIERARCHY)",
-      card_click_hint: "Select a store from dropdown to view its overall category contribution mix",
+      card_click_hint: "Click any category card to drill down into its sub-subgroups",
       hier_matrix_title: "PRODUCT HIERARCHY MATRIX (LEVEL 1: MAIN CATEGORIES)",
-      hier_hint: "Select a Store and Main Category to analyze specific branch assortment mix",
+      hier_hint: "Select a Main Category from the dropdown or cards to view detailed Sub-Subgroups",
       th_code: "Store Code",
       th_store: "Full Store Name",
       th_region: "Region",
@@ -1346,8 +1314,7 @@ def process_and_build():
       target_ach: "TARGET & ACH",
       floor_soh: "FLOOR SOH",
       display_density: "DISPLAY DENSITY",
-      all_cats: "-- All Main Categories (Overview) --",
-      all_stores: "-- All Stores (Overview) --"
+      all_cats: "-- All Main Categories (Overview) --"
     }},
     ar: {{
       main_title: "لوحة تحكم مؤشرات الأداء التجارية والمخزون - موموسو",
@@ -1372,9 +1339,9 @@ def process_and_build():
       click_row_hint: "انقر على أي سطر متجر لعرض نسبة مساهمة كل قسم في إجمالي مبيعات الفرع",
       regional_overview: "القيادة الإقليمية ونظرة مدراء المناطق",
       main_cat_title: "أقسام منتجات موموسو الرئيسية (المستوى الأول)",
-      card_click_hint: "اختر متجراً من القائمة المنسدلة لعرض نسب مساهمة الأقسام في إجمالي مبيعاته",
+      card_click_hint: "انقر على أي بطاقة قسم لعرض التفاصيل الدقيقة للأصناف &rarr;",
       hier_matrix_title: "مصفوفة الهيكل السلعي (المستوى الأول: الأقسام الرئيسية)",
-      hier_hint: "اختر متجراً وقسماً رئيسياً لتحليل المزيج السلعي المخصص لذلك الفرع",
+      hier_hint: "اختر قسماً رئيسياً من القائمة أو البطاقات لعرض الأصناف التفصيلية",
       th_code: "كود الفرع",
       th_store: "اسم الفرع الكامل",
       th_region: "المنطقة",
@@ -1410,8 +1377,7 @@ def process_and_build():
       target_ach: "التارجت والتحقيق",
       floor_soh: "المخزون في الفرع",
       display_density: "كثافة العرض",
-      all_cats: "-- جميع الأقسام الرئيسية (نظرة عامة) --",
-      all_stores: "-- جميع المتاجر (نظرة عامة) --"
+      all_cats: "-- جميع الأقسام الرئيسية (نظرة عامة) --"
     }}
   }};
 
@@ -1444,6 +1410,7 @@ def process_and_build():
     if (el) el.innerHTML = (htmlContent !== undefined && htmlContent !== null) ? htmlContent : "-";
   }}
 
+  // عند النقر على أي متجر، تفتح النافذة وتعرض نسبة مساهمة كل قسم في إجمالي مبيعات ذلك المتجر كـ Overall (%)
   function openStoreDetails(storeCode) {{
     try {{
       const meta = STORE_META[storeCode];
@@ -1494,25 +1461,15 @@ def process_and_build():
   function filterByMainCategory(catName) {{
     const filter = document.getElementById("mainCatFilter");
     if (filter) filter.value = catName;
-    updateBusinessTable();
-  }}
-
-  function onStoreDropdownChange(storeCode) {{
-    updateBusinessTable();
+    onCategoryFilterChange(catName);
   }}
 
   function onCategoryFilterChange(catName) {{
-    updateBusinessTable();
-  }}
-
-  function updateBusinessTable() {{
-    const storeCode = document.getElementById("storeDropdownFilter").value;
-    const catName = document.getElementById("mainCatFilter").value;
     const thead = document.getElementById("hierarchyTableHead");
     const tbody = document.getElementById("hierarchyTableBody");
     const title = document.getElementById("tableHierarchyTitle");
 
-    if (storeCode === "ALL" && catName === "ALL") {{
+    if (catName === "ALL") {{
       title.innerText = "PRODUCT HIERARCHY MATRIX (LEVEL 1: MAIN CATEGORIES)";
       thead.innerHTML = `
         <tr>
@@ -1529,38 +1486,7 @@ def process_and_build():
       return;
     }}
 
-    if (storeCode !== "ALL" && catName === "ALL") {{
-      const stCats = STORE_DETAILS[storeCode] || [];
-      const storeMeta = STORE_META[storeCode];
-      title.innerText = "CATEGORY CONTRIBUTION MIX FOR: " + (storeMeta ? storeMeta.name : storeCode);
-      thead.innerHTML = `
-        <tr>
-          <th>#</th>
-          <th data-translate-key="th_main_cat">Main Category</th>
-          <th data-translate-key="th_sales">Sales Revenue (SAR)</th>
-          <th data-translate-key="th_units">Sales Units</th>
-          <th data-translate-key="th_store_mix">Category Contribution in Store (%)</th>
-          <th>ASP (SAR)</th>
-        </tr>
-      `;
-      let rowsHtml = "";
-      stCats.forEach((c, idx) => {{
-        rowsHtml += `
-          <tr>
-            <td style="color:#64748b;">${{idx+1}}</td>
-            <td style="color:#38bdf8; font-weight:700;">${{c.main_category}}</td>
-            <td style="color:#38bdf8; font-weight:700;">${{c.sales}}</td>
-            <td>${{c.units}}</td>
-            <td style="color:#10b981; font-weight:800; font-size:14px;">${{c.store_mix_pct}}</td>
-            <td style="color:#f59e0b; font-weight:700;">${{c.asp}}</td>
-          </tr>
-        `;
-      }});
-      tbody.innerHTML = rowsHtml || "<tr><td colspan='6' style='text-align:center;'>No data available for this store</td></tr>";
-      return;
-    }}
-
-    title.innerText = "SUB-SUBGROUP BREAKDOWN: " + catName.toUpperCase() + (storeCode !== "ALL" ? " (Filtered by Store)" : "");
+    title.innerText = "SUB-SUBGROUP BREAKDOWN: " + catName.toUpperCase();
     thead.innerHTML = `
       <tr>
         <th>#</th>
@@ -1573,11 +1499,7 @@ def process_and_build():
       </tr>
     `;
 
-    let filtered = SUBSUB_DATA;
-    if (catName !== "ALL") {{
-      filtered = filtered.filter(x => x.main_category === catName);
-    }}
-
+    const filtered = SUBSUB_DATA.filter(x => x.main_category === catName);
     let rowsHtml = "";
     filtered.forEach((r, idx) => {{
       const bar_w = Math.min(r.contribution * 3, 100);
@@ -1601,7 +1523,9 @@ def process_and_build():
       `;
     }};
 
-    tbody.innerHTML = rowsHtml || "<tr><td colspan='7' style='text-align:center;'>No matching products found for this filter</td></tr>";
+    if (tbody) {{
+      tbody.innerHTML = rowsHtml || "<tr><td colspan='7' style='text-align:center;'>No sub-subgroups found for this category</td></tr>";
+    }}
   }}
 
   function filterSubSubTable() {{

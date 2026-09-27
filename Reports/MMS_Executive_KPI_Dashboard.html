@@ -202,15 +202,15 @@
 <div class="insights-grid">
     <div class="insight-card danger">
         <div class="insight-title" style="color:#ef4444;" data-translate-key="critical_issues">● Critical Issues</div>
-        <div class="insight-body">Close the 22% gap to target immediately by intensifying promotional velocity and inventory optimization across underperforming locations outside our top 3 performers.</div>
+        <div class="insight-body">We're tracking 22% below target at 78% achievement—accelerate inventory investment and promotional velocity across underperforming locations immediately.</div>
     </div>
     <div class="insight-card warning">
         <div class="insight-title" style="color:#f59e0b;" data-translate-key="attention_req">● Attention Required</div>
-        <div class="insight-body">Investigate conversion rate and traffic patterns in non-performing stores as LFL growth of +17% masks significant variance in store-level execution.</div>
+        <div class="insight-body">Top 3 stores are carrying the business with concentrated sales; diversify performance across portfolio to reduce risk and strengthen overall chain health.</div>
     </div>
     <div class="insight-card success">
         <div class="insight-title" style="color:#10b981;" data-translate-key="opportunities">● Opportunities</div>
-        <div class="insight-body">Replicate the formula from Mall of Dhahran (103% achievement) and Jeddah U-Walk (106% achievement) across the estate to unlock 500K+ SAR incremental sales and exceed annual target.</div>
+        <div class="insight-body">Strong 17% LFL growth and 29-41% YoY gains in leading stores prove demand is there—replicate best practices and proven assortments to unlock performance in tier-2 and tier-3 locations.</div>
     </div>
 </div>
 
@@ -1263,7 +1263,7 @@
                             <td style="color:#fff;">455,609</td>
                             <td>66.26</td>
                             <td>3.11</td>
-                            <td style="color:#f59e0b; font-weight:700;">21.33</td>
+                            <td style="color:#f59e0b;">21.33</td>
                         </tr>
                     </tbody>
                 </table>
@@ -1527,7 +1527,7 @@
                             <td style="color:#fff;">555,294</td>
                             <td>50.68</td>
                             <td>2.85</td>
-                            <td style="color:#f59e0b; font-weight:700;">17.78</td>
+                            <td style="color:#f59e0b;">17.78</td>
                         </tr>
                     </tbody>
                 </table>
@@ -1540,7 +1540,7 @@
 <div id="view-business" style="display:none;">
     <div class="section-title">
         <span data-translate-key="main_cat_title">🏷️ MUMUSO MAIN PRODUCT CATEGORIES (LEVEL 1 HIERARCHY)</span>
-        <span style="font-size:12px; color:var(--text-muted); font-weight:400;" data-translate-key="card_click_hint">Select a store from dropdown to view its overall category contribution mix</span>
+        <span style="font-size:12px; color:var(--text-muted); font-weight:400;" data-translate-key="card_click_hint">Click any category card to drill down into its sub-subgroups &rarr;</span>
     </div>
     
     <div class="cards-scroll-container">
@@ -1746,12 +1746,9 @@
         <div class="table-header">
             <div>
                 <h3 id="tableHierarchyTitle" data-translate-key="hier_matrix_title">PRODUCT HIERARCHY MATRIX (LEVEL 1: MAIN CATEGORIES)</h3>
-                <span style="color:var(--text-muted);font-size:12px;" data-translate-key="hier_hint">Select a Store and Main Category to analyze specific branch assortment mix</span>
+                <span style="color:var(--text-muted);font-size:12px;" data-translate-key="hier_hint">Select a Main Category from the dropdown or cards to view detailed Sub-Subgroups</span>
             </div>
             <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap;">
-                <select id="storeDropdownFilter" class="table-select" onchange="onStoreDropdownChange(this.value)">
-                    <option value="ALL" data-translate-key="all_stores">-- All Stores (Overview) --</option><option value="K108">MMS Riyadh Solitaire (K108)</option><option value="K301">MMS Mall of Dhahran (K301)</option><option value="K205">MMS Jeddah U-Walk (K205)</option><option value="K211">MMS Madinah (K211)</option><option value="K101">MMS Riyadh The View Mall (K101)</option><option value="K110">MMS Riyadh U-Walk (K110)</option><option value="K201">MMS Jeddah Park (K201)</option><option value="K202">MMS Jeddah Yasmin Mall (K202)</option><option value="K208">MMS Jeddah Mall of Arabia (K208)</option><option value="K401">MMS Najran Park (K401)</option><option value="K404">MMS Abha (K404)</option><option value="K102">MMS Riyadh Tala Mall (K102)</option><option value="K501">MMS Tabuk Park (K501)</option><option value="K109">MMS Riyadh Localizer (K109)</option><option value="K210">MMS Makkah Salam Mall (K210)</option><option value="K403">MMS RMJ (K403)</option>
-                </select>
                 <select id="mainCatFilter" class="table-select" onchange="onCategoryFilterChange(this.value)">
                     <option value="ALL" data-translate-key="all_cats">-- All Main Categories (Overview) --</option><option value="Beauty &amp; Cleaning">Beauty &amp; Cleaning</option><option value="Children&#x27;S Goods">Children&#x27;S Goods</option><option value="Stationery">Stationery</option><option value="Home &amp; Daily Use">Home &amp; Daily Use</option><option value="Bags">Bags</option><option value="Fashion Accessories">Fashion Accessories</option><option value="3C Electronics">3C Electronics</option><option value="Apparel Accessories">Apparel Accessories</option><option value="Home Textile">Home Textile</option><option value="MAKE UP">MAKE UP</option><option value="Variety Lifestyle">Variety Lifestyle</option><option value="GWP">GWP</option><option value="N2">N2</option>
                 </select>
@@ -2303,12 +2300,12 @@
       legend_sales: "Actual Sales (SAR)",
       legend_target: "Target (SAR)",
       store_matrix_title: "STORE COMMERCIAL & DISPLAY ASSORTMENT MATRIX",
-      click_row_hint: "Click any store row to view category contribution breakdown for that store",
+      click_row_hint: "Click any store row to open detailed store intelligence",
       regional_overview: "REGIONAL LEADERSHIP & AREA MANAGER OVERVIEW",
       main_cat_title: "MUMUSO MAIN PRODUCT CATEGORIES (LEVEL 1 HIERARCHY)",
-      card_click_hint: "Select a store from dropdown to view its overall category contribution mix",
+      card_click_hint: "Click any category card to drill down into its sub-subgroups",
       hier_matrix_title: "PRODUCT HIERARCHY MATRIX (LEVEL 1: MAIN CATEGORIES)",
-      hier_hint: "Select a Store and Main Category to analyze specific branch assortment mix",
+      hier_hint: "Select a Main Category from the dropdown or cards to view detailed Sub-Subgroups",
       th_code: "Store Code",
       th_store: "Full Store Name",
       th_region: "Region",
@@ -2344,8 +2341,7 @@
       target_ach: "TARGET & ACH",
       floor_soh: "FLOOR SOH",
       display_density: "DISPLAY DENSITY",
-      all_cats: "-- All Main Categories (Overview) --",
-      all_stores: "-- All Stores (Overview) --"
+      all_cats: "-- All Main Categories (Overview) --"
     },
     ar: {
       main_title: "لوحة تحكم مؤشرات الأداء التجارية والمخزون - موموسو",
@@ -2370,9 +2366,9 @@
       click_row_hint: "انقر على أي سطر متجر لعرض نسبة مساهمة كل قسم في إجمالي مبيعات الفرع",
       regional_overview: "القيادة الإقليمية ونظرة مدراء المناطق",
       main_cat_title: "أقسام منتجات موموسو الرئيسية (المستوى الأول)",
-      card_click_hint: "اختر متجراً من القائمة المنسدلة لعرض نسب مساهمة الأقسام في إجمالي مبيعاته",
+      card_click_hint: "انقر على أي بطاقة قسم لعرض التفاصيل الدقيقة للأصناف &rarr;",
       hier_matrix_title: "مصفوفة الهيكل السلعي (المستوى الأول: الأقسام الرئيسية)",
-      hier_hint: "اختر متجراً وقسماً رئيسياً لتحليل المزيج السلعي المخصص لذلك الفرع",
+      hier_hint: "اختر قسماً رئيسياً من القائمة أو البطاقات لعرض الأصناف التفصيلية",
       th_code: "كود الفرع",
       th_store: "اسم الفرع الكامل",
       th_region: "المنطقة",
@@ -2408,8 +2404,7 @@
       target_ach: "التارجت والتحقيق",
       floor_soh: "المخزون في الفرع",
       display_density: "كثافة العرض",
-      all_cats: "-- جميع الأقسام الرئيسية (نظرة عامة) --",
-      all_stores: "-- جميع المتاجر (نظرة عامة) --"
+      all_cats: "-- جميع الأقسام الرئيسية (نظرة عامة) --"
     }
   };
 
@@ -2442,6 +2437,7 @@
     if (el) el.innerHTML = (htmlContent !== undefined && htmlContent !== null) ? htmlContent : "-";
   }
 
+  // عند النقر على أي متجر، تفتح النافذة وتعرض نسبة مساهمة كل قسم في إجمالي مبيعات ذلك المتجر كـ Overall (%)
   function openStoreDetails(storeCode) {
     try {
       const meta = STORE_META[storeCode];
@@ -2492,25 +2488,15 @@
   function filterByMainCategory(catName) {
     const filter = document.getElementById("mainCatFilter");
     if (filter) filter.value = catName;
-    updateBusinessTable();
-  }
-
-  function onStoreDropdownChange(storeCode) {
-    updateBusinessTable();
+    onCategoryFilterChange(catName);
   }
 
   function onCategoryFilterChange(catName) {
-    updateBusinessTable();
-  }
-
-  function updateBusinessTable() {
-    const storeCode = document.getElementById("storeDropdownFilter").value;
-    const catName = document.getElementById("mainCatFilter").value;
     const thead = document.getElementById("hierarchyTableHead");
     const tbody = document.getElementById("hierarchyTableBody");
     const title = document.getElementById("tableHierarchyTitle");
 
-    if (storeCode === "ALL" && catName === "ALL") {
+    if (catName === "ALL") {
       title.innerText = "PRODUCT HIERARCHY MATRIX (LEVEL 1: MAIN CATEGORIES)";
       thead.innerHTML = `
         <tr>
@@ -2527,38 +2513,7 @@
       return;
     }
 
-    if (storeCode !== "ALL" && catName === "ALL") {
-      const stCats = STORE_DETAILS[storeCode] || [];
-      const storeMeta = STORE_META[storeCode];
-      title.innerText = "CATEGORY CONTRIBUTION MIX FOR: " + (storeMeta ? storeMeta.name : storeCode);
-      thead.innerHTML = `
-        <tr>
-          <th>#</th>
-          <th data-translate-key="th_main_cat">Main Category</th>
-          <th data-translate-key="th_sales">Sales Revenue (SAR)</th>
-          <th data-translate-key="th_units">Sales Units</th>
-          <th data-translate-key="th_store_mix">Category Contribution in Store (%)</th>
-          <th>ASP (SAR)</th>
-        </tr>
-      `;
-      let rowsHtml = "";
-      stCats.forEach((c, idx) => {
-        rowsHtml += `
-          <tr>
-            <td style="color:#64748b;">${idx+1}</td>
-            <td style="color:#38bdf8; font-weight:700;">${c.main_category}</td>
-            <td style="color:#38bdf8; font-weight:700;">${c.sales}</td>
-            <td>${c.units}</td>
-            <td style="color:#10b981; font-weight:800; font-size:14px;">${c.store_mix_pct}</td>
-            <td style="color:#f59e0b; font-weight:700;">${c.asp}</td>
-          </tr>
-        `;
-      });
-      tbody.innerHTML = rowsHtml || "<tr><td colspan='6' style='text-align:center;'>No data available for this store</td></tr>";
-      return;
-    }
-
-    title.innerText = "SUB-SUBGROUP BREAKDOWN: " + catName.toUpperCase() + (storeCode !== "ALL" ? " (Filtered by Store)" : "");
+    title.innerText = "SUB-SUBGROUP BREAKDOWN: " + catName.toUpperCase();
     thead.innerHTML = `
       <tr>
         <th>#</th>
@@ -2571,11 +2526,7 @@
       </tr>
     `;
 
-    let filtered = SUBSUB_DATA;
-    if (catName !== "ALL") {
-      filtered = filtered.filter(x => x.main_category === catName);
-    }
-
+    const filtered = SUBSUB_DATA.filter(x => x.main_category === catName);
     let rowsHtml = "";
     filtered.forEach((r, idx) => {
       const bar_w = Math.min(r.contribution * 3, 100);
@@ -2599,7 +2550,9 @@
       `;
     };
 
-    tbody.innerHTML = rowsHtml || "<tr><td colspan='7' style='text-align:center;'>No matching products found for this filter</td></tr>";
+    if (tbody) {
+      tbody.innerHTML = rowsHtml || "<tr><td colspan='7' style='text-align:center;'>No sub-subgroups found for this category</td></tr>";
+    }
   }
 
   function filterSubSubTable() {
