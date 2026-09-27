@@ -200,11 +200,12 @@ def generate_claude_insights(store_summary, total_sales, total_target, overall_a
         }
 
     top_stores = store_summary.head(3)[['full_name', 'sales', 'ach_pct', 'ly_sales', 'yoy_growth']].to_dict(orient="records")
+    top_stores_str = ", ".join([str(s) for s in top_stores])
     prompt = f"""
     You are a Senior Merchandising Director for Mumuso.
     - Total Sales: {total_sales:,.0f} SAR | Target: {total_target:,.0f} SAR | Ach: {overall_ach:.1f}%
     - Like-For-Like (LFL) YoY Growth: {lfl_growth_pct:+.1f}%
-    - Top Stores: {top_stores}
+    - Top Stores: {top_stores_str}
     Provide 3 punchy commercial directives (1 sentence each):
     1. Critical Issues
     2. Attention Required
@@ -416,7 +417,7 @@ def process_and_build():
     sales_with_target = valid_targets['sales'].sum()
     overall_ach = (sales_with_target / total_target * 100) if total_target > 0 else 0
 
-    # 2. الهيكل السلعي للمبيعات
+    # 2. الهيكل السلعي
     main_cat_summary = df_clean.groupby('main_category').agg(
         sales=('Actual Sales Amount', 'sum'),
         units=('Sales Quantity', 'sum')
@@ -467,6 +468,32 @@ def process_and_build():
             })
         store_cat_summary_dict[c_code] = cats_list
 
+    # تحضير Sub-Subgroups مفصلة لكل متجر لتعمل الفلترة بشكل نظيف ودون تكرار اسم القسم
+    store_full_cat_details = {}
+    grouped_st_full = df_clean.groupby(['Organization Code', 'main_category', 'sub_subgroup']).agg(
+        sales=('Actual Sales Amount', 'sum'),
+        units=('Sales Quantity', 'sum')
+    ).reset_index()
+
+    for code, grp in grouped_st_full.groupby('Organization Code'):
+        c_code = get_clean_code(code)
+        st_total = store_total_sales_map.get(c_code, grp['sales'].sum())
+        items_list = []
+        for _, r in grp.sort_values(by='sales', ascending=False).iterrows():
+            c_sales = r['sales']
+            cat_total_in_store = grp[grp['main_category'] == r['main_category']]['sales'].sum()
+            sub_contrib = (c_sales / cat_total_in_store * 100) if cat_total_in_store > 0 else 0
+            asp_item = (c_sales / r['units']) if r['units'] > 0 else 0
+            items_list.append({
+                "main_category": r['main_category'],
+                "sub_subgroup": r['sub_subgroup'],
+                "sales": f"{c_sales:,.2f}",
+                "units": f"{int(r['units']):,}",
+                "contribution": sub_contrib,
+                "asp": f"{asp_item:,.2f}"
+            })
+        store_full_cat_details[c_code] = items_list
+
     top_main_cats = set(main_cat_summary.head(3)['main_category'])
     def mumuso_commercial_engine(row):
         st_code = row['clean_code']
@@ -476,6 +503,7 @@ def process_and_build():
         st_items = store_cat_summary_dict.get(st_code, [])
         st_top_cats = list(dict.fromkeys([c['main_category'] for c in st_items[:5]]))
         missing_cats = [c for c in top_main_cats if c not in st_top_cats]
+        st_top_cats_str = ", ".join(st_top_cats[:3]) if st_top_cats else "General"
 
         if soh >= 80000:
             cap_badge, cap_col = "Flagship Mega-Display", "#38bdf8"
@@ -488,14 +516,14 @@ def process_and_build():
 
         if ach >= 95:
             diag_title, diag_col = "Powerhouse Performer", "#10b981"
-            prob = f"High commercial conversion ({ach:.1f}% Ach). Strong momentum in {', '.join(st_top_cats[:2])}."
+            prob = f"High commercial conversion ({ach:.1f}% Ach). Strong momentum in {st_top_cats_str}."
             action = f"Maintain 100% shelf availability on leading sub-categories and introduce premium novelty SKUs."
             needs = f"Priority replenishment for core volume drivers in {st_top_cats[0] if st_top_cats else 'Toys'}."
         elif ach < 70 and soh >= 40000:
             diag_title, diag_col = "Assortment Mismatch", "#f59e0b"
             prob = f"Store holds solid display depth ({soh:,.0f} Pcs) but turnover is slow ({ach:.1f}% Ach). Gondolas tied to slow sub-subgroups."
             action = f"⚡ ACTION: Execute Category Assortment Swap. Reallocate front entrance to {missing_cats[0] if missing_cats else 'Children Toys & Beauty'} and bundle slow movers."
-            needs = f"Inject high-velocity categories ({', '.join(missing_cats[:2]) if missing_cats else 'Toys & Novelties'})."
+            needs = f"Inject high-velocity categories."
         elif ach < 70 and soh < 40000:
             diag_title, diag_col = "Under-Display Deficit", "#ef4444"
             prob = f"Target achievement is lagging ({ach:.1f}%) and visual density ({soh:,.0f} Pcs) is thin, depressing walk-in impulse purchases."
@@ -511,7 +539,7 @@ def process_and_build():
             "capacity_badge": cap_badge, "capacity_color": cap_col,
             "diag_title": diag_title, "diag_color": diag_col,
             "problem": prob, "action": action, "needs": needs,
-            "top_categories_str": ", ".join(st_top_cats[:3]) if st_top_cats else "General"
+            "top_categories_str": st_top_cats_str
         }
 
     engine_res = store_summary.apply(mumuso_commercial_engine, axis=1)
@@ -698,7 +726,7 @@ def process_and_build():
                             <td style="color:#fff;">{r_soh:,.0f}</td>
                             <td>{r_atv:,.2f}</td>
                             <td>{r_upt:,.2f}</td>
-                            <td style="color:#f59e0b;">{r_asp:,.2f}</td>
+                            <td style="color:#f59e0b; font-weight:700;">{r_asp:,.2f}</td>
                         </tr>
                     </tbody>
                 </table>
@@ -767,8 +795,8 @@ def process_and_build():
         if pd.notna(row['ly_sales']):
             ly_str = f"{row['ly_sales']:,.2f}"
             yoy_val = row['yoy_growth']
-            yoy_col = "#10b981" if yoy_val >= 0 else "#ef4444"
-            yoy_cell = f'<span style="color:{yoy_col}; font-weight:700;">{yoy_val:+.1f}%</span>'
+            y_col = "#10b981" if yoy_val >= 0 else "#ef4444"
+            yoy_cell = f'<span style="color:{y_col}; font-weight:700;">{yoy_val:+.1f}%</span>'
         else:
             ly_str = '<span style="color:#64748b;" data-translate-key="new_store">New Store</span>'
             yoy_cell = '<span style="color:#64748b;">-</span>'
@@ -869,7 +897,6 @@ def process_and_build():
         """
 
     subsub_json_data = subsub_summary.to_dict(orient='records')
-    store_cat_summary_dict_json = store_cat_summary_dict
     main_cat_options = '<option value="ALL" data-translate-key="all_cats">-- All Main Categories (Overview) --</option>'
     for c_name in main_cat_summary['main_category']:
         main_cat_options += f'<option value="{html.escape(c_name)}">{html.escape(c_name)}</option>'
@@ -1218,7 +1245,6 @@ def process_and_build():
                 <span style="color:var(--text-muted);font-size:12px;" data-translate-key="hier_hint">Select a Store and Main Category to analyze specific branch assortment mix</span>
             </div>
             <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap;">
-                <!-- قائمة منسدلة جديدة للمحلات (Store Dropdown Filter) -->
                 <select id="storeDropdownFilter" class="table-select" onchange="onStoreDropdownChange(this.value)">
                     {store_options_html}
                 </select>
@@ -1573,7 +1599,7 @@ def process_and_build():
           <td style="color:#f59e0b;font-weight:700;">${{r.asp.toFixed(2)}}</td>
         </tr>
       `;
-    }});
+    }};
 
     tbody.innerHTML = rowsHtml || "<tr><td colspan='7' style='text-align:center;'>No matching products found for this filter</td></tr>";
   }}
