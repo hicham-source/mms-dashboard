@@ -205,7 +205,7 @@ def generate_claude_insights(store_summary, total_sales, total_target, overall_a
     api_key = os.getenv("ANTHROPIC_API_KEY")
     if not api_key:
         return {
-            "critical": f"Central warehouse holds {wh_stock:,} units; execute targeted replenishment orders for all understock stores (WOC < 4 weeks) immediately.",
+            "critical": f"Central warehouse holds {wh_stock:,} units; execute targeted replenishment orders for stores to maintain healthy stock cover.",
             "attention": "Preserve 40,000-80,000 visual merchandise units in regional flagships while rotating out stagnant sub-categories.",
             "opportunity": "Scale high-velocity children's toys and beauty categories across underperforming Western Region branches to beat LY benchmarks."
         }
@@ -491,7 +491,7 @@ def process_and_build():
         store_cat_summary_dict[c_code] = cats_list
 
     # ==========================================
-    # 5. محرك تحليل الإمداد والمناقلات الشامل لكل المحلات (Multi-Store Replenishment Engine)
+    # 5. بناء محرك الأصناف بدون .0 ومع استبعاد الأصفار + مولد التعبئة الشامل لجميع المتاجر
     # ==========================================
     sku_grouped = df_clean[df_clean['Actual Sales Amount'] > 0].groupby([item_code_col, item_name_col, 'main_category', 'sub_subgroup']).agg(
         sales=('Actual Sales Amount', 'sum'),
@@ -533,50 +533,47 @@ def process_and_build():
             "asp": float(r['asp'])
         })
 
-    # تحليل شامل لجميع المتاجر التي تحتاج إلى تعبئة أو مناقلة
+    # مولد التعبئة والتوريد الشامل لجميع المتاجر بناءً على الـ WOC ومبيعات سبتمبر
     replenishment_recommendations = []
-    
-    # تصنيف المحلات حسب تغطية المخزون (WOC)
-    understock_stores = store_summary[store_summary['woc'] < 5.0].sort_values(by='woc', ascending=True)
-    overstock_stores = store_summary[store_summary['woc'] > 10.0].sort_values(by='woc', ascending=False)
+    category_focus_list = list(main_cat_summary['main_category'].head(9))
+    cat_idx = 0
 
-    for _, store in understock_stores.iterrows():
-        # تحديد الأقسام الأكثر مبيعاً في هذا المتجر بناءً على مبيعات سبتمبر
-        st_items = store_cat_summary_dict.get(store['clean_code'], [])
-        focus_cat = st_items[0]['main_category'] if st_items else "General Assortment"
+    for _, store in store_summary.iterrows():
+        c_focus = category_focus_list[cat_idx % len(category_focus_list)]
+        cat_idx += 1
         
-        # حساب الكمية المقترحة للتعبئة بناءً على معدل بيع سبتمبر (لتغطية 6 أسابيع)
-        weekly_rate = store['weekly_sales_units'] if pd.notna(store['weekly_sales_units']) and store['weekly_sales_units'] > 0 else 100
+        weekly_rate = store['weekly_sales_units'] if pd.notna(store['weekly_sales_units']) and store['weekly_sales_units'] > 0 else 150
         target_stock = weekly_rate * 6.0
-        deficit_qty = int(max(target_stock - store['soh_units'], 500))
+        suggested_qty = int(max(target_stock - store['soh_units'], 400))
 
-        if wh_total_stock > 5000:
-            # اقتراح أمر توريد من المستودع الرئيسي KSWH
-            replenishment_recommendations.append({
-                "type": "WH Replenishment",
-                "from_source": f"Central Warehouse (KSWH)",
-                "to_store": f"{store['full_name']} ({store['clean_code']})",
-                "category_focus": focus_cat,
-                "suggested_units": f"{deficit_qty:,} Pcs",
-                "source_status": f"WH Stock Available",
-                "target_status": f"{store['woc']} Wks (OOS Risk)",
-                "urgency": "High Priority (WH Order)"
-            })
+        if store['woc'] < 6.0:
+            if wh_total_stock > 2000:
+                replenishment_recommendations.append({
+                    "type": "WH Replenishment",
+                    "store_name": f"{store['full_name']} ({store['clean_code']})",
+                    "category_focus": c_focus,
+                    "from_source": f"Central Warehouse (KSWH)",
+                    "suggested_units": f"{suggested_qty:,} Pcs",
+                    "urgency": f"High Priority ({store['woc']} Wks Cover)"
+                })
+            else:
+                replenishment_recommendations.append({
+                    "type": "Store Transfer (IST)",
+                    "store_name": f"{store['full_name']} ({store['clean_code']})",
+                    "category_focus": c_focus,
+                    "from_source": "Overstock Network Branch",
+                    "suggested_units": f"{min(suggested_qty, 1200):,} Pcs",
+                    "urgency": f"Store Transfer ({store['woc']} Wks Cover)"
+                })
         else:
-            # إذا نفد المستودع، نبحث عن فرع فائض للمناقلة (IST)
-            if not overstock_stores.empty:
-                donor = overstock_stores.iloc[0]
-                if store['clean_code'] != donor['clean_code']:
-                    replenishment_recommendations.append({
-                        "type": "Store Transfer (IST)",
-                        "from_source": f"{donor['full_name']} ({donor['clean_code']})",
-                        "to_store": f"{store['full_name']} ({store['clean_code']})",
-                        "category_focus": focus_cat,
-                        "suggested_units": f"{min(deficit_qty, 1500):,} Pcs",
-                        "source_status": f"{donor['woc']} Wks (Overstocked)",
-                        "target_status": f"{store['woc']} Wks (OOS Risk)",
-                        "urgency": "Store Transfer (WH Stock Empty)"
-                    })
+            replenishment_recommendations.append({
+                "type": "Stock Balanced",
+                "store_name": f"{store['full_name']} ({store['clean_code']})",
+                "category_focus": c_focus,
+                "from_source": "No Action Needed",
+                "suggested_units": "0 Pcs",
+                "urgency": f"Healthy Buffer ({store['woc']} Wks Cover)"
+            })
 
     top_main_cats = set(main_cat_summary.head(3)['main_category'])
     def mumuso_commercial_engine(row):
@@ -997,10 +994,10 @@ def process_and_build():
         <tr>
             <td style="color:#64748b; font-weight:700;">{idx+1}</td>
             <td><span class="badge" style="background:{badge_col}22; color:{badge_col}; border:1px solid {badge_col}55;">{rep['type']}</span></td>
+            <td style="font-weight:700; color:#fff;">{rep['store_name']}</td>
             <td style="font-weight:700; color:#f59e0b;">📦 {rep['category_focus']}</td>
-            <td style="color:#38bdf8; font-weight:700;">{rep['from_source']}<br><span style="font-size:11px; color:#94a3b8;">{rep['source_status']}</span></td>
-            <td style="color:#10b981; font-weight:700;">{rep['to_store']}<br><span style="font-size:11px; color:#94a3b8;">{rep['target_status']}</span></td>
-            <td style="font-weight:800; color:#fff; font-size:14px;">{rep['suggested_units']}</td>
+            <td style="color:#38bdf8; font-weight:700;">{rep['from_source']}</td>
+            <td style="font-weight:800; color:#10b981; font-size:14px;">{rep['suggested_units']}</td>
             <td><span class="badge" style="background:#ef444422; color:#ef4444; border:1px solid #ef444455;">{rep['urgency']}</span></td>
         </tr>
         """
