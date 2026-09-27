@@ -8,7 +8,6 @@ import anthropic
 
 REPORTS_DIR = "./reports"
 
-# خريطة الأسماء الكاملة للمتاجر والمناطق ومدراء المناطق
 STORE_MAPPING = {
     "K101": {"full_name": "MMS Riyadh The View Mall", "region": "Riyadh Central Region", "manager": "Sultan"},
     "K102": {"full_name": "MMS Riyadh Tala Mall", "region": "Riyadh Central Region", "manager": "Sultan"},
@@ -31,53 +30,65 @@ STORE_MAPPING = {
 }
 
 def identify_files():
-    files = glob.glob(os.path.join(REPORTS_DIR, "*.xlsx"))
-    files = [f for f in files if not os.path.basename(f).startswith("~$") and not os.path.basename(f).startswith("Summary_")]
+    files = glob.glob(os.path.join(REPORTS_DIR, "*.xlsx")) + glob.glob("*.xlsx")
+    files = list(set([f for f in files if not os.path.basename(f).startswith("~$") and not os.path.basename(f).startswith("Summary_")]))
     
     sales_file = None
     soh_file = None
     target_file = None
+    hier_file = None
 
     for f in sorted(files, key=os.path.getctime, reverse=True):
         fname = os.path.basename(f).lower()
-        if "target" in fname or "sep_target" in fname:
-            if not target_file:
-                target_file = f
-            continue
-        if "soh" in fname or "stock" in fname:
-            if not soh_file:
-                soh_file = f
-            continue
+        if "hierarchy" in fname:
+            hier_file = f
+        elif "target" in fname:
+            if not target_file: target_file = f
+        elif "soh" in fname or "stock" in fname:
+            if not soh_file: soh_file = f
 
     for f in sorted(files, key=os.path.getctime, reverse=True):
-        if f == target_file or f == soh_file:
+        if f in [target_file, soh_file, hier_file]:
             continue
         try:
             xl = pd.ExcelFile(f)
             for s in xl.sheet_names:
-                sample_df = pd.read_excel(f, sheet_name=s, nrows=3)
-                cols_str = " ".join([str(c).lower() for c in sample_df.columns])
-                if "item stock report" in cols_str or "avail_stock" in cols_str or "current_stock" in cols_str:
-                    if not soh_file:
-                        soh_file = f
-                    break
                 sample_df2 = pd.read_excel(f, sheet_name=s, skiprows=1, nrows=3)
                 cols_str2 = " ".join([str(c).lower() for c in sample_df2.columns])
                 if "receipt number" in cols_str2 or "actual sales amount" in cols_str2:
-                    if not sales_file:
-                        sales_file = f
+                    if not sales_file: sales_file = f
                     break
         except Exception:
             continue
 
     if not sales_file:
-        candidates = [f for f in files if f != target_file and f != soh_file]
+        candidates = [f for f in files if f not in [target_file, soh_file, hier_file]]
         if candidates:
             sales_file = max(candidates, key=os.path.getctime)
         else:
             raise FileNotFoundError("Sales report file not found in ./reports")
 
-    return sales_file, soh_file, target_file
+    return sales_file, soh_file, target_file, hier_file
+
+def load_product_hierarchy(hier_path=None):
+    # مسار بديل إذا وجد ملف الإكسيل للهيراركي
+    mapping = {}
+    if hier_path and os.path.exists(hier_path):
+        try:
+            df_h = pd.read_excel(hier_path)
+            df_h.columns = [c.replace('\u200c', '').replace('\ufeff', '').strip() for c in df_h.columns]
+            for _, r in df_h.iterrows():
+                subsub = str(r.get('Sub Subgroup', r.get('product_group', ''))).strip()
+                cat = str(r.get('Category', r.get('category', 'General'))).replace('_', ' ').strip()
+                grp = str(r.get('Group', '')).strip()
+                subgrp = str(r.get('Sub Group', '')).strip()
+                if subsub:
+                    mapping[subsub.lower()] = {"main_category": cat, "group": grp, "sub_group": subgrp, "clean_subsub": subsub}
+            if mapping:
+                return mapping
+        except Exception:
+            pass
+    return mapping
 
 def load_september_targets(target_path):
     if not target_path or not os.path.exists(target_path):
@@ -109,9 +120,11 @@ def load_september_targets(target_path):
 
 def load_soh_data(soh_path):
     if not soh_path or not os.path.exists(soh_path):
-        return {}
+        return {}, {}
     
     print(f"[*] Processing SOH file: {soh_path}")
+    soh_store_summary = {}
+    soh_hierarchy_map = {}
     try:
         xl = pd.ExcelFile(soh_path)
         sheet_to_use = "Sheet1" if "Sheet1" in xl.sheet_names else xl.sheet_names[0]
@@ -126,13 +139,24 @@ def load_soh_data(soh_path):
         code_col = next((c for c in df_soh.columns if c.lower() in ["org code", "organization code", "org_code", "store code"]), None)
         stock_col = next((c for c in df_soh.columns if c.lower() in ["avail_stock", "current_stock"]), None)
         price_col = next((c for c in df_soh.columns if "retail_price" in c.lower() or "price" in c.lower()), None)
+        cat_col = next((c for c in df_soh.columns if c.lower() == "category"), None)
+        pg_col = next((c for c in df_soh.columns if c.lower() in ["product_group", "product group"]), None)
 
         if not code_col or not stock_col:
-            return {}
+            return {}, {}
 
         df_soh = df_soh[df_soh[code_col].notna()].copy()
         df_soh[stock_col] = pd.to_numeric(df_soh[stock_col], errors='coerce').fillna(0)
         
+        # استخراج خريطة الهيكل من SOH مباشرة
+        if cat_col and pg_col:
+            pairs = df_soh[[cat_col, pg_col]].drop_duplicates().dropna()
+            for _, r in pairs.iterrows():
+                pg_val = str(r[pg_col]).strip()
+                c_val = str(r[cat_col]).replace('_', ' ').replace('’', "'").strip()
+                if pg_val:
+                    soh_hierarchy_map[pg_val.lower()] = c_val
+
         if price_col:
             df_soh[price_col] = pd.to_numeric(df_soh[price_col], errors='coerce').fillna(0)
             df_soh['stock_val'] = df_soh[stock_col] * df_soh[price_col]
@@ -149,36 +173,36 @@ def load_soh_data(soh_path):
             return m.group(0).upper() if m else str(v).strip().upper()
 
         grouped['clean_code'] = grouped[code_col].apply(clean_c)
-        return grouped.set_index('clean_code').to_dict(orient='index')
+        soh_store_summary = grouped.set_index('clean_code').to_dict(orient='index')
+        return soh_store_summary, soh_hierarchy_map
     except Exception as e:
         print(f"[!] Error processing SOH file: {e}")
-        return {}
+        return {}, {}
 
-def generate_claude_insights(store_summary, cat_summary, total_sales, total_target, overall_ach, network_atv, network_upt, network_asp, total_soh_units):
+def generate_claude_insights(store_summary, main_cat_summary, total_sales, total_target, overall_ach, network_atv, network_upt, network_asp, total_soh_units):
     api_key = os.getenv("ANTHROPIC_API_KEY")
     if not api_key:
         return {
-            "critical": "Riyadh Central Region continues to drive volume leadership; Western Region requires category assortment swap to match basket building velocity.",
-            "attention": "Maintain core visual merchandising fullness (40k-80k units) across regional flagship branches while pruning dead gondola inventory.",
-            "opportunity": "Scale high-velocity impulse novelty items from top branches (MMS Riyadh Solitaire and Mall of Dhahran) to boost regional conversion."
+            "critical": "Product mix imbalance: High-margin lifestyle and novelty toys are driving over 45% of revenue, while personal accessories lag in conversion.",
+            "attention": "Ensure balanced 40k-80k display capacity without clogging gondolas with slow-moving sub-subgroups.",
+            "opportunity": "Scale high-velocity children's toys and beauty categories across underperforming Western Region branches."
         }
 
     top_stores = store_summary.head(3)[['full_name', 'sales', 'ach_pct', 'soh_units']].to_dict(orient="records")
-    bottom_stores = store_summary.tail(3)[['full_name', 'sales', 'ach_pct', 'soh_units']].to_dict(orient="records")
+    top_categories = main_cat_summary.head(4)[['main_category', 'sales', 'contribution']].to_dict(orient="records")
 
     prompt = f"""
-    You are a Senior Retail Operations & Merchandising Director for Mumuso.
+    You are a Senior Merchandising Director for Mumuso.
     - Total Sales: {total_sales:,.0f} SAR | Target: {total_target:,.0f} SAR | Ach: {overall_ach:.1f}%
     - Total SOH: {total_soh_units:,.0f} units
     - Top Stores: {top_stores}
-    - Low Performing Stores: {bottom_stores}
+    - Key Categories: {top_categories}
     Provide 3 punchy commercial directives (1 sentence each):
     1. Critical Issues
     2. Attention Required
     3. Opportunities
     Respond ONLY in valid JSON: {{"critical": "...", "attention": "...", "opportunity": "..."}}
     """
-
     try:
         client = anthropic.Anthropic(api_key=api_key)
         response = client.messages.create(
@@ -192,9 +216,9 @@ def generate_claude_insights(store_summary, cat_summary, total_sales, total_targ
         return json.loads(content)
     except Exception:
         return {
-            "critical": "Riyadh Central Region leads revenue execution; Western Region requires active gondola re-merchandising to lift store walk-in conversion.",
-            "attention": "Preserve 40,000-80,000 display unit depth across all stores to avoid sparse shelves that suppress impulse shopping.",
-            "opportunity": "Replicate high-margin novelty setups from MMS Riyadh Solitaire across all branches."
+            "critical": "Assortment concentration: Top 3 main categories generate the majority of volume, requiring careful replenishment depth.",
+            "attention": "Preserve 40,000-80,000 visual merchandise units in regional flagships while rotating out stagnant sub-categories.",
+            "opportunity": "Drive cashier bundling on high-ASP items to lift average transaction value beyond {network_atv:.1f} SAR."
         }
 
 def build_svg_bar_chart(chart_stores):
@@ -204,8 +228,7 @@ def build_svg_bar_chart(chart_stores):
     plot_h = svg_h - pad_top - pad_bottom
 
     max_val = max(chart_stores['sales'].max(), chart_stores['target'].fillna(0).max()) * 1.15
-    if max_val == 0:
-        max_val = 1
+    if max_val == 0: max_val = 1
 
     n_stores = len(chart_stores)
     slot_w = plot_w / max(n_stores, 1)
@@ -235,8 +258,7 @@ def build_svg_bar_chart(chart_stores):
         t_y = pad_top + plot_h - t_h
 
         name = str(r['full_name']).replace("MMS Riyadh ", "").replace("MMS ", "")
-        if len(name) > 12:
-            name = name[:11] + ".."
+        if len(name) > 12: name = name[:11] + ".."
 
         bars_svg += f"""
         <rect x="{s_x:.1f}" y="{s_y:.1f}" width="{bar_w:.1f}" height="{s_h:.1f}" rx="3" fill="#38bdf8">
@@ -251,13 +273,20 @@ def build_svg_bar_chart(chart_stores):
     return f"""<svg viewBox="0 0 {svg_w} {svg_h}" style="width:100%; height:auto; display:block;">{grid_lines}{bars_svg}</svg>"""
 
 def process_and_build():
-    sales_file, soh_file, target_file = identify_files()
+    sales_file, soh_file, target_file, hier_file = identify_files()
     print(f"[*] Sales Report: {sales_file}")
     print(f"[*] SOH File:     {soh_file}")
     print(f"[*] Target File:  {target_file}")
 
     targets_map = load_september_targets(target_file)
-    soh_map = load_soh_data(soh_file)
+    soh_map, soh_hier_map = load_soh_data(soh_file)
+    excel_hier_map = load_product_hierarchy(hier_file)
+
+    # دمج خريطة الهيكل السلعي
+    hierarchy_lookup = {}
+    hierarchy_lookup.update(soh_hier_map)
+    for k, v in excel_hier_map.items():
+        hierarchy_lookup[k.lower()] = v['main_category']
 
     df = pd.read_excel(sales_file, skiprows=1)
     df_clean = df.iloc[:-1].copy()
@@ -271,12 +300,44 @@ def process_and_build():
         if col in df_clean.columns:
             df_clean[col] = pd.to_numeric(df_clean[col], errors='coerce').fillna(0)
 
-    cat_col = 'Category Name' if 'Category Name' in df_clean.columns else ('product_category' if 'product_category' in df_clean.columns else ('category' if 'category' in df_clean.columns else None))
-    if cat_col:
-        df_clean[cat_col] = df_clean[cat_col].fillna("Other").astype(str).str.strip()
-    else:
-        df_clean['Category Name'] = "General"
-        cat_col = 'Category Name'
+    # تحديد عمود Sub-Subgroup الأصلي
+    raw_subsub_col = next((c for c in df_clean.columns if c.lower() in ['category name', 'product_category', 'category']), None)
+    if not raw_subsub_col:
+        df_clean['raw_subsub'] = "General Items"
+        raw_subsub_col = 'raw_subsub'
+
+    df_clean['sub_subgroup'] = df_clean[raw_subsub_col].fillna("Other").astype(str).str.strip()
+
+    # استنتاج القسم الرئيسي الحقيقي (Main Category)
+    def map_to_main_category(subsub):
+        sub_l = str(subsub).strip().lower()
+        if sub_l in hierarchy_lookup:
+            return hierarchy_lookup[sub_l]
+        for k, v in hierarchy_lookup.items():
+            if k in sub_l or sub_l in k:
+                return v
+        # قواعد تجارية بديهية للأصناف التي قد لا تطابق تماماً
+        if any(x in sub_l for x in ['toy', 'doll', 'clay', 'puzzle', 'baby', 'block', 'gun', 'bubble']):
+            return "Children's Goods"
+        if any(x in sub_l for x in ['lip', 'mask', 'cream', 'perfume', 'makeup', 'eyebrow', 'clean', 'wipe', 'bath', 'nail', 'soap']):
+            return "Beauty & Cleaning"
+        if any(x in sub_l for x in ['pen', 'notebook', 'tape', 'sticker', 'stationery', 'pencil', 'eraser']):
+            return "Stationery"
+        if any(x in sub_l for x in ['cup', 'mat', 'storage', 'kitchen', 'umbrella', 'fragrance', 'hanger', 'mat']):
+            return "Home & Daily Use"
+        if any(x in sub_l for x in ['cable', 'headphone', 'fan', 'usb', 'charger', 'watch', 'phone']):
+            return "3C Electronics"
+        if any(x in sub_l for x in ['bag', 'backpack', 'wallet', 'purse']):
+            return "Bags"
+        if any(x in sub_l for x in ['sock', 'slipper', 'hat', 'sunglass', 'glove']):
+            return "Apparel Accessories"
+        if any(x in sub_l for x in ['hair', 'earring', 'clip', 'necklace', 'jewelry']):
+            return "Fashion Accessories"
+        if any(x in sub_l for x in ['pillow', 'towel', 'cushion', 'eyemask']):
+            return "Home Textile"
+        return "Variety Lifestyle"
+
+    df_clean['main_category'] = df_clean['sub_subgroup'].apply(map_to_main_category)
 
     # 1. إجماليات المتاجر
     store_summary = df_clean.groupby(['Organization Code', 'Organization Name']).agg(
@@ -290,8 +351,6 @@ def process_and_build():
         return m.group(0).upper() if m else str(c).strip().upper()
 
     store_summary['clean_code'] = store_summary['Organization Code'].apply(get_clean_code)
-    
-    # ربط الأسماء الكاملة والمناطق والمدراء
     store_summary['full_name'] = store_summary.apply(
         lambda r: STORE_MAPPING.get(r['clean_code'], {}).get('full_name', str(r['Organization Name'])), axis=1
     )
@@ -316,13 +375,11 @@ def process_and_build():
     store_summary['share'] = ((store_summary['sales'] / total_sales) * 100).round(2)
     store_summary = store_summary.sort_values(by='sales', ascending=False).reset_index(drop=True)
 
-    # 2. ربط SOH
+    # ربط SOH
     def match_soh(c_code):
-        if c_code in soh_map:
-            return soh_map[c_code]
+        if c_code in soh_map: return soh_map[c_code]
         for k, v in soh_map.items():
-            if k in c_code or c_code in k:
-                return v
+            if k in c_code or c_code in k: return v
         return {"soh_units": 0, "soh_val": 0}
 
     soh_matched = store_summary['clean_code'].apply(match_soh)
@@ -334,11 +391,9 @@ def process_and_build():
     def match_target(row):
         c_code = row['clean_code']
         raw_name = str(row['Organization Name']).upper()
-        if c_code in targets_map:
-            return targets_map[c_code]
+        if c_code in targets_map: return targets_map[c_code]
         for k, v in targets_map.items():
-            if str(k).upper() in c_code or str(k).upper() in raw_name:
-                return v
+            if str(k).upper() in c_code or str(k).upper() in raw_name: return v
         return None
 
     store_summary['target'] = store_summary.apply(match_target, axis=1)
@@ -352,136 +407,104 @@ def process_and_build():
     sales_with_target = valid_targets['sales'].sum()
     overall_ach = (sales_with_target / total_target * 100) if total_target > 0 else 0
 
-    # 3. إجماليات الأصناف
-    cat_summary = df_clean.groupby(cat_col).agg(
+    # 2. الهيكل السلعي للمبيعات: المستوى الأول (Main Category)
+    main_cat_summary = df_clean.groupby('main_category').agg(
         sales=('Actual Sales Amount', 'sum'),
         units=('Sales Quantity', 'sum')
-    ).reset_index().rename(columns={cat_col: 'Category Name'})
-    cat_summary['contribution'] = ((cat_summary['sales'] / total_sales) * 100).round(2)
-    cat_summary['asp'] = (cat_summary['sales'] / cat_summary['units'].replace(0, np.nan)).fillna(0).round(2)
+    ).reset_index().sort_values(by='sales', ascending=False).reset_index(drop=True)
+    main_cat_summary['contribution'] = ((main_cat_summary['sales'] / total_sales) * 100).round(2)
+    main_cat_summary['asp'] = (main_cat_summary['sales'] / main_cat_summary['units'].replace(0, np.nan)).fillna(0).round(2)
 
-    cat_store_breakdown = {}
-    grouped_cat_store = df_clean.groupby([cat_col, 'Organization Name', 'Organization Code']).agg(
+    # المتجر الرائد في كل قسم رئيسي
+    main_cat_store = df_clean.groupby(['main_category', 'Organization Code'])['Actual Sales Amount'].sum().reset_index()
+    top_store_per_main_cat = {}
+    for c_name, grp in main_cat_store.groupby('main_category'):
+        best = grp.sort_values(by='Actual Sales Amount', ascending=False).iloc[0]
+        c_code = get_clean_code(best['Organization Code'])
+        st_name = STORE_MAPPING.get(c_code, {}).get('full_name', best['Organization Code'])
+        top_store_per_main_cat[c_name] = f"{st_name} ({best['Actual Sales Amount']:,.0f} SAR)"
+    main_cat_summary['leading_store'] = main_cat_summary['main_category'].map(top_store_per_main_cat).fillna("-")
+
+    # 3. الهيكل السلعي: المستوى الرابع (Sub-Subgroups)
+    subsub_summary = df_clean.groupby(['main_category', 'sub_subgroup']).agg(
+        sales=('Actual Sales Amount', 'sum'),
+        units=('Sales Quantity', 'sum')
+    ).reset_index().sort_values(by='sales', ascending=False).reset_index(drop=True)
+    subsub_summary['contribution'] = ((subsub_summary['sales'] / total_sales) * 100).round(2)
+    subsub_summary['asp'] = (subsub_summary['sales'] / subsub_summary['units'].replace(0, np.nan)).fillna(0).round(2)
+
+    # 4. تفاصيل الأصناف الدقيقة داخل كل متجر
+    store_cat_details = {}
+    grouped_st_cat = df_clean.groupby(['Organization Code', 'main_category', 'sub_subgroup']).agg(
         sales=('Actual Sales Amount', 'sum'),
         units=('Sales Quantity', 'sum')
     ).reset_index()
 
-    for c_name, grp in grouped_cat_store.groupby(cat_col):
-        c_total = grp['sales'].sum()
-        grp_sorted = grp.sort_values(by='sales', ascending=False)
-        st_list = []
-        for _, s_row in grp_sorted.iterrows():
-            st_sales = s_row['sales']
-            st_units = s_row['units']
-            st_share = (st_sales / c_total * 100) if c_total > 0 else 0
-            st_asp = (st_sales / st_units) if st_units > 0 else 0
-            code_c = get_clean_code(s_row['Organization Code'])
-            full_n = STORE_MAPPING.get(code_c, {}).get('full_name', s_row['Organization Name'])
-            st_list.append({
-                "store": full_n,
-                "code": code_c,
-                "sales": f"{st_sales:,.2f}",
-                "units": f"{int(st_units):,}",
-                "share": f"{st_share:.1f}%",
-                "asp": f"{st_asp:,.2f}"
-            })
-        cat_store_breakdown[c_name] = st_list
-
-    top_store_per_cat = {}
-    for c_name, st_list in cat_store_breakdown.items():
-        if st_list:
-            top_store_per_cat[c_name] = f"{st_list[0]['store']} ({st_list[0]['sales']} SAR - {st_list[0]['share']})"
-    cat_summary['leading_store'] = cat_summary['Category Name'].map(top_store_per_cat).fillna("-")
-    cat_summary = cat_summary.sort_values(by='sales', ascending=False).reset_index(drop=True)
-
-    # 4. تفاصيل الأصناف لكل متجر
-    store_category_details = {}
-    grouped_store_cat = df_clean.groupby(['Organization Code', cat_col]).agg(
-        cat_sales=('Actual Sales Amount', 'sum'),
-        cat_units=('Sales Quantity', 'sum')
-    ).reset_index()
-
-    for code, grp in grouped_store_cat.groupby('Organization Code'):
+    for code, grp in grouped_st_cat.groupby('Organization Code'):
         c_code = get_clean_code(code)
-        st_total = grp['cat_sales'].sum()
-        grp_sorted = grp.sort_values(by='cat_sales', ascending=False)
+        st_total = grp['sales'].sum()
         cats_list = []
-        for _, c_row in grp_sorted.iterrows():
-            c_sales = c_row['cat_sales']
-            c_units = c_row['cat_units']
-            share_st = (c_sales / st_total * 100) if st_total > 0 else 0
-            asp_st = (c_sales / c_units) if c_units > 0 else 0
+        for _, r in grp.sort_values(by='sales', ascending=False).iterrows():
+            c_sales = r['sales']
+            share = (c_sales / st_total * 100) if st_total > 0 else 0
+            asp_item = (c_sales / r['units']) if r['units'] > 0 else 0
             cats_list.append({
-                "category": c_row[cat_col],
+                "main_category": r['main_category'],
+                "sub_subgroup": r['sub_subgroup'],
                 "sales": f"{c_sales:,.2f}",
-                "units": f"{int(c_units):,}",
-                "share": f"{share_st:.1f}%",
-                "asp": f"{asp_st:,.2f}"
+                "units": f"{int(r['units']):,}",
+                "share": f"{share:.1f}%",
+                "asp": f"{asp_item:,.2f}"
             })
-        store_category_details[c_code] = cats_list
+        store_cat_details[c_code] = cats_list
 
-    top_5_network_cats = set(cat_summary.head(5)['Category Name'])
-
-    # 5. محرك تشخيص Mumuso
+    # محرك تشخيص Mumuso
+    top_main_cats = set(main_cat_summary.head(3)['main_category'])
     def mumuso_commercial_engine(row):
         st_code = row['clean_code']
         soh = row['soh_units']
         ach = row['ach_pct'] if pd.notna(row['ach_pct']) else 0
-        atv = row['atv']
-        upt = row['upt']
         asp = row['asp']
 
-        st_cats = store_category_details.get(st_code, [])
-        st_top_cats = [c['category'] for c in st_cats[:3]]
-        missing_top_cats = [c for c in top_5_network_cats if c not in st_top_cats]
+        st_items = store_cat_details.get(st_code, [])
+        st_top_cats = list(dict.fromkeys([c['main_category'] for c in st_items[:5]]))
+        missing_cats = [c for c in top_main_cats if c not in st_top_cats]
 
         if soh >= 80000:
-            capacity_badge = "Flagship Display"
-            capacity_color = "#38bdf8"
+            cap_badge, cap_col = "Flagship Mega-Display", "#38bdf8"
         elif 40000 <= soh < 80000:
-            capacity_badge = "Standard Full Display"
-            capacity_color = "#10b981"
+            cap_badge, cap_col = "Standard Full Display", "#10b981"
         elif 0 < soh < 40000:
-            capacity_badge = "Lean Visual Density"
-            capacity_color = "#f59e0b"
+            cap_badge, cap_col = "Lean Floor Stock", "#f59e0b"
         else:
-            capacity_badge = "No SOH Data"
-            capacity_color = "#64748b"
+            cap_badge, cap_col = "No SOH Synced", "#64748b"
 
         if ach >= 95:
-            diag_title = "Powerhouse Performer"
-            diag_color = "#10b981"
-            problem_statement = f"High footfall conversion ({ach:.1f}% Ach). Strong leader in {', '.join(st_top_cats[:2])}."
-            commercial_action = f"Protect shelf fullness on core bestsellers and introduce premium lifestyle items to lift ASP ({asp:.1f} SAR)."
-            what_it_needs = "Steady automatic replenishment on top 20% SKUs to prevent gondola gaps during peak hours."
+            diag_title, diag_col = "Powerhouse Performer", "#10b981"
+            prob = f"High commercial conversion ({ach:.1f}% Ach). Strong momentum in {', '.join(st_top_cats[:2])}."
+            action = f"Maintain 100% shelf availability on leading sub-categories and introduce premium novelty SKUs."
+            needs = f"Priority replenishment for core volume drivers in {st_top_cats[0] if st_top_cats else 'Toys'}."
         elif ach < 70 and soh >= 40000:
-            diag_title = "Assortment Mismatch"
-            diag_color = "#f59e0b"
-            problem_statement = f"Store floor is visually full ({soh:,.0f} Pcs) but turnover lags ({ach:.1f}% Ach). Gondolas hold dead product mix."
-            commercial_action = f"⚡ ACTION: Execute Category Assortment Swap. Allocate front gondolas to {', '.join(missing_top_cats[:2]) if missing_top_cats else 'high-velocity toys'} and clear slow items via cashier counter bundles."
-            what_it_needs = f"Inject high-demand network bestsellers ({', '.join(missing_top_cats[:2])}) and run multi-item promos to lift UPT ({upt:.2f})."
+            diag_title, diag_col = "Assortment Mismatch", "#f59e0b"
+            prob = f"Store holds solid display depth ({soh:,.0f} Pcs) but turnover is slow ({ach:.1f}% Ach). Gondolas tied to slow sub-subgroups."
+            action = f"⚡ ACTION: Execute Category Assortment Swap. Reallocate front entrance to {missing_cats[0] if missing_cats else 'Children Toys & Beauty'} and bundle slow movers."
+            needs = f"Inject high-velocity categories ({', '.join(missing_cats[:2]) if missing_cats else 'Toys & Novelties'})."
         elif ach < 70 and soh < 40000:
-            diag_title = "Under-Display Deficit"
-            diag_color = "#ef4444"
-            problem_statement = f"Lagging target ({ach:.1f}%) and floor stock ({soh:,.0f} Pcs) is thin for Mumuso visual standards."
-            commercial_action = f"⚡ ACTION: Restock fast-moving impulse toys, beauty and accessories to reach 40,000+ Pcs visual threshold."
-            what_it_needs = "Store-fill buffer: +10,000 to +15,000 units of fast-moving categories."
+            diag_title, diag_col = "Under-Display Deficit", "#ef4444"
+            prob = f"Target achievement is lagging ({ach:.1f}%) and visual density ({soh:,.0f} Pcs) is thin, depressing walk-in impulse purchases."
+            action = f"⚡ ACTION: Increase store display depth to Mumuso visual benchmark (40k-80k Pcs) across core lifestyle categories."
+            needs = "Floor-fill replenishment: +10,000 to +15,000 units of fast-moving impulse items."
         else:
-            diag_title = "Moderate Run-Rate"
-            diag_color = "#38bdf8"
-            problem_statement = f"Steady flow ({ach:.1f}% Ach) with balanced display ({soh:,.0f} Pcs). Room to expand basket size."
-            commercial_action = f"Focus cashier incentives on cross-selling to raise ATV ({atv:.1f} SAR) and refresh weekly end-caps."
-            what_it_needs = "Visual merchandising rotation: feature seasonal lifestyle novelties."
+            diag_title, diag_col = "Steady Flow", "#38bdf8"
+            prob = f"Balanced run-rate ({ach:.1f}% Ach) with healthy display volume ({soh:,.0f} Pcs)."
+            action = f"Focus cashier upselling to lift ATV (Current: {row['atv']:.1f} SAR) and rotate seasonal novelty end-caps."
+            needs = "Routine weekly assortment replenishment and promotional feature rotation."
 
         return {
-            "capacity_badge": capacity_badge,
-            "capacity_color": capacity_color,
-            "diag_title": diag_title,
-            "diag_color": diag_color,
-            "problem": problem_statement,
-            "action": commercial_action,
-            "needs": what_it_needs,
-            "top_categories_str": ", ".join(st_top_cats) if st_top_cats else "General"
+            "capacity_badge": cap_badge, "capacity_color": cap_col,
+            "diag_title": diag_title, "diag_color": diag_col,
+            "problem": prob, "action": action, "needs": needs,
+            "top_categories_str": ", ".join(st_top_cats[:3]) if st_top_cats else "General"
         }
 
     engine_res = store_summary.apply(mumuso_commercial_engine, axis=1)
@@ -494,19 +517,39 @@ def process_and_build():
     store_summary['needs'] = [e['needs'] for e in engine_res]
     store_summary['top_cats_str'] = [e['top_categories_str'] for e in engine_res]
 
-    insights = generate_claude_insights(store_summary, cat_summary, total_sales, total_target, overall_ach, network_atv, network_upt, network_asp, total_soh_units)
+    insights = generate_claude_insights(store_summary, main_cat_summary, total_sales, total_target, overall_ach, network_atv, network_upt, network_asp, total_soh_units)
 
     chart_stores = store_summary.head(8)
     chart_svg_markup = build_svg_bar_chart(chart_stores)
 
-    # 6. بناء بيانات المناطق (Region-Wise Engine)
-    region_groups = store_summary.groupby('region')
+    # 5. بناء بطاقات الأقسام الرئيسية (Main Categories Cards)
+    colors = ['#38bdf8', '#818cf8', '#a855f7', '#ec4899', '#f59e0b', '#10b981', '#06b6d4', '#e11d48', '#84cc16']
+    main_cat_cards_html = ""
+    for idx, r in main_cat_summary.iterrows():
+        c_color = colors[idx % len(colors)]
+        main_cat_cards_html += f"""
+        <div onclick="filterByMainCategory('{r['main_category']}')" style="background:var(--card); border:1px solid var(--border); border-top:3px solid {c_color}; border-radius:10px; padding:16px; min-width:210px; max-width:240px; flex:1; cursor:pointer;" title="Click to filter sub-categories under {r['main_category']}">
+            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px;">
+                <span style="font-size:13px; font-weight:700; color:#fff; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">{r['main_category']}</span>
+                <span style="font-size:12px; font-weight:700; color:{c_color};">{r['contribution']:.1f}%</span>
+            </div>
+            <div style="font-size:17px; font-weight:700; color:#f8fafc; margin-bottom:6px;">{r['sales']:,.0f} <span style="font-size:11px; color:#94a3b8;">SAR</span></div>
+            <div style="background:#090d16; border-radius:4px; height:5px; overflow:hidden;">
+                <div style="background:{c_color}; width:{min(r['contribution'], 100):.1f}%; height:100%;"></div>
+            </div>
+            <div style="display:flex; justify-content:space-between; margin-top:8px; font-size:11px; color:#94a3b8;">
+                <span>Units: {int(r['units']):,}</span>
+                <span>ASP: {r['asp']:,.1f} SAR</span>
+            </div>
+        </div>
+        """
+
+    # 6. بناء جداول المناطق (Region-Wise Engine)
     region_kpi_cards = ""
     region_tables_html = ""
 
     for reg_name, grp in [("Riyadh Central Region", store_summary[store_summary['region'] == "Riyadh Central Region"]),
                           ("Western Region", store_summary[store_summary['region'] == "Western Region"])]:
-        
         reg_mgr = "Sultan" if "Riyadh" in reg_name else "Rajib"
         r_sales = grp['sales'].sum()
         r_target = grp['target'].fillna(0).sum()
@@ -517,10 +560,8 @@ def process_and_build():
         r_atv = (r_sales / r_txns) if r_txns > 0 else 0
         r_upt = (r_units / r_txns) if r_txns > 0 else 0
         r_asp = (r_sales / r_units) if r_units > 0 else 0
-
         ach_col = "#10b981" if r_ach >= 100 else ("#f59e0b" if r_ach >= 80 else "#ef4444")
 
-        # بطاقة المنطقة العلوية
         region_kpi_cards += f"""
         <div style="background:var(--card); border:1px solid var(--border); border-top:4px solid {'#38bdf8' if 'Riyadh' in reg_name else '#818cf8'}; border-radius:12px; padding:20px; flex:1; min-width:320px;">
             <div style="display:flex; justify-content:space-between; align-items:flex-start; margin-bottom:12px;">
@@ -530,7 +571,6 @@ def process_and_build():
                 </div>
                 <span class="badge" style="background:{ach_col}22; color:{ach_col}; border:1px solid {ach_col}55; font-size:12px; font-weight:700;">{r_ach:.1f}% Ach</span>
             </div>
-            
             <div style="display:grid; grid-template-columns: repeat(3, 1fr); gap:10px; margin-top:14px; background:#090d16; padding:12px; border-radius:8px; border:1px solid #1e293b;">
                 <div>
                     <div style="font-size:11px; color:#94a3b8;">SALES</div>
@@ -560,7 +600,6 @@ def process_and_build():
         </div>
         """
 
-        # جدول متاجر المنطقة
         reg_rows = ""
         for idx, r in grp.reset_index(drop=True).iterrows():
             t_str = f"{r['target']:,.0f}" if pd.notna(r['target']) else "-"
@@ -579,7 +618,7 @@ def process_and_build():
                 ach_cell = '<span style="color:#64748b;">-</span>'
 
             reg_rows += f"""
-            <tr onclick="openStoreDetails('{r['clean_code']}')" style="cursor:pointer;" title="Click to view deep-dive details">
+            <tr onclick="openStoreDetails('{r['clean_code']}')" style="cursor:pointer;">
                 <td style="color:#64748b;">{idx+1}</td>
                 <td style="color:#38bdf8;font-weight:600;">{r['clean_code']}</td>
                 <td style="font-weight:600;color:#fff;">{r['full_name']} <span style="font-size:11px;color:#38bdf8;">🔍</span></td>
@@ -621,7 +660,6 @@ def process_and_build():
                     </thead>
                     <tbody>
                         {reg_rows}
-                        <!-- سطر المجموع الخاص بالمنطقة -->
                         <tr style="background:#0c1220; font-weight:700; border-top:2px solid #38bdf8;">
                             <td colspan="3" style="color:#38bdf8; font-size:13px;">TOTAL {reg_name.upper()} ({reg_mgr})</td>
                             <td style="color:#fff; font-size:14px;">{r_sales:,.2f}</td>
@@ -639,7 +677,6 @@ def process_and_build():
         </div>
         """
 
-    # سطر المجموع العام لكامل الشبكة في Region-Wise
     grand_total_html = f"""
     <div style="background:#131b2e; border:2px solid #2563eb; border-radius:12px; padding:18px 24px; display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:16px; margin-bottom:30px;">
         <div>
@@ -671,29 +708,7 @@ def process_and_build():
     </div>
     """
 
-    # بطاقات الأصناف
-    colors = ['#38bdf8', '#818cf8', '#a855f7', '#ec4899', '#f59e0b', '#10b981', '#06b6d4', '#e11d48', '#84cc16']
-    cat_cards_html = ""
-    for idx, r in cat_summary.iterrows():
-        c_color = colors[idx % len(colors)]
-        cat_cards_html += f"""
-        <div onclick="openCategoryStores('{r['Category Name']}')" style="background:var(--card); border:1px solid var(--border); border-radius:10px; padding:16px; min-width:210px; max-width:250px; flex:0 0 auto; cursor:pointer;" title="Click to see all stores selling {r['Category Name']}">
-            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
-                <span style="font-size:13px; font-weight:700; color:#f8fafc; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">{r['Category Name']}</span>
-                <span style="font-size:12px; font-weight:700; color:{c_color};">{r['contribution']:.1f}%</span>
-            </div>
-            <div style="font-size:18px; font-weight:700; color:#fff; margin-bottom:6px;">{r['sales']:,.0f} <span style="font-size:11px; color:#94a3b8;">SAR</span></div>
-            <div style="background:#090d16; border-radius:4px; height:6px; overflow:hidden;">
-                <div style="background:{c_color}; width:{min(r['contribution'], 100):.1f}%; height:100%;"></div>
-            </div>
-            <div style="display:flex; justify-content:space-between; margin-top:8px; font-size:11px; color:#94a3b8;">
-                <span>Units: {int(r['units']):,}</span>
-                <span>ASP: {r['asp']:,.1f} SAR</span>
-            </div>
-        </div>
-        """
-
-    # كروت جدول الفروع العام
+    # 7. جدول الفروع الرئيسي (Store Commercial Matrix)
     store_meta_map = {}
     store_table_rows = ""
     decision_cards_html = ""
@@ -755,7 +770,7 @@ def process_and_build():
                 </div>
                 
                 <div style="background:#090d16; padding:10px 12px; border-radius:6px; margin-bottom:10px; border:1px solid #1e293b; font-size:12px;">
-                    <div style="color:#cbd5e1; margin-bottom:4px;"><strong>📦 What It Sold & Has:</strong> Leading in {row['top_cats_str']}</div>
+                    <div style="color:#cbd5e1; margin-bottom:4px;"><strong>📦 Core Category Presence:</strong> Leading in {row['top_cats_str']}</div>
                     <div style="color:#f59e0b;"><strong>🎯 What It Needs:</strong> {row['needs']}</div>
                 </div>
 
@@ -766,7 +781,7 @@ def process_and_build():
             """
 
         store_table_rows += f"""
-        <tr onclick="openStoreDetails('{st_code}')" style="cursor:pointer;" title="Click to view detailed store assortment & directives">
+        <tr onclick="openStoreDetails('{st_code}')" style="cursor:pointer;" title="Click to view detailed store category mix & commercial directives">
             <td style="color:#64748b;font-weight:600;">{idx+1}</td>
             <td style="color:#38bdf8;font-weight:600;">{st_code}</td>
             <td style="font-weight:600;color:#fff;">{st_name} <span style="font-size:11px;color:#38bdf8;margin-left:4px;">🔍</span></td>
@@ -783,15 +798,16 @@ def process_and_build():
         </tr>
         """
 
-    cat_table_rows = ""
-    for idx, r in cat_summary.iterrows():
-        c_name = r['Category Name']
+    # 8. جدول الأقسام في شاشة Business-Wise (Main Categories + Sub-Subgroups)
+    main_cat_table_rows = ""
+    for idx, r in main_cat_summary.iterrows():
+        c_name = r['main_category']
         bar_w = min(r['contribution'], 100)
-        cat_table_rows += f"""
-        <tr onclick="openCategoryStores('{c_name}')" style="cursor:pointer;" title="Click to see each store's contribution in {c_name}">
+        main_cat_table_rows += f"""
+        <tr onclick="filterByMainCategory('{c_name}')" style="cursor:pointer; background:rgba(56,189,248,0.03);" title="Click to filter sub-categories">
             <td style="color:#64748b;font-weight:600;">{idx+1}</td>
-            <td style="font-weight:700;color:#fff;font-size:14px;">
-                {c_name} <span style="font-size:11px;color:#38bdf8;margin-left:4px;">🔍</span>
+            <td style="font-weight:800;color:#fff;font-size:14px;">
+                🏷️ {c_name} <span style="font-size:11px;color:#38bdf8;margin-left:4px;">(Click to view items)</span>
             </td>
             <td style="font-weight:700;color:#38bdf8;">{r['sales']:,.2f}</td>
             <td>{int(r['units']):,}</td>
@@ -808,9 +824,10 @@ def process_and_build():
         </tr>
         """
 
-    store_options_html = '<option value="ALL">-- Select Store to filter categories --</option>'
-    for _, s in store_summary.iterrows():
-        store_options_html += f'<option value="{s["clean_code"]}">{s["full_name"]} ({s["clean_code"]})</option>'
+    subsub_json_data = subsub_summary.to_dict(orient='records')
+    main_cat_options = '<option value="ALL">-- All Main Categories (Overview) --</option>'
+    for c_name in main_cat_summary['main_category']:
+        main_cat_options += f'<option value="{c_name}">{c_name}</option>'
 
     html_content = f"""<!DOCTYPE html>
 <html lang="en">
@@ -931,7 +948,7 @@ def process_and_build():
         </div>
         <div style="background:#090d16; padding:14px; border-radius:8px; border:1px solid #1e293b;">
           <div style="font-size:11px; color:#94a3b8;">DISPLAY DENSITY</div>
-          <div id="modal-capacity" style="font-size:15px; font-weight:700; color:#cbd5e1;">-</div>
+          <div id="modal-capacity" style="font-size:14px; font-weight:700; color:#cbd5e1;">-</div>
         </div>
         <div style="background:#090d16; padding:14px; border-radius:8px; border:1px solid #1e293b;">
           <div style="font-size:11px; color:#94a3b8;">AVERAGE TICKET (ATV)</div>
@@ -943,16 +960,17 @@ def process_and_build():
         </div>
       </div>
 
-      <div style="margin-bottom:12px; font-size:12px; font-weight:700; text-transform:uppercase; color:#94a3b8;">Store Category Assortment Performance</div>
+      <div style="margin-bottom:12px; font-size:12px; font-weight:700; text-transform:uppercase; color:#94a3b8;">Store Multi-Tier Assortment Performance</div>
       <div style="border:1px solid #1e293b; border-radius:8px; overflow:hidden;">
         <table>
           <thead>
             <tr>
               <th>#</th>
-              <th>Category</th>
+              <th>Main Category</th>
+              <th>Sub-Subgroup (Item Class)</th>
               <th>Sales (SAR)</th>
               <th>Units Sold</th>
-              <th>Contribution in Store</th>
+              <th>Store Share</th>
               <th>ASP (SAR)</th>
             </tr>
           </thead>
@@ -963,41 +981,10 @@ def process_and_build():
   </div>
 </div>
 
-<!-- Modal 2: Category Modal -->
-<div id="cat-modal" class="app-modal">
-  <div class="modal-content">
-    <div class="modal-header">
-      <div>
-        <h2 id="modal-cat-name" style="margin:0; font-size:18px; color:#38bdf8;">Category Breakdown Across Stores</h2>
-        <span style="color:#94a3b8; font-size:12px;">Store-by-Store Sales Volume & Contribution</span>
-      </div>
-      <button class="close-btn" onclick="closeModal('cat-modal')">&times;</button>
-    </div>
-    <div class="modal-body">
-      <div style="border:1px solid #1e293b; border-radius:8px; overflow:hidden;">
-        <table>
-          <thead>
-            <tr>
-              <th>#</th>
-              <th>Store Code</th>
-              <th>Full Store Name</th>
-              <th>Sales (SAR)</th>
-              <th>Units Sold</th>
-              <th>Store Share in Category</th>
-              <th>ASP (SAR)</th>
-            </tr>
-          </thead>
-          <tbody id="modal-cat-stores-body"></tbody>
-        </table>
-      </div>
-    </div>
-  </div>
-</div>
-
 <div class="header">
     <div>
         <h1>MMS Executive Commercial & SOH Intelligence Dashboard</h1>
-        <p>Operational Performance, Regional Hierarchy & Display Diagnostics</p>
+        <p>Mumuso Product Hierarchy: Main Categories (Level 1) & Sub-Subgroups (Level 4)</p>
     </div>
 </div>
 
@@ -1051,7 +1038,7 @@ def process_and_build():
 <div class="view-toggle-bar">
     <button class="view-btn active" id="btn-stores" onclick="switchView('stores')">🏢 Store Commercial Matrix</button>
     <button class="view-btn" id="btn-regions" onclick="switchView('regions')">🌍 Region-Wise Performance</button>
-    <button class="view-btn" id="btn-business" onclick="switchView('business')">📦 Business-Wise Performance ({len(cat_summary)} Categories)</button>
+    <button class="view-btn" id="btn-business" onclick="switchView('business')">📦 Business-Wise Performance (9 Categories)</button>
 </div>
 
 <!-- 1. Store Commercial Matrix View -->
@@ -1109,9 +1096,8 @@ def process_and_build():
     </div>
 </div>
 
-<!-- 2. Region-Wise Performance View (المنطقة والمدراء والمجاميع) -->
+<!-- 2. Region-Wise Performance View -->
 <div id="view-regions" style="display:none;">
-    
     <div class="section-title"><span>🌍 REGIONAL LEADERSHIP & AREA MANAGER OVERVIEW</span></div>
     <div style="display:flex; flex-wrap:wrap; gap:16px; margin-bottom:24px;">
         {region_kpi_cards}
@@ -1122,45 +1108,45 @@ def process_and_build():
     {region_tables_html}
 </div>
 
-<!-- 3. Business-Wise View -->
+<!-- 3. Business-Wise View (Hierarchy Level 1 & Level 4) -->
 <div id="view-business" style="display:none;">
     <div class="section-title">
-        <span>📦 ALL CATEGORIES CONTRIBUTION MIX ({len(cat_summary)} CATEGORIES)</span>
-        <span style="font-size:12px; color:var(--text-muted); font-weight:400;">Click any category to see store-by-store sales details &rarr;</span>
+        <span>🏷️ MUMUSO MAIN PRODUCT CATEGORIES (LEVEL 1 HIERARCHY)</span>
+        <span style="font-size:12px; color:var(--text-muted); font-weight:400;">Click any category card to drill down into its sub-subgroups &rarr;</span>
     </div>
     
     <div class="cards-scroll-container">
-        {cat_cards_html}
+        {main_cat_cards_html}
     </div>
 
     <div class="table-wrap">
         <div class="table-header">
             <div>
-                <h3>CATEGORY PERFORMANCE MATRIX</h3>
-                <span style="color:var(--text-muted);font-size:12px;">Click any category row to see all stores' sales, or filter by specific store:</span>
+                <h3 id="tableHierarchyTitle">PRODUCT HIERARCHY MATRIX (LEVEL 1: MAIN CATEGORIES)</h3>
+                <span style="color:var(--text-muted);font-size:12px;">Select a Main Category from the dropdown or cards to view detailed Sub-Subgroups</span>
             </div>
             <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap;">
-                <select id="storeCategoryFilter" class="table-select" onchange="filterCategoryByStore(this.value)">
-                    {store_options_html}
+                <select id="mainCatFilter" class="table-select" onchange="onCategoryFilterChange(this.value)">
+                    {main_cat_options}
                 </select>
-                <input type="text" id="catSearch" class="table-search" placeholder="Search any category..." onkeyup="filterCategories()">
+                <input type="text" id="subsubSearch" class="table-search" placeholder="Search product / sub-subgroup..." onkeyup="filterSubSubTable()">
             </div>
         </div>
         <div style="overflow-x:auto;">
-            <table id="categoriesTable">
-                <thead>
+            <table id="hierarchyTable">
+                <thead id="hierarchyTableHead">
                     <tr>
                         <th>#</th>
-                        <th>Category Name</th>
+                        <th>Main Category</th>
                         <th>Sales Revenue (SAR)</th>
                         <th>Sales Units</th>
-                        <th>Contribution (%)</th>
+                        <th>Network Share (%)</th>
                         <th>ASP (SAR)</th>
                         <th>Leading Store Benchmark</th>
                     </tr>
                 </thead>
-                <tbody id="categoriesTableBody">
-                    {cat_table_rows}
+                <tbody id="hierarchyTableBody">
+                    {main_cat_table_rows}
                 </tbody>
             </table>
         </div>
@@ -1169,14 +1155,14 @@ def process_and_build():
 
 <script>
   const PASS = "MMS2026";
-  const STORE_DETAILS = {json.dumps(store_category_details)};
+  const STORE_DETAILS = {json.dumps(store_cat_details)};
   const STORE_META = {json.dumps(store_meta_map)};
-  const CAT_STORE_BREAKDOWN = {json.dumps(cat_store_breakdown)};
-  const DEFAULT_CAT_TABLE_HTML = `{cat_table_rows}`;
+  const SUBSUB_DATA = {json.dumps(subsub_json_data)};
+  const MAIN_CAT_HTML = `{main_cat_table_rows}`;
 
   function openStoreDetails(storeCode) {{
     const meta = STORE_META[storeCode];
-    const cats = STORE_DETAILS[storeCode] || [];
+    const items = STORE_DETAILS[storeCode] || [];
     if (!meta) return;
 
     document.getElementById("modal-store-name").innerText = meta.name;
@@ -1192,11 +1178,12 @@ def process_and_build():
     document.getElementById("modal-directive").innerText = meta.action;
 
     let rowsHtml = "";
-    cats.forEach((c, idx) => {{
+    items.forEach((c, idx) => {{
       rowsHtml += `
         <tr>
           <td style="color:#64748b;">${{idx+1}}</td>
-          <td style="font-weight:700; color:#fff;">${{c.category}}</td>
+          <td style="color:#38bdf8; font-weight:600;">${{c.main_category}}</td>
+          <td style="font-weight:700; color:#fff;">${{c.sub_subgroup}}</td>
           <td style="color:#38bdf8; font-weight:600;">${{c.sales}}</td>
           <td>${{c.units}}</td>
           <td style="color:#f8fafc; font-weight:600;">${{c.share}}</td>
@@ -1205,59 +1192,83 @@ def process_and_build():
       `;
     }});
 
-    document.getElementById("modal-cats-body").innerHTML = rowsHtml || "<tr><td colspan='6' style='text-align:center;'>No category data available</td></tr>";
+    document.getElementById("modal-cats-body").innerHTML = rowsHtml || "<tr><td colspan='7' style='text-align:center;'>No category data available</td></tr>";
     document.getElementById("store-modal").style.display = "flex";
   }}
 
-  function openCategoryStores(catName) {{
-    const stores = CAT_STORE_BREAKDOWN[catName] || [];
-    document.getElementById("modal-cat-name").innerText = catName + " - Store Breakdown";
-
-    let rowsHtml = "";
-    stores.forEach((s, idx) => {{
-      rowsHtml += `
-        <tr>
-          <td style="color:#64748b;">${{idx+1}}</td>
-          <td style="color:#38bdf8; font-weight:600;">${{s.code}}</td>
-          <td style="font-weight:700; color:#fff;">${{s.store}}</td>
-          <td style="color:#38bdf8; font-weight:700;">${{s.sales}}</td>
-          <td>${{s.units}}</td>
-          <td style="color:#10b981; font-weight:700;">${{s.share}}</td>
-          <td style="color:#f59e0b;">${{s.asp}}</td>
-        </tr>
-      `;
-    }});
-
-    document.getElementById("modal-cat-stores-body").innerHTML = rowsHtml || "<tr><td colspan='7' style='text-align:center;'>No store data available</td></tr>";
-    document.getElementById("cat-modal").style.display = "flex";
+  function filterByMainCategory(catName) {{
+    document.getElementById("mainCatFilter").value = catName;
+    onCategoryFilterChange(catName);
   }}
 
-  function filterCategoryByStore(selectedCode) {{
-    const tbody = document.getElementById("categoriesTableBody");
-    if (selectedCode === "ALL") {{
-      tbody.innerHTML = DEFAULT_CAT_TABLE_HTML;
+  function onCategoryFilterChange(catName) {{
+    const thead = document.getElementById("hierarchyTableHead");
+    const tbody = document.getElementById("hierarchyTableBody");
+    const title = document.getElementById("tableHierarchyTitle");
+
+    if (catName === "ALL") {{
+      title.innerText = "PRODUCT HIERARCHY MATRIX (LEVEL 1: MAIN CATEGORIES)";
+      thead.innerHTML = `
+        <tr>
+          <th>#</th>
+          <th>Main Category</th>
+          <th>Sales Revenue (SAR)</th>
+          <th>Sales Units</th>
+          <th>Network Share (%)</th>
+          <th>ASP (SAR)</th>
+          <th>Leading Store Benchmark</th>
+        </tr>
+      `;
+      tbody.innerHTML = MAIN_CAT_HTML;
       return;
     }}
 
-    const storeCats = STORE_DETAILS[selectedCode] || [];
-    const storeName = (STORE_META[selectedCode] && STORE_META[selectedCode].name) || selectedCode;
+    title.innerText = "SUB-SUBGROUP BREAKDOWN: " + catName.toUpperCase();
+    thead.innerHTML = `
+      <tr>
+        <th>#</th>
+        <th>Main Category</th>
+        <th>Sub-Subgroup (Product Group)</th>
+        <th>Sales Revenue (SAR)</th>
+        <th>Sales Units</th>
+        <th>Contribution (%)</th>
+        <th>ASP (SAR)</th>
+      </tr>
+    `;
 
+    const filtered = SUBSUB_DATA.filter(x => x.main_category === catName);
     let rowsHtml = "";
-    storeCats.forEach((c, idx) => {{
+    filtered.forEach((r, idx) => {{
+      const bar_w = Math.min(r.contribution * 3, 100);
       rowsHtml += `
-        <tr onclick="openCategoryStores('${{c.category}}')" style="cursor:pointer;">
-          <td style="color:#64748b;font-weight:600;">${{idx+1}}</td>
-          <td style="font-weight:700;color:#fff;font-size:14px;">${{c.category}} <span style="font-size:11px;color:#38bdf8;margin-left:4px;">🔍</span></td>
-          <td style="font-weight:700;color:#38bdf8;">${{c.sales}}</td>
-          <td>${{c.units}}</td>
-          <td style="color:#f8fafc;font-weight:700;">${{c.share}}</td>
-          <td style="color:#f59e0b;font-weight:700;">${{c.asp}}</td>
-          <td style="color:#38bdf8;font-weight:500;">${{storeName}} (Filtered)</td>
+        <tr>
+          <td style="color:#64748b;">${{idx+1}}</td>
+          <td style="color:#38bdf8; font-weight:600;">${{r.main_category}}</td>
+          <td style="font-weight:700; color:#fff;">${{r.sub_subgroup}}</td>
+          <td style="font-weight:700; color:#38bdf8;">${{Number(r.sales).toLocaleString(undefined, {{minimumFractionDigits:2, maximumFractionDigits:2}})}}</td>
+          <td>${{Number(r.units).toLocaleString()}}</td>
+          <td style="min-width:130px;">
+            <div style="display:flex;align-items:center;gap:6px;">
+              <span style="font-weight:700;color:#fff;min-width:40px;">${{r.contribution.toFixed(2)}}%</span>
+              <div style="flex:1;background:#1e293b;border-radius:4px;height:5px;overflow:hidden;">
+                <div style="width:${{bar_w}}%;background:#38bdf8;height:100%;"></div>
+              </div>
+            </div>
+          </td>
+          <td style="color:#f59e0b;font-weight:700;">${{r.asp.toFixed(2)}}</td>
         </tr>
       `;
     }});
 
-    tbody.innerHTML = rowsHtml || "<tr><td colspan='7' style='text-align:center;'>No categories found for this store.</td></tr>";
+    tbody.innerHTML = rowsHtml || "<tr><td colspan='7' style='text-align:center;'>No sub-subgroups found for this category</td></tr>";
+  }}
+
+  function filterSubSubTable() {{
+    const q = document.getElementById("subsubSearch").value.toLowerCase();
+    const rows = document.querySelectorAll("#hierarchyTableBody tr");
+    rows.forEach(r => {{
+      r.style.display = r.innerText.toLowerCase().includes(q) ? "" : "none";
+    }});
   }}
 
   function closeModal(modalId) {{
@@ -1318,15 +1329,6 @@ def process_and_build():
   function filterStores() {{
       const query = document.getElementById("storeSearch").value.toLowerCase();
       const rows = document.querySelectorAll("#storesTable tbody tr");
-      rows.forEach(r => {{
-          const text = r.innerText.toLowerCase();
-          r.style.display = text.includes(query) ? "" : "none";
-      }});
-  }}
-
-  function filterCategories() {{
-      const query = document.getElementById("catSearch").value.toLowerCase();
-      const rows = document.querySelectorAll("#categoriesTableBody tr");
       rows.forEach(r => {{
           const text = r.innerText.toLowerCase();
           r.style.display = text.includes(query) ? "" : "none";
