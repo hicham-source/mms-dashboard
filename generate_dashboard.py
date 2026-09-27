@@ -2,6 +2,7 @@ import os
 import glob
 import re
 import json
+import html
 import pandas as pd
 import numpy as np
 import anthropic
@@ -47,7 +48,6 @@ def identify_files():
         elif "sales (2)" in fname or "ly" in fname or "last_year" in fname or "sales_ly" in fname:
             if not ly_file: ly_file = f
 
-    # فحص محتوى الملف للتعرف على ملف المبيعات وملف العام الماضي بدقة
     for f in sorted(files, key=os.path.getctime, reverse=True):
         if f in [target_file, soh_file]:
             continue
@@ -55,13 +55,10 @@ def identify_files():
             xl = pd.ExcelFile(f)
             for s in xl.sheet_names:
                 sample_df = pd.read_excel(f, sheet_name=s, nrows=4)
-                cols_str = " ".join([str(c).lower() for c in sample_df.columns])
                 vals_str = " ".join([str(v).lower() for v in sample_df.values.flatten()])
-                
                 if "g-sale" in vals_str or "n-sale" in vals_str:
                     if not ly_file: ly_file = f
                     break
-                
                 sample_df2 = pd.read_excel(f, sheet_name=s, skiprows=1, nrows=3)
                 cols_str2 = " ".join([str(c).lower() for c in sample_df2.columns])
                 if "receipt number" in cols_str2 or "actual sales amount" in cols_str2:
@@ -81,15 +78,10 @@ def identify_files():
 
 def load_ly_sales_data(ly_path):
     if not ly_path or not os.path.exists(ly_path):
-        print("[!] No Last Year (LY) sales file found.")
         return {}
-    
-    print(f"[*] Processing LY Sales file: {ly_path}")
     ly_totals = {}
     try:
         df_ly = pd.read_excel(ly_path, sheet_name="Sales" if "Sales" in pd.ExcelFile(ly_path).sheet_names else 0)
-        
-        # تحديد سطر G-Sale (Gross Sales)
         sale_type_col = next((c for c in df_ly.columns if any(df_ly[c].astype(str).str.strip().str.upper() == 'G-SALE')), None)
         if not sale_type_col:
             sale_type_col = df_ly.columns[2]
@@ -98,7 +90,6 @@ def load_ly_sales_data(ly_path):
         if df_gsale.empty:
             df_gsale = df_ly.copy()
 
-        # أخذ أعمدة Mumuso (MMS) واستبعاد Dazzle (DZL)
         for col in df_ly.columns:
             col_str = str(col).strip()
             if "(MMS)" in col_str.upper() and "(DZL)" not in col_str.upper():
@@ -107,11 +98,9 @@ def load_ly_sales_data(ly_path):
                     code = f"K{m.group(0)}"
                     tot_val = pd.to_numeric(df_gsale[col], errors='coerce').sum()
                     ly_totals[code] = round(float(tot_val), 2)
-                    
-        print(f"[✓] Extracted LY Gross Sales for {len(ly_totals)} Mumuso stores.")
         return ly_totals
     except Exception as e:
-        print(f"[!] Error processing LY sales file: {e}")
+        print(f"[!] Error reading LY file: {e}")
         return {}
 
 def load_september_targets(target_path):
@@ -146,7 +135,6 @@ def load_soh_data(soh_path):
     if not soh_path or not os.path.exists(soh_path):
         return {}, {}
     
-    print(f"[*] Processing SOH file: {soh_path}")
     soh_store_summary = {}
     soh_hierarchy_map = {}
     try:
@@ -199,7 +187,7 @@ def load_soh_data(soh_path):
         soh_store_summary = grouped.set_index('clean_code').to_dict(orient='index')
         return soh_store_summary, soh_hierarchy_map
     except Exception as e:
-        print(f"[!] Error processing SOH file: {e}")
+        print(f"[!] Error processing SOH: {e}")
         return {}, {}
 
 def generate_claude_insights(store_summary, total_sales, total_target, overall_ach, total_soh_units, lfl_growth_pct):
@@ -384,14 +372,13 @@ def process_and_build():
     store_summary['share'] = ((store_summary['sales'] / total_sales) * 100).round(2)
     store_summary = store_summary.sort_values(by='sales', ascending=False).reset_index(drop=True)
 
-    # دمج مبيعات العام الماضي (LY Gross Sales) بدقة
+    # مبيعات العام الماضي ونمو LFL
     store_summary['ly_sales'] = store_summary['clean_code'].map(ly_sales_map)
     store_summary['yoy_growth'] = store_summary.apply(
         lambda r: ((r['sales'] - r['ly_sales']) / r['ly_sales'] * 100) if pd.notna(r['ly_sales']) and r['ly_sales'] > 0 else None,
         axis=1
     )
 
-    # حساب إجمالي LFL (Like-For-Like) على مستوى الشبكة
     lfl_stores = store_summary[store_summary['ly_sales'].notna()].copy()
     total_current_lfl_sales = lfl_stores['sales'].sum()
     total_ly_sales = lfl_stores['ly_sales'].sum()
@@ -429,7 +416,7 @@ def process_and_build():
     sales_with_target = valid_targets['sales'].sum()
     overall_ach = (sales_with_target / total_target * 100) if total_target > 0 else 0
 
-    # 2. الهيكل السلعي للمبيعات: المستوى الأول (Main Category)
+    # 2. الهيكل السلعي: المستوى الأول (Main Category)
     main_cat_summary = df_clean.groupby('main_category').agg(
         sales=('Actual Sales Amount', 'sum'),
         units=('Sales Quantity', 'sum')
@@ -454,7 +441,7 @@ def process_and_build():
     subsub_summary['contribution'] = ((subsub_summary['sales'] / total_sales) * 100).round(2)
     subsub_summary['asp'] = (subsub_summary['sales'] / subsub_summary['units'].replace(0, np.nan)).fillna(0).round(2)
 
-    # 4. تفاصيل الأصناف الدقيقة داخل كل متجر
+    # 4. تفاصيل الأصناف داخل كل متجر
     store_cat_details = {}
     grouped_st_cat = df_clean.groupby(['Organization Code', 'main_category', 'sub_subgroup']).agg(
         sales=('Actual Sales Amount', 'sum'),
@@ -541,13 +528,14 @@ def process_and_build():
     chart_stores = store_summary.head(8)
     chart_svg_markup = build_svg_bar_chart(chart_stores)
 
-    # 5. بناء بطاقات الأقسام الرئيسية
+    # 5. بطاقات الأقسام الرئيسية (مع حماية اسم القسم ضد أي كسر للـ JS)
     colors = ['#38bdf8', '#818cf8', '#a855f7', '#ec4899', '#f59e0b', '#10b981', '#06b6d4', '#e11d48', '#84cc16']
     main_cat_cards_html = ""
     for idx, r in main_cat_summary.iterrows():
         c_color = colors[idx % len(colors)]
+        safe_c_name = html.escape(r['main_category']).replace("'", "\\'")
         main_cat_cards_html += f"""
-        <div onclick="filterByMainCategory('{r['main_category']}')" style="background:var(--card); border:1px solid var(--border); border-top:3px solid {c_color}; border-radius:10px; padding:16px; min-width:210px; max-width:240px; flex:1; cursor:pointer;" title="Click to filter sub-categories under {r['main_category']}">
+        <div onclick="filterByMainCategory('{safe_c_name}')" style="background:var(--card); border:1px solid var(--border); border-top:3px solid {c_color}; border-radius:10px; padding:16px; min-width:210px; max-width:240px; flex:1; cursor:pointer;" title="Click to filter sub-categories under {r['main_category']}">
             <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px;">
                 <span style="font-size:13px; font-weight:700; color:#fff; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">{r['main_category']}</span>
                 <span style="font-size:12px; font-weight:700; color:{c_color};">{r['contribution']:.1f}%</span>
@@ -563,7 +551,7 @@ def process_and_build():
         </div>
         """
 
-    # 6. بناء جداول ومؤشرات المناطق (مع مقارنة مبيعات العام الماضي LY)
+    # 6. جداول المناطق (مع زر العدسة المباشر)
     region_kpi_cards = ""
     region_tables_html = ""
 
@@ -580,7 +568,6 @@ def process_and_build():
         r_upt = (r_units / r_txns) if r_txns > 0 else 0
         r_asp = (r_sales / r_units) if r_units > 0 else 0
 
-        # حساب نمو مبيعات المنطقة مقارنة بالعام الماضي (LFL)
         reg_lfl = grp[grp['ly_sales'].notna()]
         reg_cur_lfl = reg_lfl['sales'].sum()
         reg_ly_tot = reg_lfl['ly_sales'].sum()
@@ -648,7 +635,6 @@ def process_and_build():
             else:
                 ach_cell = '<span style="color:#64748b;">-</span>'
 
-            # خلايا الـ LY
             if pd.notna(r['ly_sales']):
                 ly_str = f"{r['ly_sales']:,.2f}"
                 yoy_v = r['yoy_growth']
@@ -662,7 +648,10 @@ def process_and_build():
             <tr onclick="openStoreDetails('{r['clean_code']}')" style="cursor:pointer;">
                 <td style="color:#64748b;">{idx+1}</td>
                 <td style="color:#38bdf8;font-weight:600;">{r['clean_code']}</td>
-                <td style="font-weight:600;color:#fff;">{r['full_name']} <span style="font-size:11px;color:#38bdf8;">🔍</span></td>
+                <td style="font-weight:600;color:#fff;">
+                    {r['full_name']} 
+                    <button type="button" onclick="event.stopPropagation(); openStoreDetails('{r['clean_code']}');" style="background:none; border:none; cursor:pointer; color:#38bdf8; font-size:12px; margin-left:4px; padding:2px;" title="View Store Details">🔍</button>
+                </td>
                 <td style="font-weight:700;color:#f8fafc;">{r['sales']:,.2f}</td>
                 <td style="color:#38bdf8;font-weight:600;">{ly_str}</td>
                 <td>{yoy_cell}</td>
@@ -721,7 +710,6 @@ def process_and_build():
         </div>
         """
 
-    # سطر المجموع العام لكامل الشبكة (مع إجمالي LY و LFL Growth)
     net_yoy_col = "#10b981" if network_lfl_growth >= 0 else "#ef4444"
     grand_total_html = f"""
     <div style="background:#131b2e; border:2px solid #2563eb; border-radius:12px; padding:18px 24px; display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:16px; margin-bottom:30px;">
@@ -754,7 +742,7 @@ def process_and_build():
     </div>
     """
 
-    # 7. جدول الفروع الرئيسي (Store Commercial Matrix) مع عمود مبيعات العام الماضي ونسبة النمو
+    # 7. جدول الفروع الرئيسي (Store Commercial Matrix)
     store_meta_map = {}
     store_table_rows = ""
     decision_cards_html = ""
@@ -841,7 +829,10 @@ def process_and_build():
         <tr onclick="openStoreDetails('{st_code}')" style="cursor:pointer;" title="Click to view detailed store category mix & directives">
             <td style="color:#64748b;font-weight:600;">{idx+1}</td>
             <td style="color:#38bdf8;font-weight:600;">{st_code}</td>
-            <td style="font-weight:600;color:#fff;">{st_name} <span style="font-size:11px;color:#38bdf8;margin-left:4px;">🔍</span></td>
+            <td style="font-weight:600;color:#fff;">
+                {st_name} 
+                <button type="button" onclick="event.stopPropagation(); openStoreDetails('{st_code}');" style="background:none; border:none; cursor:pointer; color:#38bdf8; font-size:12px; margin-left:4px; padding:2px;" title="View Store Details">🔍</button>
+            </td>
             <td style="color:#94a3b8;font-size:12px;">{row['region']}</td>
             <td style="font-weight:700;color:#f8fafc;">{row['sales']:,.2f}</td>
             <td style="color:#38bdf8;font-weight:600;">{ly_str}</td>
@@ -862,8 +853,9 @@ def process_and_build():
     for idx, r in main_cat_summary.iterrows():
         c_name = r['main_category']
         bar_w = min(r['contribution'], 100)
+        safe_c_name = html.escape(c_name).replace("'", "\\'")
         main_cat_table_rows += f"""
-        <tr onclick="filterByMainCategory('{c_name}')" style="cursor:pointer; background:rgba(56,189,248,0.03);" title="Click to filter sub-categories">
+        <tr onclick="filterByMainCategory('{safe_c_name}')" style="cursor:pointer; background:rgba(56,189,248,0.03);" title="Click to filter sub-categories">
             <td style="color:#64748b;font-weight:600;">{idx+1}</td>
             <td style="font-weight:800;color:#fff;font-size:14px;">
                 🏷️ {c_name} <span style="font-size:11px;color:#38bdf8;margin-left:4px;">(Click to view items)</span>
@@ -886,7 +878,7 @@ def process_and_build():
     subsub_json_data = subsub_summary.to_dict(orient='records')
     main_cat_options = '<option value="ALL">-- All Main Categories (Overview) --</option>'
     for c_name in main_cat_summary['main_category']:
-        main_cat_options += f'<option value="{c_name}">{c_name}</option>'
+        main_cat_options += f'<option value="{html.escape(c_name)}">{html.escape(c_name)}</option>'
 
     html_content = f"""<!DOCTYPE html>
 <html lang="en">
@@ -1125,7 +1117,7 @@ def process_and_build():
         <div class="table-header">
             <div>
                 <h3>STORE COMMERCIAL & DISPLAY ASSORTMENT MATRIX</h3>
-                <span style="color:var(--text-muted);font-size:12px;">Click any row to open store category performance, display density & tailored directives</span>
+                <span style="color:var(--text-muted);font-size:12px;">Click any row or lens 🔍 to open store category performance & directives</span>
             </div>
             <input type="text" id="storeSearch" class="table-search" placeholder="Search full store name, code, or region..." onkeyup="filterStores()">
         </div>
@@ -1220,7 +1212,6 @@ def process_and_build():
   const STORE_DETAILS = {json.dumps(store_cat_details)};
   const STORE_META = {json.dumps(store_meta_map)};
   const SUBSUB_DATA = {json.dumps(subsub_json_data)};
-  const MAIN_CAT_HTML = `{main_cat_table_rows}`;
 
   function openStoreDetails(storeCode) {{
     const meta = STORE_META[storeCode];
@@ -1271,19 +1262,7 @@ def process_and_build():
     const title = document.getElementById("tableHierarchyTitle");
 
     if (catName === "ALL") {{
-      title.innerText = "PRODUCT HIERARCHY MATRIX (LEVEL 1: MAIN CATEGORIES)";
-      thead.innerHTML = `
-        <tr>
-          <th>#</th>
-          <th>Main Category</th>
-          <th>Sales Revenue (SAR)</th>
-          <th>Sales Units</th>
-          <th>Network Share (%)</th>
-          <th>ASP (SAR)</th>
-          <th>Leading Store Benchmark</th>
-        </tr>
-      `;
-      tbody.innerHTML = MAIN_CAT_HTML;
+      location.reload();
       return;
     }}
 
