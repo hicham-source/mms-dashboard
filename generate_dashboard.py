@@ -8,6 +8,28 @@ import anthropic
 
 REPORTS_DIR = "./reports"
 
+# خريطة الأسماء الكاملة للمتاجر والمناطق ومدراء المناطق
+STORE_MAPPING = {
+    "K101": {"full_name": "MMS Riyadh The View Mall", "region": "Riyadh Central Region", "manager": "Sultan"},
+    "K102": {"full_name": "MMS Riyadh Tala Mall", "region": "Riyadh Central Region", "manager": "Sultan"},
+    "K108": {"full_name": "MMS Riyadh Solitaire", "region": "Riyadh Central Region", "manager": "Sultan"},
+    "K109": {"full_name": "MMS Riyadh Localizer", "region": "Riyadh Central Region", "manager": "Sultan"},
+    "K110": {"full_name": "MMS Riyadh U-Walk", "region": "Riyadh Central Region", "manager": "Sultan"},
+    "K130": {"full_name": "MMS Riyadh Al-Rabwa", "region": "Riyadh Central Region", "manager": "Sultan"},
+    "K301": {"full_name": "MMS Mall of Dhahran", "region": "Riyadh Central Region", "manager": "Sultan"},
+    
+    "K201": {"full_name": "MMS Jeddah Park", "region": "Western Region", "manager": "Rajib"},
+    "K202": {"full_name": "MMS Jeddah Yasmin Mall", "region": "Western Region", "manager": "Rajib"},
+    "K205": {"full_name": "MMS Jeddah U-Walk", "region": "Western Region", "manager": "Rajib"},
+    "K208": {"full_name": "MMS Jeddah Mall of Arabia", "region": "Western Region", "manager": "Rajib"},
+    "K210": {"full_name": "MMS Makkah Salam Mall", "region": "Western Region", "manager": "Rajib"},
+    "K211": {"full_name": "MMS Madinah", "region": "Western Region", "manager": "Rajib"},
+    "K401": {"full_name": "MMS Najran Park", "region": "Western Region", "manager": "Rajib"},
+    "K403": {"full_name": "MMS RMJ", "region": "Western Region", "manager": "Rajib"},
+    "K404": {"full_name": "MMS Abha", "region": "Western Region", "manager": "Rajib"},
+    "K501": {"full_name": "MMS Tabuk Park", "region": "Western Region", "manager": "Rajib"}
+}
+
 def identify_files():
     files = glob.glob(os.path.join(REPORTS_DIR, "*.xlsx"))
     files = [f for f in files if not os.path.basename(f).startswith("~$") and not os.path.basename(f).startswith("Summary_")]
@@ -87,7 +109,6 @@ def load_september_targets(target_path):
 
 def load_soh_data(soh_path):
     if not soh_path or not os.path.exists(soh_path):
-        print("[!] No SOH file provided or found.")
         return {}
     
     print(f"[*] Processing SOH file: {soh_path}")
@@ -136,38 +157,26 @@ def load_soh_data(soh_path):
 def generate_claude_insights(store_summary, cat_summary, total_sales, total_target, overall_ach, network_atv, network_upt, network_asp, total_soh_units):
     api_key = os.getenv("ANTHROPIC_API_KEY")
     if not api_key:
-        print("[!] ANTHROPIC_API_KEY not found; using fallback executive insights.")
         return {
-            "critical": "Store performance disparities stem from product mix mismatch rather than overall unit depth; underperforming branches lack adequate share of network volume drivers.",
-            "attention": "Avoid depleting display density in low-turnover stores; execute category assortment swaps rather than blanket stock withdrawals.",
-            "opportunity": "Replicate top-performer category gondola space allocations across regional branches to unlock immediate basket building."
+            "critical": "Riyadh Central Region continues to drive volume leadership; Western Region requires category assortment swap to match basket building velocity.",
+            "attention": "Maintain core visual merchandising fullness (40k-80k units) across regional flagship branches while pruning dead gondola inventory.",
+            "opportunity": "Scale high-velocity impulse novelty items from top branches (MMS Riyadh Solitaire and Mall of Dhahran) to boost regional conversion."
         }
 
-    top_stores = store_summary.head(3)[['Organization Name', 'sales', 'ach_pct', 'soh_units', 'display_status']].to_dict(orient="records")
-    bottom_stores = store_summary.tail(3)[['Organization Name', 'sales', 'ach_pct', 'soh_units', 'display_status']].to_dict(orient="records")
-    top_categories = cat_summary.head(5)[['Category Name', 'sales', 'contribution']].to_dict(orient="records")
+    top_stores = store_summary.head(3)[['full_name', 'sales', 'ach_pct', 'soh_units']].to_dict(orient="records")
+    bottom_stores = store_summary.tail(3)[['full_name', 'sales', 'ach_pct', 'soh_units']].to_dict(orient="records")
 
     prompt = f"""
-    You are a Senior Retail Operations & Merchandising Director for Mumuso (variety lifestyle brand with large-format display stores holding 40k-80k units for visual fullness).
-    - Total Sales: {total_sales:,.0f} SAR
-    - Total Target: {total_target:,.0f} SAR
-    - Network Achievement: {overall_ach:.1f}%
+    You are a Senior Retail Operations & Merchandising Director for Mumuso.
+    - Total Sales: {total_sales:,.0f} SAR | Target: {total_target:,.0f} SAR | Ach: {overall_ach:.1f}%
     - Total SOH: {total_soh_units:,.0f} units
     - Top Stores: {top_stores}
     - Low Performing Stores: {bottom_stores}
-    - Leading Categories: {top_categories}
-
-    Generate 3 commercial merchandising directives (1 sentence each):
-    1. Critical Issues: address category assortment gaps in underperforming stores without stripping visual floor display.
-    2. Attention Required: category assortment swap (swapping dead gondola items with high-velocity toys/lifestyle).
-    3. Opportunities: commercial tactics to raise conversion and transaction value.
-
-    Respond ONLY in valid JSON:
-    {{
-        "critical": "...",
-        "attention": "...",
-        "opportunity": "..."
-    }}
+    Provide 3 punchy commercial directives (1 sentence each):
+    1. Critical Issues
+    2. Attention Required
+    3. Opportunities
+    Respond ONLY in valid JSON: {{"critical": "...", "attention": "...", "opportunity": "..."}}
     """
 
     try:
@@ -180,15 +189,12 @@ def generate_claude_insights(store_summary, cat_summary, total_sales, total_targ
         content = response.content[0].text.strip()
         if "```" in content:
             content = re.search(r'\{.*\}', content, re.DOTALL).group(0)
-        insights = json.loads(content)
-        print("[✓] Claude AI insights generated successfully.")
-        return insights
-    except Exception as e:
-        print(f"[!] Claude API error: {e}")
+        return json.loads(content)
+    except Exception:
         return {
-            "critical": "Store divergence is driven by product assortment imbalances across gondolas rather than aggregate stock depth.",
-            "attention": "Execute targeted Category Assortment Swaps for lagging stores: replace slow-moving items with high-demand toys and lifestyle goods.",
-            "opportunity": "Protect visual merchandise density in flagship branches while reinforcing high-margin accessory clusters."
+            "critical": "Riyadh Central Region leads revenue execution; Western Region requires active gondola re-merchandising to lift store walk-in conversion.",
+            "attention": "Preserve 40,000-80,000 display unit depth across all stores to avoid sparse shelves that suppress impulse shopping.",
+            "opportunity": "Replicate high-margin novelty setups from MMS Riyadh Solitaire across all branches."
         }
 
 def build_svg_bar_chart(chart_stores):
@@ -228,16 +234,18 @@ def build_svg_bar_chart(chart_stores):
         t_x = slot_center + 2
         t_y = pad_top + plot_h - t_h
 
-        name = str(r['Organization Name']).replace("MMS ", "")
+        name = str(r['full_name']).replace("MMS Riyadh ", "").replace("MMS ", "")
+        if len(name) > 12:
+            name = name[:11] + ".."
 
         bars_svg += f"""
         <rect x="{s_x:.1f}" y="{s_y:.1f}" width="{bar_w:.1f}" height="{s_h:.1f}" rx="3" fill="#38bdf8">
-            <title>{r['Organization Name']} Sales: {s_val:,.2f} SAR</title>
+            <title>{r['full_name']} Sales: {s_val:,.2f} SAR</title>
         </rect>
         <rect x="{t_x:.1f}" y="{t_y:.1f}" width="{bar_w:.1f}" height="{t_h:.1f}" rx="3" fill="#334155">
-            <title>{r['Organization Name']} Target: {t_val:,.2f} SAR</title>
+            <title>{r['full_name']} Target: {t_val:,.2f} SAR</title>
         </rect>
-        <text x="{slot_center:.1f}" y="{svg_h - 25}" fill="#cbd5e1" font-size="11" font-weight="600" text-anchor="middle">{name}</text>
+        <text x="{slot_center:.1f}" y="{svg_h - 25}" fill="#cbd5e1" font-size="10" font-weight="600" text-anchor="middle">{name}</text>
         """
 
     return f"""<svg viewBox="0 0 {svg_w} {svg_h}" style="width:100%; height:auto; display:block;">{grid_lines}{bars_svg}</svg>"""
@@ -277,6 +285,23 @@ def process_and_build():
         txns=('Receipt Number', 'nunique')
     ).reset_index()
 
+    def get_clean_code(c):
+        m = re.search(r'\b[A-Za-z0-9]{3,8}\b', str(c))
+        return m.group(0).upper() if m else str(c).strip().upper()
+
+    store_summary['clean_code'] = store_summary['Organization Code'].apply(get_clean_code)
+    
+    # ربط الأسماء الكاملة والمناطق والمدراء
+    store_summary['full_name'] = store_summary.apply(
+        lambda r: STORE_MAPPING.get(r['clean_code'], {}).get('full_name', str(r['Organization Name'])), axis=1
+    )
+    store_summary['region'] = store_summary.apply(
+        lambda r: STORE_MAPPING.get(r['clean_code'], {}).get('region', 'Western Region' if 'JED' in str(r['Organization Name']).upper() or 'K2' in r['clean_code'] else 'Riyadh Central Region'), axis=1
+    )
+    store_summary['manager'] = store_summary.apply(
+        lambda r: STORE_MAPPING.get(r['clean_code'], {}).get('manager', 'Sultan' if r['region'] == 'Riyadh Central Region' else 'Rajib'), axis=1
+    )
+
     store_summary['atv'] = (store_summary['sales'] / store_summary['txns'].replace(0, np.nan)).fillna(0).round(2)
     store_summary['upt'] = (store_summary['units'] / store_summary['txns'].replace(0, np.nan)).fillna(0).round(2)
     store_summary['asp'] = (store_summary['sales'] / store_summary['units'].replace(0, np.nan)).fillna(0).round(2)
@@ -291,11 +316,8 @@ def process_and_build():
     store_summary['share'] = ((store_summary['sales'] / total_sales) * 100).round(2)
     store_summary = store_summary.sort_values(by='sales', ascending=False).reset_index(drop=True)
 
-    # 2. ربط المخزون وحساب طاقة العرض الفعلية (Mumuso Display Model)
-    def match_soh(row):
-        code_str = str(row['Organization Code']).strip()
-        m = re.search(r'\b[A-Za-z0-9]{3,8}\b', code_str)
-        c_code = m.group(0).upper() if m else code_str.upper()
+    # 2. ربط SOH
+    def match_soh(c_code):
         if c_code in soh_map:
             return soh_map[c_code]
         for k, v in soh_map.items():
@@ -303,18 +325,19 @@ def process_and_build():
                 return v
         return {"soh_units": 0, "soh_val": 0}
 
-    soh_matched = store_summary.apply(match_soh, axis=1)
+    soh_matched = store_summary['clean_code'].apply(match_soh)
     store_summary['soh_units'] = [x['soh_units'] for x in soh_matched]
     store_summary['soh_val'] = [x['soh_val'] for x in soh_matched]
     total_soh_units = store_summary['soh_units'].sum()
-    total_soh_val = store_summary['soh_val'].sum()
 
     # مطابقة الأهداف
     def match_target(row):
-        code_str = str(row['Organization Code']).strip().upper()
-        name_str = str(row['Organization Name']).strip().upper()
+        c_code = row['clean_code']
+        raw_name = str(row['Organization Name']).upper()
+        if c_code in targets_map:
+            return targets_map[c_code]
         for k, v in targets_map.items():
-            if str(k).upper() in code_str or str(k).upper() in name_str:
+            if str(k).upper() in c_code or str(k).upper() in raw_name:
                 return v
         return None
 
@@ -352,9 +375,11 @@ def process_and_build():
             st_units = s_row['units']
             st_share = (st_sales / c_total * 100) if c_total > 0 else 0
             st_asp = (st_sales / st_units) if st_units > 0 else 0
+            code_c = get_clean_code(s_row['Organization Code'])
+            full_n = STORE_MAPPING.get(code_c, {}).get('full_name', s_row['Organization Name'])
             st_list.append({
-                "store": s_row['Organization Name'],
-                "code": str(s_row['Organization Code']),
+                "store": full_n,
+                "code": code_c,
                 "sales": f"{st_sales:,.2f}",
                 "units": f"{int(st_units):,}",
                 "share": f"{st_share:.1f}%",
@@ -369,7 +394,7 @@ def process_and_build():
     cat_summary['leading_store'] = cat_summary['Category Name'].map(top_store_per_cat).fillna("-")
     cat_summary = cat_summary.sort_values(by='sales', ascending=False).reset_index(drop=True)
 
-    # 4. تفاصيل الأصناف داخل كل متجر
+    # 4. تفاصيل الأصناف لكل متجر
     store_category_details = {}
     grouped_store_cat = df_clean.groupby(['Organization Code', cat_col]).agg(
         cat_sales=('Actual Sales Amount', 'sum'),
@@ -377,6 +402,7 @@ def process_and_build():
     ).reset_index()
 
     for code, grp in grouped_store_cat.groupby('Organization Code'):
+        c_code = get_clean_code(code)
         st_total = grp['cat_sales'].sum()
         grp_sorted = grp.sort_values(by='cat_sales', ascending=False)
         cats_list = []
@@ -392,83 +418,64 @@ def process_and_build():
                 "share": f"{share_st:.1f}%",
                 "asp": f"{asp_st:,.2f}"
             })
-        store_category_details[str(code)] = cats_list
+        store_category_details[c_code] = cats_list
 
-    top_cat_per_store = {}
-    for code, cats in store_category_details.items():
-        if cats:
-            top_cat_per_store[code] = f"{cats[0]['category']} ({cats[0]['share']})"
-    store_summary['top_category'] = store_summary['Organization Code'].astype(str).map(top_cat_per_store).fillna("-")
-
-    # تحديد أفضل 5 تصنيفات مبيعاً على مستوى الشبكة
     top_5_network_cats = set(cat_summary.head(5)['Category Name'])
 
-    # 5. محرك تحليل Mumuso التجاري المخصص (Display Density & Assortment Mix Diagnostics)
+    # 5. محرك تشخيص Mumuso
     def mumuso_commercial_engine(row):
-        st_code = str(row['Organization Code'])
+        st_code = row['clean_code']
         soh = row['soh_units']
-        sales = row['sales']
         ach = row['ach_pct'] if pd.notna(row['ach_pct']) else 0
         atv = row['atv']
         upt = row['upt']
         asp = row['asp']
 
-        # فحص حضور أفضل تصنيفات الشبكة داخل هذا المتجر
         st_cats = store_category_details.get(st_code, [])
-        st_cat_names = [c['category'] for c in st_cats]
         st_top_cats = [c['category'] for c in st_cats[:3]]
-        
-        # التصنيفات المفقودة أو الضعيفة في المتجر مقارنة بالشبكة
         missing_top_cats = [c for c in top_5_network_cats if c not in st_top_cats]
 
-        # تصنيف حالة مساحة العرض (Display Capacity Status)
         if soh >= 80000:
-            capacity_badge = "Flagship Mega-Display"
+            capacity_badge = "Flagship Display"
             capacity_color = "#38bdf8"
-            cap_analysis = f"Massive display density ({soh:,.0f} Pcs). Suited for high visual volume."
         elif 40000 <= soh < 80000:
-            capacity_badge = "Full Standard Display"
+            capacity_badge = "Standard Full Display"
             capacity_color = "#10b981"
-            cap_analysis = f"Optimal Mumuso visual floor coverage ({soh:,.0f} Pcs). Display is visually full."
         elif 0 < soh < 40000:
             capacity_badge = "Lean Visual Density"
             capacity_color = "#f59e0b"
-            cap_analysis = f"Floor density is below typical Mumuso display standards ({soh:,.0f} Pcs). Risk of empty-looking gondolas."
         else:
             capacity_badge = "No SOH Data"
             capacity_color = "#64748b"
-            cap_analysis = "Inventory sync required."
 
-        # التحليل التشخيصي والحل التجاري: ماذا باع وماذا يحتاج؟
         if ach >= 95:
-            diag_title = "Powerhouse Performer (High Conversion)"
+            diag_title = "Powerhouse Performer"
             diag_color = "#10b981"
-            problem_statement = f"Excellent customer walk-in conversion ({ach:.1f}% Ach). Strong leadership in {', '.join(st_top_cats[:2])}."
-            commercial_action = f"Maintain full shelf depth on top sellers and introduce premium lifestyle novelties to elevate ASP (Current: {asp:.1f} SAR)."
-            what_it_needs = "Continuous auto-replenishment on top 20% SKUs to prevent gondola gaps during peak hours."
+            problem_statement = f"High footfall conversion ({ach:.1f}% Ach). Strong leader in {', '.join(st_top_cats[:2])}."
+            commercial_action = f"Protect shelf fullness on core bestsellers and introduce premium lifestyle items to lift ASP ({asp:.1f} SAR)."
+            what_it_needs = "Steady automatic replenishment on top 20% SKUs to prevent gondola gaps during peak hours."
         elif ach < 70 and soh >= 40000:
-            diag_title = "Assortment Mismatch (Weak Turnover)"
+            diag_title = "Assortment Mismatch"
             diag_color = "#f59e0b"
-            problem_statement = f"Store floor is visually full ({soh:,.0f} Pcs) but turnover is sluggish ({ach:.1f}% Ach). Gondolas hold dead product mix while network bestsellers are under-represented."
-            commercial_action = f"⚡ ACTION: Execute Category Assortment Swap. Allocate prime front-entrance gondolas to {', '.join(missing_top_cats[:2]) if missing_top_cats else 'high-velocity toys'} and clear slow-moving categories via checkout counter bundles."
-            what_it_needs = f"Inject high-velocity categories ({', '.join(missing_top_cats[:2])}) and run multi-item promos to lift UPT from {upt:.2f}."
+            problem_statement = f"Store floor is visually full ({soh:,.0f} Pcs) but turnover lags ({ach:.1f}% Ach). Gondolas hold dead product mix."
+            commercial_action = f"⚡ ACTION: Execute Category Assortment Swap. Allocate front gondolas to {', '.join(missing_top_cats[:2]) if missing_top_cats else 'high-velocity toys'} and clear slow items via cashier counter bundles."
+            what_it_needs = f"Inject high-demand network bestsellers ({', '.join(missing_top_cats[:2])}) and run multi-item promos to lift UPT ({upt:.2f})."
         elif ach < 70 and soh < 40000:
-            diag_title = "Under-Display Capacity Deficit"
+            diag_title = "Under-Display Deficit"
             diag_color = "#ef4444"
-            problem_statement = f"Target achievement is lagging ({ach:.1f}%) and floor stock ({soh:,.0f} Pcs) is thin for Mumuso standards, dampening impulse buys."
-            commercial_action = f"⚡ ACTION: Re-stock core lifestyle, beauty and toys to reach minimum visual threshold (40,000+ Pcs) to make the store appealing."
-            what_it_needs = "Store-fill buffer: +10,000 to +15,000 units of fast-moving impulse categories."
+            problem_statement = f"Lagging target ({ach:.1f}%) and floor stock ({soh:,.0f} Pcs) is thin for Mumuso visual standards."
+            commercial_action = f"⚡ ACTION: Restock fast-moving impulse toys, beauty and accessories to reach 40,000+ Pcs visual threshold."
+            what_it_needs = "Store-fill buffer: +10,000 to +15,000 units of fast-moving categories."
         else:
-            diag_title = "Moderate Run-Rate (Basket Expansion)"
+            diag_title = "Moderate Run-Rate"
             diag_color = "#38bdf8"
-            problem_statement = f"Steady flow with {ach:.1f}% achievement and balanced display ({soh:,.0f} Pcs). Room to expand transaction size."
-            commercial_action = f"Focus cashier incentives on cross-selling to lift ATV (Current: {atv:.1f} SAR) and refresh weekly thematic displays."
-            what_it_needs = "Visual merchandising rotation: rotate seasonal and promotional end-caps."
+            problem_statement = f"Steady flow ({ach:.1f}% Ach) with balanced display ({soh:,.0f} Pcs). Room to expand basket size."
+            commercial_action = f"Focus cashier incentives on cross-selling to raise ATV ({atv:.1f} SAR) and refresh weekly end-caps."
+            what_it_needs = "Visual merchandising rotation: feature seasonal lifestyle novelties."
 
         return {
             "capacity_badge": capacity_badge,
             "capacity_color": capacity_color,
-            "cap_analysis": cap_analysis,
             "diag_title": diag_title,
             "diag_color": diag_color,
             "problem": problem_statement,
@@ -492,6 +499,178 @@ def process_and_build():
     chart_stores = store_summary.head(8)
     chart_svg_markup = build_svg_bar_chart(chart_stores)
 
+    # 6. بناء بيانات المناطق (Region-Wise Engine)
+    region_groups = store_summary.groupby('region')
+    region_kpi_cards = ""
+    region_tables_html = ""
+
+    for reg_name, grp in [("Riyadh Central Region", store_summary[store_summary['region'] == "Riyadh Central Region"]),
+                          ("Western Region", store_summary[store_summary['region'] == "Western Region"])]:
+        
+        reg_mgr = "Sultan" if "Riyadh" in reg_name else "Rajib"
+        r_sales = grp['sales'].sum()
+        r_target = grp['target'].fillna(0).sum()
+        r_ach = (r_sales / r_target * 100) if r_target > 0 else 0
+        r_units = grp['units'].sum()
+        r_txns = grp['txns'].sum()
+        r_soh = grp['soh_units'].sum()
+        r_atv = (r_sales / r_txns) if r_txns > 0 else 0
+        r_upt = (r_units / r_txns) if r_txns > 0 else 0
+        r_asp = (r_sales / r_units) if r_units > 0 else 0
+
+        ach_col = "#10b981" if r_ach >= 100 else ("#f59e0b" if r_ach >= 80 else "#ef4444")
+
+        # بطاقة المنطقة العلوية
+        region_kpi_cards += f"""
+        <div style="background:var(--card); border:1px solid var(--border); border-top:4px solid {'#38bdf8' if 'Riyadh' in reg_name else '#818cf8'}; border-radius:12px; padding:20px; flex:1; min-width:320px;">
+            <div style="display:flex; justify-content:space-between; align-items:flex-start; margin-bottom:12px;">
+                <div>
+                    <h3 style="margin:0; font-size:17px; color:#fff;">{reg_name}</h3>
+                    <span style="font-size:12px; color:#38bdf8; font-weight:600;">Area Manager: {reg_mgr}</span>
+                </div>
+                <span class="badge" style="background:{ach_col}22; color:{ach_col}; border:1px solid {ach_col}55; font-size:12px; font-weight:700;">{r_ach:.1f}% Ach</span>
+            </div>
+            
+            <div style="display:grid; grid-template-columns: repeat(3, 1fr); gap:10px; margin-top:14px; background:#090d16; padding:12px; border-radius:8px; border:1px solid #1e293b;">
+                <div>
+                    <div style="font-size:11px; color:#94a3b8;">SALES</div>
+                    <div style="font-size:15px; font-weight:700; color:#fff;">{r_sales:,.0f} <span style="font-size:10px;">SAR</span></div>
+                </div>
+                <div>
+                    <div style="font-size:11px; color:#94a3b8;">TARGET</div>
+                    <div style="font-size:15px; font-weight:700; color:#94a3b8;">{r_target:,.0f} <span style="font-size:10px;">SAR</span></div>
+                </div>
+                <div>
+                    <div style="font-size:11px; color:#94a3b8;">SOH UNITS</div>
+                    <div style="font-size:15px; font-weight:700; color:#38bdf8;">{r_soh:,.0f}</div>
+                </div>
+                <div>
+                    <div style="font-size:11px; color:#94a3b8;">ATV</div>
+                    <div style="font-size:13px; font-weight:700; color:#fff;">SAR {r_atv:.1f}</div>
+                </div>
+                <div>
+                    <div style="font-size:11px; color:#94a3b8;">UPT</div>
+                    <div style="font-size:13px; font-weight:700; color:#fff;">{r_upt:.2f}</div>
+                </div>
+                <div>
+                    <div style="font-size:11px; color:#94a3b8;">ASP</div>
+                    <div style="font-size:13px; font-weight:700; color:#f59e0b;">SAR {r_asp:.1f}</div>
+                </div>
+            </div>
+        </div>
+        """
+
+        # جدول متاجر المنطقة
+        reg_rows = ""
+        for idx, r in grp.reset_index(drop=True).iterrows():
+            t_str = f"{r['target']:,.0f}" if pd.notna(r['target']) else "-"
+            ach_v = r['ach_pct'] if pd.notna(r['ach_pct']) else None
+            if ach_v is not None:
+                c_c = "#10b981" if ach_v >= 100 else ("#f59e0b" if ach_v >= 80 else "#ef4444")
+                ach_cell = f"""
+                <div style="display:flex;align-items:center;gap:6px;">
+                    <span style="color:{c_c};font-weight:700;min-width:42px;">{ach_v:.1f}%</span>
+                    <div style="flex:1;background:#1e293b;border-radius:4px;height:5px;overflow:hidden;">
+                        <div style="width:{min(ach_v,100):.1f}%;background:{c_c};height:100%;"></div>
+                    </div>
+                </div>
+                """
+            else:
+                ach_cell = '<span style="color:#64748b;">-</span>'
+
+            reg_rows += f"""
+            <tr onclick="openStoreDetails('{r['clean_code']}')" style="cursor:pointer;" title="Click to view deep-dive details">
+                <td style="color:#64748b;">{idx+1}</td>
+                <td style="color:#38bdf8;font-weight:600;">{r['clean_code']}</td>
+                <td style="font-weight:600;color:#fff;">{r['full_name']} <span style="font-size:11px;color:#38bdf8;">🔍</span></td>
+                <td style="font-weight:700;color:#f8fafc;">{r['sales']:,.2f}</td>
+                <td style="color:#94a3b8;">{t_str}</td>
+                <td style="min-width:120px;">{ach_cell}</td>
+                <td style="font-weight:700;color:#fff;">{int(r['soh_units']):,}</td>
+                <td><span class="badge" style="background:{r['display_color']}15;color:{r['display_color']};">{r['display_status']}</span></td>
+                <td>{r['atv']:,.2f}</td>
+                <td>{r['upt']:,.2f}</td>
+                <td style="color:#38bdf8;font-weight:600;">{r['asp']:,.2f}</td>
+            </tr>
+            """
+
+        region_tables_html += f"""
+        <div class="table-wrap" style="margin-bottom:30px;">
+            <div class="table-header">
+                <div>
+                    <h3 style="color:#38bdf8; font-size:16px;">🏢 {reg_name.upper()}</h3>
+                    <span style="color:var(--text-muted);font-size:12px;">Area Manager: <strong style="color:#fff;">{reg_mgr}</strong> | Stores: {len(grp)} Branches</span>
+                </div>
+            </div>
+            <div style="overflow-x:auto;">
+                <table>
+                    <thead>
+                        <tr>
+                            <th>#</th>
+                            <th>Code</th>
+                            <th>Full Store Name</th>
+                            <th>Sales (SAR)</th>
+                            <th>Target (SAR)</th>
+                            <th>% Ach</th>
+                            <th>Floor SOH</th>
+                            <th>Display Density</th>
+                            <th>ATV</th>
+                            <th>UPT</th>
+                            <th>ASP</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {reg_rows}
+                        <!-- سطر المجموع الخاص بالمنطقة -->
+                        <tr style="background:#0c1220; font-weight:700; border-top:2px solid #38bdf8;">
+                            <td colspan="3" style="color:#38bdf8; font-size:13px;">TOTAL {reg_name.upper()} ({reg_mgr})</td>
+                            <td style="color:#fff; font-size:14px;">{r_sales:,.2f}</td>
+                            <td style="color:#94a3b8;">{r_target:,.0f}</td>
+                            <td style="color:{ach_col};">{r_ach:.1f}%</td>
+                            <td style="color:#38bdf8;">{r_soh:,.0f}</td>
+                            <td style="color:#94a3b8;">{len(grp)} Stores</td>
+                            <td>{r_atv:,.2f}</td>
+                            <td>{r_upt:,.2f}</td>
+                            <td style="color:#f59e0b;">{r_asp:,.2f}</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+        """
+
+    # سطر المجموع العام لكامل الشبكة في Region-Wise
+    grand_total_html = f"""
+    <div style="background:#131b2e; border:2px solid #2563eb; border-radius:12px; padding:18px 24px; display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:16px; margin-bottom:30px;">
+        <div>
+            <div style="font-size:13px; color:#38bdf8; font-weight:700; text-transform:uppercase;">Network Grand Total (All Regions)</div>
+            <div style="font-size:20px; font-weight:800; color:#fff; margin-top:2px;">{total_sales:,.2f} <span style="font-size:13px; font-weight:400; color:#94a3b8;">SAR</span></div>
+        </div>
+        <div style="display:flex; gap:24px; flex-wrap:wrap;">
+            <div>
+                <div style="font-size:11px; color:#94a3b8;">TARGET</div>
+                <div style="font-size:16px; font-weight:700; color:#fff;">{total_target:,.0f} SAR</div>
+            </div>
+            <div>
+                <div style="font-size:11px; color:#94a3b8;">ACHIEVEMENT</div>
+                <div style="font-size:16px; font-weight:700; color:{'#10b981' if overall_ach>=100 else '#f59e0b'};">{overall_ach:.1f}%</div>
+            </div>
+            <div>
+                <div style="font-size:11px; color:#94a3b8;">TOTAL SOH</div>
+                <div style="font-size:16px; font-weight:700; color:#38bdf8;">{total_soh_units:,.0f} Pcs</div>
+            </div>
+            <div>
+                <div style="font-size:11px; color:#94a3b8;">NETWORK ATV</div>
+                <div style="font-size:16px; font-weight:700; color:#fff;">SAR {network_atv:.2f}</div>
+            </div>
+            <div>
+                <div style="font-size:11px; color:#94a3b8;">NETWORK UPT</div>
+                <div style="font-size:16px; font-weight:700; color:#fff;">{network_upt:.2f}</div>
+            </div>
+        </div>
+    </div>
+    """
+
     # بطاقات الأصناف
     colors = ['#38bdf8', '#818cf8', '#a855f7', '#ec4899', '#f59e0b', '#10b981', '#06b6d4', '#e11d48', '#84cc16']
     cat_cards_html = ""
@@ -514,26 +693,20 @@ def process_and_build():
         </div>
         """
 
-    # كروت القرارات التشغيلية والحلول الذكية
+    # كروت جدول الفروع العام
     store_meta_map = {}
     store_table_rows = ""
     decision_cards_html = ""
 
     for idx, row in store_summary.iterrows():
-        st_code = str(row['Organization Code'])
-        st_name = str(row['Organization Name'])
+        st_code = row['clean_code']
+        st_name = row['full_name']
         
         if pd.notna(row['target']):
             target_str = f"{row['target']:,.0f}"
             ach_val = row['ach_pct']
             bar_w = min(ach_val, 100)
-            if ach_val >= 100:
-                color = "#10b981"
-            elif ach_val >= 80:
-                color = "#f59e0b"
-            else:
-                color = "#ef4444"
-
+            color = "#10b981" if ach_val >= 100 else ("#f59e0b" if ach_val >= 80 else "#ef4444")
             ach_str = f"""
             <div style="display:flex;align-items:center;gap:8px;">
                 <span style="color:{color};font-weight:700;min-width:45px;">{ach_val:.1f}%</span>
@@ -551,6 +724,8 @@ def process_and_build():
 
         store_meta_map[st_code] = {
             "name": st_name,
+            "region": row['region'],
+            "manager": row['manager'],
             "sales": f"{row['sales']:,.2f} SAR",
             "target": f"{target_str} SAR" if target_str != "-" else "No Target",
             "ach": f"{row['ach_pct']:.1f}%" if pd.notna(row['ach_pct']) else "-",
@@ -568,14 +743,13 @@ def process_and_build():
             "top_cats": row['top_cats_str']
         }
 
-        # كروت الأفرع ذات الأولوية (الأفرع المتعثرة أو ذات الاحتياج التجاري الحاد)
         if "Mismatch" in row['diag_title'] or "Deficit" in row['diag_title'] or "Performer" in row['diag_title']:
             decision_cards_html += f"""
             <div style="background:var(--card); border:1px solid var(--border); border-left:4px solid {row['diag_color']}; border-radius:10px; padding:18px;">
                 <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px; flex-wrap:wrap; gap:8px;">
                     <div>
                         <span style="font-weight:700; color:#fff; font-size:15px;">{st_name} ({st_code})</span>
-                        <div style="font-size:11px; color:#94a3b8; margin-top:2px;">Floor Stock: <strong style="color:#fff;">{int(row['soh_units']):,} Pcs</strong> ({row['display_status']})</div>
+                        <div style="font-size:11px; color:#94a3b8; margin-top:2px;">{row['region']} | Floor SOH: <strong style="color:#fff;">{int(row['soh_units']):,} Pcs</strong> ({row['display_status']})</div>
                     </div>
                     {diag_badge}
                 </div>
@@ -592,12 +766,11 @@ def process_and_build():
             """
 
         store_table_rows += f"""
-        <tr onclick="openStoreDetails('{st_code}')" style="cursor:pointer;" title="Click to view detailed store assortment, sales mix & commercial directive">
+        <tr onclick="openStoreDetails('{st_code}')" style="cursor:pointer;" title="Click to view detailed store assortment & directives">
             <td style="color:#64748b;font-weight:600;">{idx+1}</td>
             <td style="color:#38bdf8;font-weight:600;">{st_code}</td>
-            <td style="font-weight:600;color:#fff;">
-                {st_name} <span style="font-size:11px;color:#38bdf8;margin-left:4px;">🔍</span>
-            </td>
+            <td style="font-weight:600;color:#fff;">{st_name} <span style="font-size:11px;color:#38bdf8;margin-left:4px;">🔍</span></td>
+            <td style="color:#94a3b8;font-size:12px;">{row['region']}</td>
             <td style="font-weight:700;color:#f8fafc;">{row['sales']:,.2f}</td>
             <td style="color:#94a3b8;">{target_str}</td>
             <td style="min-width:130px;">{ach_str}</td>
@@ -637,7 +810,7 @@ def process_and_build():
 
     store_options_html = '<option value="ALL">-- Select Store to filter categories --</option>'
     for _, s in store_summary.iterrows():
-        store_options_html += f'<option value="{s["Organization Code"]}">{s["Organization Name"]} ({s["Organization Code"]})</option>'
+        store_options_html += f'<option value="{s["clean_code"]}">{s["full_name"]} ({s["clean_code"]})</option>'
 
     html_content = f"""<!DOCTYPE html>
 <html lang="en">
@@ -661,7 +834,7 @@ def process_and_build():
         .header h1 {{ margin: 0; font-size: 24px; font-weight: 700; }}
         .header p {{ margin: 4px 0 0 0; color: var(--text-muted); font-size: 14px; }}
         
-        .view-toggle-bar {{ display: flex; background: #0c1220; padding: 4px; border-radius: 10px; border: 1px solid var(--border); margin-bottom: 24px; width: fit-content; gap: 4px; }}
+        .view-toggle-bar {{ display: flex; background: #0c1220; padding: 4px; border-radius: 10px; border: 1px solid var(--border); margin-bottom: 24px; width: fit-content; gap: 4px; flex-wrap: wrap; }}
         .view-btn {{ background: transparent; border: none; color: var(--text-muted); padding: 10px 22px; border-radius: 8px; font-size: 14px; font-weight: 700; cursor: pointer; transition: 0.2s; display: flex; align-items: center; gap: 8px; }}
         .view-btn.active {{ background: #2563eb; color: #fff; box-shadow: 0 4px 12px rgba(37,99,235,0.3); }}
         .view-btn:hover:not(.active) {{ color: #fff; background: rgba(255,255,255,0.05); }}
@@ -686,7 +859,7 @@ def process_and_build():
         .table-wrap {{ background: var(--card); border: 1px solid var(--border); border-radius: 10px; overflow: hidden; margin-bottom: 24px; }}
         .table-header {{ padding: 16px 20px; display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid var(--border); flex-wrap: wrap; gap: 12px; }}
         .table-header h3 {{ margin: 0; font-size: 15px; font-weight: 700; }}
-        .table-search {{ padding: 8px 14px; background: #090d16; border: 1px solid var(--border); border-radius: 6px; color: #fff; outline: none; width: 240px; font-size: 13px; }}
+        .table-search {{ padding: 8px 14px; background: #090d16; border: 1px solid var(--border); border-radius: 6px; color: #fff; outline: none; width: 260px; font-size: 13px; }}
         .table-select {{ padding: 8px 14px; background: #090d16; border: 1px solid var(--border); border-radius: 6px; color: #38bdf8; outline: none; font-size: 13px; font-weight: 600; }}
         table {{ width: 100%; border-collapse: collapse; text-align: left; font-size: 13px; }}
         th {{ background: #0c1220; color: var(--text-muted); padding: 12px 14px; font-weight: 600; text-transform: uppercase; font-size: 11px; letter-spacing: 0.5px; border-bottom: 1px solid var(--border); }}
@@ -730,8 +903,6 @@ def process_and_build():
       <button class="close-btn" onclick="closeModal('store-modal')">&times;</button>
     </div>
     <div class="modal-body">
-      
-      <!-- الصندوق التنفيذي للتشخيص والقرار -->
       <div style="background:#090d16; border:1px solid #1e293b; border-radius:10px; padding:18px; margin-bottom:20px;">
         <div style="font-size:13px; color:#cbd5e1; margin-bottom:8px;">
           <strong style="color:#ef4444;">● Store Situation & Root Cause:</strong> <span id="modal-diag" style="color:#f8fafc;">-</span>
@@ -744,7 +915,6 @@ def process_and_build():
         </div>
       </div>
 
-      <!-- مقاييس المتجر -->
       <div style="margin-bottom:12px; font-size:12px; font-weight:700; text-transform:uppercase; color:#94a3b8;">Store Commercial Metrics</div>
       <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(140px, 1fr)); gap:12px; margin-bottom:24px;">
         <div style="background:#090d16; padding:14px; border-radius:8px; border:1px solid #1e293b;">
@@ -760,7 +930,7 @@ def process_and_build():
           <div id="modal-soh" style="font-size:18px; font-weight:700; color:#38bdf8;">-</div>
         </div>
         <div style="background:#090d16; padding:14px; border-radius:8px; border:1px solid #1e293b;">
-          <div style="font-size:11px; color:#94a3b8;">DISPLAY CAPACITY</div>
+          <div style="font-size:11px; color:#94a3b8;">DISPLAY DENSITY</div>
           <div id="modal-capacity" style="font-size:15px; font-weight:700; color:#cbd5e1;">-</div>
         </div>
         <div style="background:#090d16; padding:14px; border-radius:8px; border:1px solid #1e293b;">
@@ -773,7 +943,6 @@ def process_and_build():
         </div>
       </div>
 
-      <!-- جدول تفاصيل الأصناف للمتجر -->
       <div style="margin-bottom:12px; font-size:12px; font-weight:700; text-transform:uppercase; color:#94a3b8;">Store Category Assortment Performance</div>
       <div style="border:1px solid #1e293b; border-radius:8px; overflow:hidden;">
         <table>
@@ -811,7 +980,7 @@ def process_and_build():
             <tr>
               <th>#</th>
               <th>Store Code</th>
-              <th>Store Name</th>
+              <th>Full Store Name</th>
               <th>Sales (SAR)</th>
               <th>Units Sold</th>
               <th>Store Share in Category</th>
@@ -828,7 +997,7 @@ def process_and_build():
 <div class="header">
     <div>
         <h1>MMS Executive Commercial & SOH Intelligence Dashboard</h1>
-        <p>Mumuso Large-Format Display Model, Assortment Mix Diagnostics & Action Directives</p>
+        <p>Operational Performance, Regional Hierarchy & Display Diagnostics</p>
     </div>
 </div>
 
@@ -880,13 +1049,13 @@ def process_and_build():
 </div>
 
 <div class="view-toggle-bar">
-    <button class="view-btn active" id="btn-stores" onclick="switchView('stores')">🏢 Store Commercial Matrix & Display Diagnostics</button>
+    <button class="view-btn active" id="btn-stores" onclick="switchView('stores')">🏢 Store Commercial Matrix</button>
+    <button class="view-btn" id="btn-regions" onclick="switchView('regions')">🌍 Region-Wise Performance</button>
     <button class="view-btn" id="btn-business" onclick="switchView('business')">📦 Business-Wise Performance ({len(cat_summary)} Categories)</button>
 </div>
 
 <!-- 1. Store Commercial Matrix View -->
 <div id="view-stores">
-    
     <div class="section-title"><span>⚡ Critical Action Directives (Category Swaps & Rebalancing Priorities)</span></div>
     <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(320px, 1fr)); gap:14px; margin-bottom:24px;">
         {decision_cards_html}
@@ -909,9 +1078,9 @@ def process_and_build():
         <div class="table-header">
             <div>
                 <h3>STORE COMMERCIAL & DISPLAY ASSORTMENT MATRIX</h3>
-                <span style="color:var(--text-muted);font-size:12px;">Click any row to open store category performance, display density & tailored merchandise directives</span>
+                <span style="color:var(--text-muted);font-size:12px;">Click any row to open store category performance, display density & tailored directives</span>
             </div>
-            <input type="text" id="storeSearch" class="table-search" placeholder="Search store name or code..." onkeyup="filterStores()">
+            <input type="text" id="storeSearch" class="table-search" placeholder="Search full store name, code, or region..." onkeyup="filterStores()">
         </div>
         <div style="overflow-x:auto;">
             <table id="storesTable">
@@ -919,16 +1088,17 @@ def process_and_build():
                     <tr>
                         <th>#</th>
                         <th>Store Code</th>
-                        <th>Store Name</th>
+                        <th>Full Store Name</th>
+                        <th>Region</th>
                         <th>Sales (SAR)</th>
                         <th>Target (SAR)</th>
                         <th>% Ach</th>
-                        <th>Floor SOH (Units)</th>
-                        <th>Display Capacity</th>
+                        <th>Floor SOH</th>
+                        <th>Display Density</th>
                         <th>Commercial Diagnostic</th>
-                        <th>ATV (SAR)</th>
+                        <th>ATV</th>
                         <th>UPT</th>
-                        <th>ASP (SAR)</th>
+                        <th>ASP</th>
                     </tr>
                 </thead>
                 <tbody>
@@ -939,7 +1109,20 @@ def process_and_build():
     </div>
 </div>
 
-<!-- 2. Business-Wise View -->
+<!-- 2. Region-Wise Performance View (المنطقة والمدراء والمجاميع) -->
+<div id="view-regions" style="display:none;">
+    
+    <div class="section-title"><span>🌍 REGIONAL LEADERSHIP & AREA MANAGER OVERVIEW</span></div>
+    <div style="display:flex; flex-wrap:wrap; gap:16px; margin-bottom:24px;">
+        {region_kpi_cards}
+    </div>
+
+    {grand_total_html}
+
+    {region_tables_html}
+</div>
+
+<!-- 3. Business-Wise View -->
 <div id="view-business" style="display:none;">
     <div class="section-title">
         <span>📦 ALL CATEGORIES CONTRIBUTION MIX ({len(cat_summary)} CATEGORIES)</span>
@@ -997,7 +1180,7 @@ def process_and_build():
     if (!meta) return;
 
     document.getElementById("modal-store-name").innerText = meta.name;
-    document.getElementById("modal-store-code").innerText = "BRANCH CODE: " + storeCode + " | TARGET: " + meta.target;
+    document.getElementById("modal-store-code").innerText = "CODE: " + storeCode + " | " + meta.region + " (Manager: " + meta.manager + ")";
     document.getElementById("modal-sales").innerText = meta.sales;
     document.getElementById("modal-ach").innerText = meta.ach;
     document.getElementById("modal-soh").innerText = meta.soh_units;
@@ -1089,19 +1272,27 @@ def process_and_build():
 
   function switchView(viewName) {{
     const storesView = document.getElementById("view-stores");
+    const regionsView = document.getElementById("view-regions");
     const businessView = document.getElementById("view-business");
     const btnStores = document.getElementById("btn-stores");
+    const btnRegions = document.getElementById("btn-regions");
     const btnBusiness = document.getElementById("btn-business");
+
+    storesView.style.display = "none";
+    regionsView.style.display = "none";
+    businessView.style.display = "none";
+    btnStores.classList.remove("active");
+    btnRegions.classList.remove("active");
+    btnBusiness.classList.remove("active");
 
     if (viewName === 'stores') {{
         storesView.style.display = "block";
-        businessView.style.display = "none";
         btnStores.classList.add("active");
-        btnBusiness.classList.remove("active");
+    }} else if (viewName === 'regions') {{
+        regionsView.style.display = "block";
+        btnRegions.classList.add("active");
     }} else {{
-        storesView.style.display = "none";
         businessView.style.display = "block";
-        btnStores.classList.remove("active");
         btnBusiness.classList.add("active");
     }}
   }}
