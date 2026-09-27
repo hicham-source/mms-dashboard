@@ -416,7 +416,7 @@ def process_and_build():
     sales_with_target = valid_targets['sales'].sum()
     overall_ach = (sales_with_target / total_target * 100) if total_target > 0 else 0
 
-    # 2. الهيكل السلعي: المستوى الأول (Main Category)
+    # 2. الهيكل السلعي للمبيعات
     main_cat_summary = df_clean.groupby('main_category').agg(
         sales=('Actual Sales Amount', 'sum'),
         units=('Sales Quantity', 'sum')
@@ -433,7 +433,7 @@ def process_and_build():
         top_store_per_main_cat[c_name] = f"{st_name} ({best['Actual Sales Amount']:,.0f} SAR)"
     main_cat_summary['leading_store'] = main_cat_summary['main_category'].map(top_store_per_main_cat).fillna("-")
 
-    # 3. الهيكل السلعي: المستوى الرابع (Sub-Subgroups)
+    # 3. الهيكل السلعي: المستوى الرابع
     subsub_summary = df_clean.groupby(['main_category', 'sub_subgroup']).agg(
         sales=('Actual Sales Amount', 'sum'),
         units=('Sales Quantity', 'sum')
@@ -441,7 +441,7 @@ def process_and_build():
     subsub_summary['contribution'] = ((subsub_summary['sales'] / total_sales) * 100).round(2)
     subsub_summary['asp'] = (subsub_summary['sales'] / subsub_summary['units'].replace(0, np.nan)).fillna(0).round(2)
 
-    # 4. تفاصيل الأصناف داخل كل متجر
+    # 4. تفاصيل الأصناف الدقيقة داخل كل متجر
     store_cat_details = {}
     grouped_st_cat = df_clean.groupby(['Organization Code', 'main_category', 'sub_subgroup']).agg(
         sales=('Actual Sales Amount', 'sum'),
@@ -528,7 +528,6 @@ def process_and_build():
     chart_stores = store_summary.head(8)
     chart_svg_markup = build_svg_bar_chart(chart_stores)
 
-    # 5. بطاقات الأقسام الرئيسية (مع حماية اسم القسم ضد أي كسر للـ JS)
     colors = ['#38bdf8', '#818cf8', '#a855f7', '#ec4899', '#f59e0b', '#10b981', '#06b6d4', '#e11d48', '#84cc16']
     main_cat_cards_html = ""
     for idx, r in main_cat_summary.iterrows():
@@ -551,7 +550,7 @@ def process_and_build():
         </div>
         """
 
-    # 6. جداول المناطق (مع زر العدسة المباشر)
+    # جداول ومؤشرات المناطق
     region_kpi_cards = ""
     region_tables_html = ""
 
@@ -645,12 +644,12 @@ def process_and_build():
                 yoy_cell = '<span style="color:#64748b;">-</span>'
 
             reg_rows += f"""
-            <tr onclick="openStoreDetails('{r['clean_code']}')" style="cursor:pointer;">
+            <tr data-store="{r['clean_code']}" style="cursor:pointer;">
                 <td style="color:#64748b;">{idx+1}</td>
                 <td style="color:#38bdf8;font-weight:600;">{r['clean_code']}</td>
                 <td style="font-weight:600;color:#fff;">
                     {r['full_name']} 
-                    <button type="button" onclick="event.stopPropagation(); openStoreDetails('{r['clean_code']}');" style="background:none; border:none; cursor:pointer; color:#38bdf8; font-size:12px; margin-left:4px; padding:2px;" title="View Store Details">🔍</button>
+                    <span class="lens-btn" data-store="{r['clean_code']}">🔍</span>
                 </td>
                 <td style="font-weight:700;color:#f8fafc;">{r['sales']:,.2f}</td>
                 <td style="color:#38bdf8;font-weight:600;">{ly_str}</td>
@@ -742,7 +741,7 @@ def process_and_build():
     </div>
     """
 
-    # 7. جدول الفروع الرئيسي (Store Commercial Matrix)
+    # جدول الفروع الرئيسي
     store_meta_map = {}
     store_table_rows = ""
     decision_cards_html = ""
@@ -826,12 +825,12 @@ def process_and_build():
             """
 
         store_table_rows += f"""
-        <tr onclick="openStoreDetails('{st_code}')" style="cursor:pointer;" title="Click to view detailed store category mix & directives">
+        <tr data-store="{st_code}" style="cursor:pointer;" title="Click to view detailed store category mix & directives">
             <td style="color:#64748b;font-weight:600;">{idx+1}</td>
             <td style="color:#38bdf8;font-weight:600;">{st_code}</td>
             <td style="font-weight:600;color:#fff;">
                 {st_name} 
-                <button type="button" onclick="event.stopPropagation(); openStoreDetails('{st_code}');" style="background:none; border:none; cursor:pointer; color:#38bdf8; font-size:12px; margin-left:4px; padding:2px;" title="View Store Details">🔍</button>
+                <span class="lens-btn" data-store="{st_code}">🔍</span>
             </td>
             <td style="color:#94a3b8;font-size:12px;">{row['region']}</td>
             <td style="font-weight:700;color:#f8fafc;">{row['sales']:,.2f}</td>
@@ -848,7 +847,7 @@ def process_and_build():
         </tr>
         """
 
-    # 8. جدول الأقسام في شاشة Business-Wise
+    # جدول الأقسام
     main_cat_table_rows = ""
     for idx, r in main_cat_summary.iterrows():
         c_name = r['main_category']
@@ -940,8 +939,53 @@ def process_and_build():
         .cards-scroll-container::-webkit-scrollbar-track {{ background: #090d16; }}
         .cards-scroll-container::-webkit-scrollbar-thumb {{ background: #1e293b; border-radius: 3px; }}
 
-        .app-modal {{ position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(9, 13, 22, 0.85); backdrop-filter: blur(5px); z-index: 99999; display: none; align-items: center; justify-content: center; }}
-        .modal-content {{ background: #131b2e; border: 1px solid #1e293b; border-radius: 14px; width: 92%; max-width: 1000px; max-height: 90vh; display: flex; flex-direction: column; overflow: hidden; box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.8); }}
+        /* زر وأيقونة العدسة المخصصة */
+        .lens-btn {{
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            margin-left: 6px;
+            padding: 3px 6px;
+            font-size: 12px;
+            color: #38bdf8;
+            background: rgba(56, 189, 248, 0.1);
+            border: 1px solid rgba(56, 189, 248, 0.3);
+            border-radius: 6px;
+            cursor: pointer;
+            transition: all 0.2s ease;
+        }}
+        .lens-btn:hover {{
+            background: #38bdf8;
+            color: #090d16;
+            transform: scale(1.1);
+        }}
+
+        /* Modal نافذة تفاصيل المتجر */
+        .app-modal {{ 
+            position: fixed; 
+            top: 0; 
+            left: 0; 
+            width: 100%; 
+            height: 100%; 
+            background: rgba(9, 13, 22, 0.88); 
+            backdrop-filter: blur(6px); 
+            z-index: 9999999 !important; 
+            display: none; 
+            align-items: center; 
+            justify-content: center; 
+        }}
+        .modal-content {{ 
+            background: #131b2e; 
+            border: 1px solid #1e293b; 
+            border-radius: 14px; 
+            width: 92%; 
+            max-width: 1000px; 
+            max-height: 90vh; 
+            display: flex; 
+            flex-direction: column; 
+            overflow: hidden; 
+            box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.85); 
+        }}
         .modal-header {{ padding: 20px 24px; border-bottom: 1px solid #1e293b; display: flex; justify-content: space-between; align-items: center; background: #0c1220; }}
         .modal-body {{ padding: 24px; overflow-y: auto; }}
         .close-btn {{ background: transparent; border: none; color: #94a3b8; font-size: 26px; cursor: pointer; line-height: 1; }}
@@ -960,7 +1004,7 @@ def process_and_build():
   </div>
 </div>
 
-<!-- Modal 1: Commercial Deep-Dive Modal -->
+<!-- Modal 1: Commercial Deep-Dive Modal مع كافة المعرفات الصحيحة -->
 <div id="store-modal" class="app-modal">
   <div class="modal-content">
     <div class="modal-header">
@@ -984,10 +1028,10 @@ def process_and_build():
       </div>
 
       <div style="margin-bottom:12px; font-size:12px; font-weight:700; text-transform:uppercase; color:#94a3b8;">Store Commercial Metrics</div>
-      <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(140px, 1fr)); gap:12px; margin-bottom:24px;">
+      <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(130px, 1fr)); gap:12px; margin-bottom:24px;">
         <div style="background:#090d16; padding:14px; border-radius:8px; border:1px solid #1e293b;">
           <div style="font-size:11px; color:#94a3b8;">CURRENT SALES</div>
-          <div id="modal-sales" style="font-size:18px; font-weight:700; color:#fff;">-</div>
+          <div id="modal-sales" style="font-size:17px; font-weight:700; color:#fff;">-</div>
         </div>
         <div style="background:#090d16; padding:14px; border-radius:8px; border:1px solid #1e293b;">
           <div style="font-size:11px; color:#94a3b8;">LY GROSS SALES</div>
@@ -996,19 +1040,27 @@ def process_and_build():
         </div>
         <div style="background:#090d16; padding:14px; border-radius:8px; border:1px solid #1e293b;">
           <div style="font-size:11px; color:#94a3b8;">TARGET & ACH</div>
-          <div id="modal-ach" style="font-size:18px; font-weight:700; color:#10b981;">-</div>
+          <div id="modal-ach" style="font-size:17px; font-weight:700; color:#10b981;">-</div>
         </div>
         <div style="background:#090d16; padding:14px; border-radius:8px; border:1px solid #1e293b;">
-          <div style="font-size:11px; color:#94a3b8;">FLOOR SOH (UNITS)</div>
-          <div id="modal-soh" style="font-size:18px; font-weight:700; color:#38bdf8;">-</div>
+          <div style="font-size:11px; color:#94a3b8;">FLOOR SOH</div>
+          <div id="modal-soh" style="font-size:17px; font-weight:700; color:#38bdf8;">-</div>
         </div>
         <div style="background:#090d16; padding:14px; border-radius:8px; border:1px solid #1e293b;">
           <div style="font-size:11px; color:#94a3b8;">DISPLAY DENSITY</div>
-          <div id="modal-capacity" style="font-size:14px; font-weight:700; color:#cbd5e1;">-</div>
+          <div id="modal-capacity" style="font-size:13px; font-weight:700; color:#cbd5e1;">-</div>
         </div>
         <div style="background:#090d16; padding:14px; border-radius:8px; border:1px solid #1e293b;">
-          <div style="font-size:11px; color:#94a3b8;">AVERAGE TICKET (ATV)</div>
-          <div id="modal-atv" style="font-size:18px; font-weight:700; color:#fff;">-</div>
+          <div style="font-size:11px; color:#94a3b8;">ATV</div>
+          <div id="modal-atv" style="font-size:16px; font-weight:700; color:#fff;">-</div>
+        </div>
+        <div style="background:#090d16; padding:14px; border-radius:8px; border:1px solid #1e293b;">
+          <div style="font-size:11px; color:#94a3b8;">UPT</div>
+          <div id="modal-upt" style="font-size:16px; font-weight:700; color:#fff;">-</div>
+        </div>
+        <div style="background:#090d16; padding:14px; border-radius:8px; border:1px solid #1e293b;">
+          <div style="font-size:11px; color:#94a3b8;">ASP</div>
+          <div id="modal-asp" style="font-size:16px; font-weight:700; color:#f59e0b;">-</div>
         </div>
       </div>
 
@@ -1117,7 +1169,7 @@ def process_and_build():
         <div class="table-header">
             <div>
                 <h3>STORE COMMERCIAL & DISPLAY ASSORTMENT MATRIX</h3>
-                <span style="color:var(--text-muted);font-size:12px;">Click any row or lens 🔍 to open store category performance & directives</span>
+                <span style="color:var(--text-muted);font-size:12px;">Click any store row or lens 🔍 to open detailed store intelligence</span>
             </div>
             <input type="text" id="storeSearch" class="table-search" placeholder="Search full store name, code, or region..." onkeyup="filterStores()">
         </div>
@@ -1213,46 +1265,84 @@ def process_and_build():
   const STORE_META = {json.dumps(store_meta_map)};
   const SUBSUB_DATA = {json.dumps(subsub_json_data)};
 
-  function openStoreDetails(storeCode) {{
-    const meta = STORE_META[storeCode];
-    const items = STORE_DETAILS[storeCode] || [];
-    if (!meta) return;
-
-    document.getElementById("modal-store-name").innerText = meta.name;
-    document.getElementById("modal-store-code").innerText = "CODE: " + storeCode + " | " + meta.region + " (Manager: " + meta.manager + ")";
-    document.getElementById("modal-sales").innerText = meta.sales;
-    document.getElementById("modal-ly").innerText = meta.ly_sales;
-    document.getElementById("modal-yoy").innerHTML = meta.yoy !== "-" ? "YoY: <strong>" + meta.yoy + "</strong>" : "New Location";
-    document.getElementById("modal-ach").innerText = meta.ach;
-    document.getElementById("modal-soh").innerText = meta.soh_units;
-    document.getElementById("modal-capacity").innerText = meta.capacity_badge;
-    document.getElementById("modal-atv").innerText = meta.atv;
-    document.getElementById("modal-upt").innerText = meta.upt;
-    document.getElementById("modal-diag").innerText = meta.problem;
-    document.getElementById("modal-needs").innerText = meta.needs;
-    document.getElementById("modal-directive").innerText = meta.action;
-
-    let rowsHtml = "";
-    items.forEach((c, idx) => {{
-      rowsHtml += `
-        <tr>
-          <td style="color:#64748b;">${{idx+1}}</td>
-          <td style="color:#38bdf8; font-weight:600;">${{c.main_category}}</td>
-          <td style="font-weight:700; color:#fff;">${{c.sub_subgroup}}</td>
-          <td style="color:#38bdf8; font-weight:600;">${{c.sales}}</td>
-          <td>${{c.units}}</td>
-          <td style="color:#f8fafc; font-weight:600;">${{c.share}}</td>
-          <td style="color:#f59e0b;">${{c.asp}}</td>
-        </tr>
-      `;
-    }});
-
-    document.getElementById("modal-cats-body").innerHTML = rowsHtml || "<tr><td colspan='7' style='text-align:center;'>No category data available</td></tr>";
-    document.getElementById("store-modal").style.display = "flex";
+  function safeSetText(id, text) {{
+    const el = document.getElementById(id);
+    if (el) el.innerText = text || "-";
   }}
 
+  function safeSetHtml(id, htmlContent) {{
+    const el = document.getElementById(id);
+    if (el) el.innerHTML = htmlContent || "-";
+  }}
+
+  function openStoreDetails(storeCode) {{
+    try {{
+      const meta = STORE_META[storeCode];
+      const items = STORE_DETAILS[storeCode] || [];
+      if (!meta) {{
+        console.warn("No metadata found for store code:", storeCode);
+        return;
+      }}
+
+      safeSetText("modal-store-name", meta.name);
+      safeSetText("modal-store-code", "CODE: " + storeCode + " | " + meta.region + " (Manager: " + meta.manager + ")");
+      safeSetText("modal-sales", meta.sales);
+      safeSetText("modal-ly", meta.ly_sales);
+      
+      const yoyHtml = (meta.yoy && meta.yoy !== "-") ? "YoY: <strong>" + meta.yoy + "</strong>" : "New Location";
+      safeSetHtml("modal-yoy", yoyHtml);
+
+      safeSetText("modal-ach", meta.ach);
+      safeSetText("modal-soh", meta.soh_units);
+      safeSetText("modal-capacity", meta.capacity_badge);
+      safeSetText("modal-atv", meta.atv);
+      safeSetText("modal-upt", meta.upt);
+      safeSetText("modal-asp", meta.asp);
+      safeSetText("modal-diag", meta.problem);
+      safeSetText("modal-needs", meta.needs);
+      safeSetText("modal-directive", meta.action);
+
+      let rowsHtml = "";
+      items.forEach((c, idx) => {{
+        rowsHtml += `
+          <tr>
+            <td style="color:#64748b;">${{idx+1}}</td>
+            <td style="color:#38bdf8; font-weight:600;">${{c.main_category}}</td>
+            <td style="font-weight:700; color:#fff;">${{c.sub_subgroup}}</td>
+            <td style="color:#38bdf8; font-weight:600;">${{c.sales}}</td>
+            <td>${{c.units}}</td>
+            <td style="color:#f8fafc; font-weight:600;">${{c.share}}</td>
+            <td style="color:#f59e0b;">${{c.asp}}</td>
+          </tr>
+        `;
+      }});
+
+      safeSetHtml("modal-cats-body", rowsHtml || "<tr><td colspan='7' style='text-align:center;'>No category data available</td></tr>");
+      
+      const modal = document.getElementById("store-modal");
+      if (modal) {{
+        modal.style.setProperty("display", "flex", "important");
+      }}
+    }} catch (err) {{
+      console.error("Error opening store details:", err);
+    }}
+  }}
+
+  // مراقب أحداث مركزي يلتقط النقر على أي متجر أو عدسة بنسبة 100%
+  document.addEventListener("click", function(e) {{
+    const target = e.target.closest("[data-store]");
+    if (target) {{
+      const code = target.getAttribute("data-store");
+      if (code) {{
+        e.preventDefault();
+        openStoreDetails(code);
+      }}
+    }}
+  }});
+
   function filterByMainCategory(catName) {{
-    document.getElementById("mainCatFilter").value = catName;
+    const filter = document.getElementById("mainCatFilter");
+    if (filter) filter.value = catName;
     onCategoryFilterChange(catName);
   }}
 
@@ -1266,18 +1356,20 @@ def process_and_build():
       return;
     }}
 
-    title.innerText = "SUB-SUBGROUP BREAKDOWN: " + catName.toUpperCase();
-    thead.innerHTML = `
-      <tr>
-        <th>#</th>
-        <th>Main Category</th>
-        <th>Sub-Subgroup (Product Group)</th>
-        <th>Sales Revenue (SAR)</th>
-        <th>Sales Units</th>
-        <th>Contribution (%)</th>
-        <th>ASP (SAR)</th>
-      </tr>
-    `;
+    if (title) title.innerText = "SUB-SUBGROUP BREAKDOWN: " + catName.toUpperCase();
+    if (thead) {{
+      thead.innerHTML = `
+        <tr>
+          <th>#</th>
+          <th>Main Category</th>
+          <th>Sub-Subgroup (Product Group)</th>
+          <th>Sales Revenue (SAR)</th>
+          <th>Sales Units</th>
+          <th>Contribution (%)</th>
+          <th>ASP (SAR)</th>
+        </tr>
+      `;
+    }}
 
     const filtered = SUBSUB_DATA.filter(x => x.main_category === catName);
     let rowsHtml = "";
@@ -1303,7 +1395,9 @@ def process_and_build():
       `;
     }});
 
-    tbody.innerHTML = rowsHtml || "<tr><td colspan='7' style='text-align:center;'>No sub-subgroups found for this category</td></tr>";
+    if (tbody) {{
+      tbody.innerHTML = rowsHtml || "<tr><td colspan='7' style='text-align:center;'>No sub-subgroups found for this category</td></tr>";
+    }}
   }}
 
   function filterSubSubTable() {{
@@ -1315,12 +1409,13 @@ def process_and_build():
   }}
 
   function closeModal(modalId) {{
-    document.getElementById(modalId).style.display = "none";
+    const modal = document.getElementById(modalId);
+    if (modal) modal.style.setProperty("display", "none", "important");
   }}
 
   window.onclick = function(event) {{
-    if (event.target.classList.contains('app-modal')) {{
-      event.target.style.display = "none";
+    if (event.target && event.target.classList.contains('app-modal')) {{
+      event.target.style.setProperty("display", "none", "important");
     }}
   }};
 
@@ -1332,22 +1427,22 @@ def process_and_build():
     const btnRegions = document.getElementById("btn-regions");
     const btnBusiness = document.getElementById("btn-business");
 
-    storesView.style.display = "none";
-    regionsView.style.display = "none";
-    businessView.style.display = "none";
-    btnStores.classList.remove("active");
-    btnRegions.classList.remove("active");
-    btnBusiness.classList.remove("active");
+    if (storesView) storesView.style.display = "none";
+    if (regionsView) regionsView.style.display = "none";
+    if (businessView) businessView.style.display = "none";
+    if (btnStores) btnStores.classList.remove("active");
+    if (btnRegions) btnRegions.classList.remove("active");
+    if (btnBusiness) btnBusiness.classList.remove("active");
 
-    if (viewName === 'stores') {{
+    if (viewName === 'stores' && storesView) {{
         storesView.style.display = "block";
-        btnStores.classList.add("active");
-    }} else if (viewName === 'regions') {{
+        if (btnStores) btnStores.classList.add("active");
+    }} else if (viewName === 'regions' && regionsView) {{
         regionsView.style.display = "block";
-        btnRegions.classList.add("active");
-    }} else {{
+        if (btnRegions) btnRegions.classList.add("active");
+    }} else if (businessView) {{
         businessView.style.display = "block";
-        btnBusiness.classList.add("active");
+        if (btnBusiness) btnBusiness.classList.add("active");
     }}
   }}
 
