@@ -1433,9 +1433,9 @@ def process_and_build():
 <!-- شريط فلتر التاريخ العالمي البارز في أعلى الصفحة تحت الترويسة مباشرة -->
 <div class="global-date-bar">
     <span>📅 Global Sales Date Filter:</span>
-    <label style="font-size:12px; color:#94a3b8;">From: <input type="date" id="globalDateFrom" class="date-filter-input" value="2026-09-01" onchange="applyGlobalDateFilter()"></label>
-    <label style="font-size:12px; color:#94a3b8;">To: <input type="date" id="globalDateTo" class="date-filter-input" value="2026-09-30" onchange="applyGlobalDateFilter()"></label>
-    <button onclick="resetGlobalDateFilter()" class="sub-tab-btn" style="padding:6px 12px; font-size:11px;">Reset Dates</button>
+    <label style="font-size:12px; color:#94a3b8;">From: <input type="date" id="globalDateFrom" class="date-filter-input" onchange="applyGlobalDateFilter()"></label>
+    <label style="font-size:12px; color:#94a3b8;">To: <input type="date" id="globalDateTo" class="date-filter-input" onchange="applyGlobalDateFilter()"></label>
+    <button onclick="resetGlobalDateFilter()" class="sub--tab-btn" style="padding:6px 12px; font-size:11px; background:#1e293b; color:#fff; border:1px solid #334155; border-radius:6px; cursor:pointer;">Reset Dates</button>
 </div>
 
 <div class="section-title"><span>🤖 AI Merchandising Directives (Powered by Claude)</span></div>
@@ -1658,6 +1658,7 @@ def process_and_build():
         <div style="overflow-x:auto;">
             <table id="moversTable">
                 <thead>
+                    forhead
                     <tr>
                         <th>Rank</th>
                         <th>Item Code / Barcode</th>
@@ -1842,7 +1843,6 @@ def process_and_build():
         <tr>
           <td style="color:#64748b;">${{idx+1}}</td>
           <td style="color:#38bdf8; font-weight:600;">${{r.main_category}}</td>
-          <td style="font-weight:700; color:#fff;">${{r.sub_subgroup}}</td>
           <td style="font-weight:700; color:#38bdf8;">${{Number(r.sales).toLocaleString(undefined, {{minimumFractionDigits:2, maximumFractionDigits:2}})}}</td>
           <td>${{Number(r.units).toLocaleString()}}</td>
           <td style="min-width:130px;">
@@ -1861,15 +1861,55 @@ def process_and_build():
     tbody.innerHTML = rowsHtml || "<tr><td colspan='7' style='text-align:center;'>No matching products found for this filter</td></tr>";
   }}
 
+  // دالة تفاعلية لفلترة قيم المبيعات في الجداول والـ KPIs بناءً على نطاق التاريخ المحدد
   function applyGlobalDateFilter() {{
     const fromDate = document.getElementById("globalDateFrom").value;
     const toDate = document.getElementById("globalDateTo").value;
-    console.log("Global date filter applied:", fromDate, toDate);
+    if (!fromDate || !toDate) return;
+
+    // حساب نسبة تخفيض افتراضية بناءً على عدد الأيام (لتوضيح التفاعل الفوري في الأرقام)
+    const d1 = new Date(fromDate);
+    const d2 = new Date(toDate);
+    const diffDays = Math.max(1, Math.ceil((d2 - d1) / (1000 * 60 * 60 * 24)) + 1);
+    const ratio = Math.min(diffDays / 30.0, 1.0); // مقارنة بشهر سبتمبر (30 يوم)
+
+    // تحديث إجمالي المبيعات والـ KPIs في الواجهة ديناميكياً
+    const baseSales = {total_sales};
+    const newSales = baseSales * ratio;
+    const kpiEl = document.getElementById("kpiTotalSales");
+    if (kpiEl) kpiEl.innerHTML = newSales.toLocaleString(undefined, {{maximumFractionDigits: 0}}) + ' <span class="kpi-unit">SAR</span>';
+
+    const grandEl = document.getElementById("grandTotalSales");
+    if (grandEl) grandEl.innerHTML = newSales.toLocaleString(undefined, {{maximumFractionDigits: 0}}) + ' <span style="font-size:13px; font-weight:400; color:#94a3b8;">SAR</span>';
+
+    // تحديث جداول المبيعات في المتاجر
+    document.querySelectorAll("#storesTable tbody tr").forEach(row => {{
+      const salesCell = row.cells[4];
+      if (salesCell && salesCell.getAttribute("data-sales")) {{
+        const origVal = parseFloat(salesCell.getAttribute("data-sales"));
+        const scaledVal = origVal * ratio;
+        salesCell.innerText = scaledVal.toLocaleString(undefined, {{minimumFractionDigits: 2, maximumFractionDigits: 2}});
+      }}
+    }});
+
+    document.querySelectorAll("#hierarchyTableBody tr").forEach(row => {{
+      const salesCell = row.cells[2];
+      const unitsCell = row.cells[3];
+      if (salesCell && salesCell.getAttribute("data-sales")) {{
+        const origSales = parseFloat(salesCell.getAttribute("data-sales"));
+        salesCell.innerText = (origSales * ratio).toLocaleString(undefined, {{minimumFractionDigits: 2, maximumFractionDigits: 2}});
+      }}
+      if (unitsCell && unitsCell.getAttribute("data-units")) {{
+        const origUnits = parseInt(unitsCell.getAttribute("data-units"));
+        unitsCell.innerText = Math.round(origUnits * ratio).toLocaleString();
+      }}
+    }});
   }}
 
   function resetGlobalDateFilter() {{
     document.getElementById("globalDateFrom").value = "";
     document.getElementById("globalDateTo").value = "";
+    location.reload();
   }}
 
   function switchMoversTab(type) {{
