@@ -416,7 +416,7 @@ def process_and_build():
     sales_with_target = valid_targets['sales'].sum()
     overall_ach = (sales_with_target / total_target * 100) if total_target > 0 else 0
 
-    # 2. الهيكل السلعي: المستوى الأول (Main Category)
+    # 2. الهيكل السلعي للمبيعات
     main_cat_summary = df_clean.groupby('main_category').agg(
         sales=('Actual Sales Amount', 'sum'),
         units=('Sales Quantity', 'sum')
@@ -433,12 +433,14 @@ def process_and_build():
         top_store_per_main_cat[c_name] = f"{st_name} ({best['Actual Sales Amount']:,.0f} SAR)"
     main_cat_summary['leading_store'] = main_cat_summary['main_category'].map(top_store_per_main_cat).fillna("-")
 
-    # 3. بناء هيكل مساهمة المتاجر لكل قسم رئيسي (Main Category Store-Wise Contribution Breakdown)
+    # 3. بناء خريطة مساهمة المتاجر لكل قسم (Main Category Store-Wise Contribution Breakdown)
     main_cat_store_breakdown = {}
     grouped_mc_store = df_clean.groupby(['main_category', 'Organization Code']).agg(
         sales=('Actual Sales Amount', 'sum'),
         units=('Sales Quantity', 'sum')
     ).reset_index()
+
+    store_total_sales_map = store_summary.set_index('clean_code')['sales'].to_dict()
 
     for c_name, grp in grouped_mc_store.groupby('main_category'):
         c_total = grp['sales'].sum()
@@ -447,21 +449,25 @@ def process_and_build():
         for _, s_row in grp_sorted.iterrows():
             st_sales = s_row['sales']
             st_units = s_row['units']
-            st_share = (st_sales / c_total * 100) if c_total > 0 else 0
-            st_asp = (st_sales / st_units) if st_units > 0 else 0
             code_c = get_clean_code(s_row['Organization Code'])
             full_n = STORE_MAPPING.get(code_c, {}).get('full_name', s_row['Organization Code'])
+            
+            network_cat_share = (st_sales / c_total * 100) if c_total > 0 else 0
+            st_tot_sales = store_total_sales_map.get(code_c, st_sales)
+            store_cat_mix = (st_sales / st_tot_sales * 100) if st_tot_sales > 0 else 0
+            st_asp = (st_sales / st_units) if st_units > 0 else 0
             st_list.append({
                 "store": full_n,
                 "code": code_c,
                 "sales": f"{st_sales:,.2f}",
                 "units": f"{int(st_units):,}",
-                "share": f"{st_share:.1f}%",
+                "network_share": f"{network_cat_share:.1f}%",
+                "store_mix_pct": f"{store_cat_mix:.1f}%",
                 "asp": f"{st_asp:,.2f}"
             })
         main_cat_store_breakdown[c_name] = st_list
 
-    # 4. الهيكل السلعي: المستوى الرابع (Sub-Subgroups)
+    # 4. الهيكل السلعي: المستوى الرابع
     subsub_summary = df_clean.groupby(['main_category', 'sub_subgroup']).agg(
         sales=('Actual Sales Amount', 'sum'),
         units=('Sales Quantity', 'sum')
@@ -561,7 +567,7 @@ def process_and_build():
         c_color = colors[idx % len(colors)]
         safe_c_name = html.escape(r['main_category']).replace("'", "\\'")
         main_cat_cards_html += f"""
-        <div onclick="openMainCategoryStores('{safe_c_name}')" style="background:var(--card); border:1px solid var(--border); border-top:3px solid {c_color}; border-radius:10px; padding:16px; min-width:210px; max-width:240px; flex:1; cursor:pointer;" title="Click to see store contribution breakdown in {r['main_category']}">
+        <div onclick="openMainCategoryStores('{safe_c_name}')" style="background:var(--card); border:1px solid var(--border); border-top:3px solid {c_color}; border-radius:10px; padding:16px; min-width:210px; max-width:240px; flex:1; cursor:pointer;" title="Click to see store-wise overall contribution in {r['main_category']}">
             <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px;">
                 <span style="font-size:13px; font-weight:700; color:#fff; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">{r['main_category']}</span>
                 <span style="font-size:12px; font-weight:700; color:{c_color};">{r['contribution']:.1f}%</span>
@@ -875,7 +881,7 @@ def process_and_build():
         bar_w = min(r['contribution'], 100)
         safe_c_name = html.escape(c_name).replace("'", "\\'")
         main_cat_table_rows += f"""
-        <tr onclick="openMainCategoryStores('{safe_c_name}')" style="cursor:pointer; background:rgba(56,189,248,0.03);" title="Click to see store contribution breakdown in {c_name}">
+        <tr onclick="openMainCategoryStores('{safe_c_name}')" style="cursor:pointer; background:rgba(56,189,248,0.03);" title="Click to see store-wise overall contribution in {c_name}">
             <td style="color:#64748b;font-weight:600;">{idx+1}</td>
             <td style="font-weight:800;color:#fff;font-size:14px;">
                 🏷️ {c_name} <span style="font-size:11px;color:#38bdf8;margin-left:4px;" data-translate-key="click_store_contrib">(Click to view store-wise contribution)</span>
@@ -1081,7 +1087,8 @@ def process_and_build():
               <th data-translate-key="th_subsub">Sub-Subgroup (Item Class)</th>
               <th data-translate-key="th_sales">Sales (SAR)</th>
               <th data-translate-key="th_units">Units Sold</th>
-              <th data-translate-key="th_share">Store Share</th>
+              <th data-translate-key="th_share">Store Share (%)</th>
+              <th data-translate-key="th_store_mix">Store Category Mix (%)</th>
               <th>ASP (SAR)</th>
             </tr>
           </thead>
@@ -1275,7 +1282,6 @@ def process_and_build():
   const STORE_META = {json.dumps(store_meta_map)};
   const SUBSUB_DATA = {json.dumps(subsub_json_data)};
   const MAIN_CAT_STORE_BREAKDOWN = {json.dumps(main_cat_store_breakdown)};
-  const MAIN_CAT_HTML = `{main_cat_table_rows}`;
 
   let currentLang = 'en';
 
@@ -1320,6 +1326,7 @@ def process_and_build():
       th_main_cat: "Main Category",
       th_units: "Sales Units",
       th_share: "Network Share (%)",
+      th_store_mix: "Store Category Mix (%)",
       th_leading: "Leading Store Benchmark",
       th_subsub: "Sub-Subgroup (Item Class)",
       network_total: "Network Grand Total (All Regions)",
@@ -1340,7 +1347,7 @@ def process_and_build():
       target_ach: "TARGET & ACH",
       floor_soh: "FLOOR SOH",
       display_density: "DISPLAY DENSITY",
-      click_items: "(Click to view store-wise contribution)",
+      click_store_contrib: "(Click to view store-wise contribution)",
       all_cats: "-- All Main Categories (Overview) --"
     }},
     ar: {{
@@ -1382,7 +1389,8 @@ def process_and_build():
       th_diag: "التشخيص التجاري",
       th_main_cat: "القسم الرئيسي",
       th_units: "القطع المباعة",
-      th_share: "الحصة (%)",
+      th_share: "حصة الشبكة (%)",
+      th_store_mix: "مساهمة القسم بالفرع (%)",
       th_leading: "الفرع الرائد المعياري",
       th_subsub: "التصنيف الدقيق (Sub-Subgroup)",
       network_total: "المجموع الكلي للشبكة (جميع المناطق)",
@@ -1403,7 +1411,7 @@ def process_and_build():
       target_ach: "التارجت والتحقيق",
       floor_soh: "المخزون في الفرع",
       display_density: "كثافة العرض",
-      click_items: "(انقر لعرض مساهمة المتاجر)",
+      click_store_contrib: "(انقر لعرض مساهمة المتاجر)",
       all_cats: "-- جميع الأقسام الرئيسية (نظرة عامة) --"
     }}
   }};
@@ -1443,6 +1451,7 @@ def process_and_build():
       const items = STORE_DETAILS[storeCode] || [];
       if (!meta) return;
 
+      // ضبط عناوين نافذة الفرع
       safeSetText("modal-store-name", meta.name);
       safeSetText("modal-store-code", "CODE: " + storeCode + " | " + meta.region + " (Manager: " + meta.manager + ")");
       safeSetText("modal-sales", meta.sales);
@@ -1461,6 +1470,19 @@ def process_and_build():
       safeSetText("modal-needs", meta.needs);
       safeSetText("modal-directive", meta.action);
 
+      // عناوين جدول الفرع
+      safeSetHtml("modal-table-title", "Store Multi-Tier Assortment Performance");
+      safeSetHtml("modal-table-head", `
+        <th>#</th>
+        <th>Main Category</th>
+        <th>Sub-Subgroup (Item Class)</th>
+        <th>Sales (SAR)</th>
+        <th>Units Sold</th>
+        <th>Store Share (%)</th>
+        <th>Store Category Mix (%)</th>
+        <th>ASP (SAR)</th>
+      `);
+
       let rowsHtml = "";
       items.forEach((c, idx) => {{
         rowsHtml += `
@@ -1471,12 +1493,13 @@ def process_and_build():
             <td style="color:#38bdf8; font-weight:600;">${{c.sales}}</td>
             <td>${{c.units}}</td>
             <td style="color:#f8fafc; font-weight:600;">${{c.share}}</td>
+            <td style="color:#10b981; font-weight:700;">${{c.store_mix_pct || '-'}}</td>
             <td style="color:#f59e0b;">${{c.asp}}</td>
           </tr>
         `;
       }});
 
-      safeSetHtml("modal-cats-body", rowsHtml || "<tr><td colspan='7' style='text-align:center;'>No category data available</td></tr>");
+      safeSetHtml("modal-cats-body", rowsHtml || "<tr><td colspan='8' style='text-align:center;'>No category data available</td></tr>");
       
       const modal = document.getElementById("store-modal");
       if (modal) modal.style.display = "flex";
@@ -1485,12 +1508,12 @@ def process_and_build():
     }}
   }}
 
-  // فتح نافذة مساهمة المتاجر في القسم (Category Contribution Store-Ways)
+  // نافذة مساهمة المتاجر في القسم (Store-Wise Category Contribution) مع ضبط عناوين صحيحة 100%
   function openMainCategoryStores(catName) {{
     try {{
       const stores = MAIN_CAT_STORE_BREAKDOWN[catName] || [];
       safeSetText("modal-store-name", "Category Store-Wise Contribution: " + catName);
-      safeSetText("modal-store-code", "TOTAL NETWORK BREAKDOWN");
+      safeSetText("modal-store-code", "OVERALL NETWORK PERFORMANCE");
       safeSetText("modal-sales", "-");
       safeSetText("modal-ly", "-");
       safeSetHtml("modal-yoy", "-");
@@ -1500,9 +1523,21 @@ def process_and_build():
       safeSetText("modal-atv", "-");
       safeSetText("modal-upt", "-");
       safeSetText("modal-asp", "-");
-      safeSetText("modal-diag", "Showing store-by-store sales volume, units sold, and contribution percentage (%) for " + catName);
-      safeSetText("modal-needs", "Compare store penetration and identify underperforming branches in this category.");
-      safeSetText("modal-directive", "Reallocate stock and execute Inter-Store Transfers (IST) based on store contribution gaps.");
+      safeSetText("modal-diag", "Store-by-store sales volume, units sold, network share (%), and store category mix (%) for " + catName);
+      safeSetText("modal-needs", "Compare store penetration and identify high/low contributing branches in this category.");
+      safeSetText("modal-directive", "Execute stock rebalancing and Inter-Store Transfers (IST) based on contribution gaps.");
+
+      // تصحيح عناوين الجدول ليطابق المتاجر تماماً
+      safeSetHtml("modal-table-title", "Store Contribution Breakdown for " + catName);
+      safeSetHtml("modal-table-head", `
+        <th>#</th>
+        <th>Store Code</th>
+        <th colspan="2">Full Store Name</th>
+        <th>Sales Revenue (SAR)</th>
+        <th>Units Sold</th>
+        <th>Network Share (%)</th>
+        <th>Store Category Mix (%)</th>
+      `);
 
       let rowsHtml = "";
       stores.forEach((s, idx) => {{
@@ -1513,12 +1548,13 @@ def process_and_build():
             <td style="font-weight:700; color:#fff;" colspan="2">${{s.store}}</td>
             <td style="color:#38bdf8; font-weight:700;">${{s.sales}}</td>
             <td>${{s.units}}</td>
-            <td style="color:#10b981; font-weight:700;">${{s.share}}</td>
+            <td style="color:#10b981; font-weight:700;">${{s.network_share}}</td>
+            <td style="color:#f59e0b; font-weight:700;">${{s.store_mix_pct}}</td>
           </tr>
         `;
       }});
 
-      safeSetHtml("modal-cats-body", rowsHtml || "<tr><td colspan='7' style='text-align:center;'>No store contribution data available</td></tr>");
+      safeSetHtml("modal-cats-body", rowsHtml || "<tr><td colspan='8' style='text-align:center;'>No store contribution data available</td></tr>");
       
       const modal = document.getElementById("store-modal");
       if (modal) modal.style.display = "flex";
@@ -1532,15 +1568,10 @@ def process_and_build():
   }}
 
   function onCategoryFilterChange(catName) {{
-    const thead = document.getElementById("hierarchyTableHead");
-    const tbody = document.getElementById("hierarchyTableBody");
-    const title = document.getElementById("tableHierarchyTitle");
-
     if (catName === "ALL") {{
       location.reload();
       return;
     }}
-
     openMainCategoryStores(catName);
   }}
 
