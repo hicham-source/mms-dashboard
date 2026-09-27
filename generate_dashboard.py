@@ -8,20 +8,65 @@ import anthropic
 
 REPORTS_DIR = "./reports"
 
-def get_latest_sales_file():
+def identify_files():
     files = glob.glob(os.path.join(REPORTS_DIR, "*.xlsx"))
-    files = [f for f in files if not os.path.basename(f).startswith("Summary_") 
-             and not os.path.basename(f).startswith("Sep_Target") 
-             and not os.path.basename(f).startswith("~$")]
-    if not files:
-        raise FileNotFoundError(f"No sales excel file found in {REPORTS_DIR}")
-    return max(files, key=os.path.getctime)
+    files = [f for f in files if not os.path.basename(f).startswith("~$") and not os.path.basename(f).startswith("Summary_")]
+    
+    sales_file = None
+    soh_file = None
+    target_file = None
 
-def load_september_targets(target_file="Sep_Target.xlsx"):
-    possible_paths = [target_file, os.path.join(REPORTS_DIR, target_file)]
-    target_path = next((p for p in possible_paths if os.path.exists(p)), None)
-    if not target_path:
+    for f in sorted(files, key=os.path.getctime, reverse=True):
+        fname = os.path.basename(f).lower()
+        if "target" in fname or "sep_target" in fname:
+            if not target_file:
+                target_file = f
+            continue
+        if "soh" in fname or "stock" in fname:
+            if not soh_file:
+                soh_file = f
+            continue
+
+    for f in sorted(files, key=os.path.getctime, reverse=True):
+        if f == target_file or f == soh_file:
+            continue
+        try:
+            xl = pd.ExcelFile(f)
+            # فحص ورقات العمل
+            for s in xl.sheet_names:
+                sample_df = pd.read_excel(f, sheet_name=s, nrows=3)
+                cols_str = " ".join([str(c).lower() for c in sample_df.columns])
+                if "item stock report" in cols_str or "avail_stock" in cols_str or "current_stock" in cols_str:
+                    if not soh_file:
+                        soh_file = f
+                    break
+                sample_df2 = pd.read_excel(f, sheet_name=s, skiprows=1, nrows=3)
+                cols_str2 = " ".join([str(c).lower() for c in sample_df2.columns])
+                if "receipt number" in cols_str2 or "actual sales amount" in cols_str2:
+                    if not sales_file:
+                        sales_file = f
+                    break
+        except Exception:
+            continue
+
+    if not sales_file:
+        candidates = [f for f in files if f != target_file and f != soh_file]
+        if candidates:
+            sales_file = max(candidates, key=os.path.getctime)
+        else:
+            raise FileNotFoundError("Sales report file not found in ./reports")
+
+    return sales_file, soh_file, target_file
+
+def load_september_targets(target_path):
+    if not target_path or not os.path.exists(target_path):
+        for p in ["Sep_Target.xlsx", os.path.join(REPORTS_DIR, "Sep_Target.xlsx")]:
+            if os.path.exists(p):
+                target_path = p
+                break
+    if not target_path or not os.path.exists(target_path):
         return {}
+
     try:
         df_t = pd.read_excel(target_path)
         df_t.columns = [str(c).strip() for c in df_t.columns]
@@ -32,8 +77,8 @@ def load_september_targets(target_file="Sep_Target.xlsx"):
         df_t = df_t[df_t[sep_col].notna() & (df_t[sep_col] > 0)].copy()
 
         def extract_code(val):
-            m = re.search(r'\b\d{3,8}\b', str(val))
-            return m.group(0) if m else str(val).strip()
+            m = re.search(r'\b[A-Za-z0-9]{3,8}\b', str(val))
+            return m.group(0).upper() if m else str(val).strip().upper()
 
         df_t['clean_code'] = df_t[store_col].apply(extract_code)
         return dict(zip(df_t['clean_code'], df_t[sep_col]))
@@ -41,38 +86,88 @@ def load_september_targets(target_file="Sep_Target.xlsx"):
         print(f"Target load error: {e}")
         return {}
 
-def generate_claude_insights(store_summary, cat_summary, total_sales, total_target, overall_ach, network_atv, network_upt, network_asp):
+def load_soh_data(soh_path):
+    if not soh_path or not os.path.exists(soh_path):
+        print("[!] No SOH file provided or found.")
+        return {}
+    
+    print(f"[*] Processing SOH file: {soh_path}")
+    try:
+        xl = pd.ExcelFile(soh_path)
+        sheet_to_use = "Sheet1" if "Sheet1" in xl.sheet_names else xl.sheet_names[0]
+        
+        # محاولة القراءة مع skiprows=1
+        df_soh = pd.read_excel(soh_path, sheet_name=sheet_to_use, skiprows=1)
+        df_soh.columns = [c.replace('\u200c', '').replace('\ufeff', '').strip() for c in df_soh.columns]
+        
+        if "avail_stock" not in [c.lower() for c in df_soh.columns] and "current_stock" not in [c.lower() for c in df_soh.columns]:
+            # تجربة بدون skiprows
+            df_soh = pd.read_excel(soh_path, sheet_name=sheet_to_use)
+            df_soh.columns = [c.replace('\u200c', '').replace('\ufeff', '').strip() for c in df_soh.columns]
+
+        code_col = next((c for c in df_soh.columns if c.lower() in ["org code", "organization code", "org_code", "store code"]), None)
+        name_col = next((c for c in df_soh.columns if "org" in c.lower() and "name" in c.lower()), None)
+        stock_col = next((c for c in df_soh.columns if c.lower() in ["avail_stock", "current_stock"]), None)
+        price_col = next((c for c in df_soh.columns if "retail_price" in c.lower() or "price" in c.lower()), None)
+
+        if not code_col or not stock_col:
+            print(f"[!] Required columns missing in SOH. Found: {list(df_soh.columns[:6])}")
+            return {}
+
+        df_soh = df_soh[df_soh[code_col].notna()].copy()
+        df_soh[stock_col] = pd.to_numeric(df_soh[stock_col], errors='coerce').fillna(0)
+        
+        if price_col:
+            df_soh[price_col] = pd.to_numeric(df_soh[price_col], errors='coerce').fillna(0)
+            df_soh['stock_val'] = df_soh[stock_col] * df_soh[price_col]
+        else:
+            df_soh['stock_val'] = 0
+
+        grouped = df_soh.groupby(code_col).agg(
+            soh_units=(stock_col, 'sum'),
+            soh_val=('stock_val', 'sum')
+        ).reset_index()
+
+        def clean_c(v):
+            m = re.search(r'\b[A-Za-z0-9]{3,8}\b', str(v))
+            return m.group(0).upper() if m else str(v).strip().upper()
+
+        grouped['clean_code'] = grouped[code_col].apply(clean_c)
+        return grouped.set_index('clean_code').to_dict(orient='index')
+    except Exception as e:
+        print(f"[!] Error processing SOH file: {e}")
+        return {}
+
+def generate_claude_insights(store_summary, cat_summary, total_sales, total_target, overall_ach, network_atv, network_upt, network_asp, total_soh_units):
     api_key = os.getenv("ANTHROPIC_API_KEY")
     if not api_key:
         print("[!] Warning: ANTHROPIC_API_KEY not found in environment.")
         return {
-            "critical": "Category skew is evident across low ATV stores. Realign front gondolas towards higher ASP lifestyle items.",
-            "attention": f"Network ASP is {network_asp:.2f} SAR with primary category reliance; monitor cross-category basket penetration.",
-            "opportunity": "Top performing categories should receive priority stock replenishment across regional branch clusters."
+            "critical": "Severe stock-to-sales mismatch detected. Underperforming stores are holding excessive inventory while top branches face stockout risks.",
+            "attention": f"Network SOH stands at {total_soh_units:,.0f} units; activate immediate Inter-Store Transfers (IST) from high-WOS to low-WOS locations.",
+            "opportunity": "High-velocity branches require priority warehouse replenishment to protect target achievement run-rate."
         }
 
-    top_stores = store_summary.head(3)[['Organization Name', 'sales', 'ach_pct', 'atv', 'upt', 'asp']].to_dict(orient="records")
-    bottom_stores = store_summary.tail(3)[['Organization Name', 'sales', 'ach_pct', 'atv', 'upt', 'asp']].to_dict(orient="records")
+    top_stores = store_summary.head(3)[['Organization Name', 'sales', 'ach_pct', 'atv', 'upt', 'asp', 'wos']].to_dict(orient="records")
+    bottom_stores = store_summary.tail(3)[['Organization Name', 'sales', 'ach_pct', 'atv', 'upt', 'asp', 'wos']].to_dict(orient="records")
     top_categories = cat_summary.head(5)[['Category Name', 'sales', 'contribution']].to_dict(orient="records")
 
     prompt = f"""
-    You are a Retail Operations Executive. Based on the store and product mix performance below:
+    You are a Retail Operations Executive evaluating sales vs SOH (Stock On Hand).
     - Total Sales: {total_sales:,.2f} SAR
     - Total Target: {total_target:,.0f} SAR
     - Network Achievement: {overall_ach:.1f}%
-    - Network ATV: {network_atv:.2f} SAR
-    - Network UPT: {network_upt:.2f}
-    - Network ASP: {network_asp:.2f} SAR
+    - Total SOH Units: {total_soh_units:,.0f}
+    - Top Stores with Weeks of Supply (WOS): {top_stores}
+    - Low Performing Stores with WOS: {bottom_stores}
     - Top Categories: {top_categories}
-    - Top Stores: {top_stores}
-    - Low Performing Stores: {bottom_stores}
 
-    Provide 3 punchy, professional, and actionable business insights (1 sentence each):
-    1. Critical Issues: direct operational problem or underperformer category/store risk.
-    2. Attention Required: category penetration, basket building, or traffic conversion warning.
-    3. Opportunities: merchandising or replenishment leverage for top categories and stores.
+    Provide 3 sharp, operational diagnostics with direct solutions:
+    1. Critical Issues: stockout risks at high-run-rate branches or heavy capital tied up.
+    2. Attention Required: Inter-Store Transfers (IST) or merchandising alignment.
+    3. Opportunities: replenishment leverage on top selling categories.
 
-    Respond ONLY with valid JSON in this exact structure:
+    Respond ONLY with valid JSON:
     {{
         "critical": "...",
         "attention": "...",
@@ -96,9 +191,9 @@ def generate_claude_insights(store_summary, cat_summary, total_sales, total_targ
     except Exception as e:
         print(f"[!] Claude API error: {e}")
         return {
-            "critical": "Category imbalances are impacting underperforming stores; enforce minimum core category stock depth.",
-            "attention": f"Network ASP is {network_asp:.2f} SAR; push multi-item bundles across leading product categories.",
-            "opportunity": "Replicate high-performing category visual merchandising standards across all retail branches."
+            "critical": "Stock-to-sales imbalance threatens revenue; low-WOS stores need immediate inventory buffer.",
+            "attention": "Rebalance branch stock depth via Inter-Store Transfers (IST) rather than waiting for warehouse cycles.",
+            "opportunity": "Maintain continuous stock availability on top volume driver categories."
         }
 
 def build_svg_bar_chart(chart_stores):
@@ -153,11 +248,15 @@ def build_svg_bar_chart(chart_stores):
     return f"""<svg viewBox="0 0 {svg_w} {svg_h}" style="width:100%; height:auto; display:block;">{grid_lines}{bars_svg}</svg>"""
 
 def process_and_build():
-    file_path = get_latest_sales_file()
-    print(f"[*] Reading sales file: {file_path}")
-    targets_map = load_september_targets("Sep_Target.xlsx")
+    sales_file, soh_file, target_file = identify_files()
+    print(f"[*] Sales Report: {sales_file}")
+    print(f"[*] SOH File:     {soh_file}")
+    print(f"[*] Target File:  {target_file}")
 
-    df = pd.read_excel(file_path, skiprows=1)
+    targets_map = load_september_targets(target_file)
+    soh_map = load_soh_data(soh_file)
+
+    df = pd.read_excel(sales_file, skiprows=1)
     df_clean = df.iloc[:-1].copy()
     df_clean.columns = [c.replace('\u200c', '').replace('\ufeff', '').strip() for c in df_clean.columns]
 
@@ -169,14 +268,14 @@ def process_and_build():
         if col in df_clean.columns:
             df_clean[col] = pd.to_numeric(df_clean[col], errors='coerce').fillna(0)
 
-    cat_col = 'Category Name' if 'Category Name' in df_clean.columns else ('product_category' if 'product_category' in df_clean.columns else None)
+    cat_col = 'Category Name' if 'Category Name' in df_clean.columns else ('product_category' if 'product_category' in df_clean.columns else ('category' if 'category' in df_clean.columns else None))
     if cat_col:
         df_clean[cat_col] = df_clean[cat_col].fillna("Other").astype(str).str.strip()
     else:
         df_clean['Category Name'] = "General"
         cat_col = 'Category Name'
 
-    # 1. إجماليات المتاجر
+    # إجماليات المتاجر
     store_summary = df_clean.groupby(['Organization Code', 'Organization Name']).agg(
         sales=('Actual Sales Amount', 'sum'),
         units=('Sales Quantity', 'sum'),
@@ -197,7 +296,103 @@ def process_and_build():
     store_summary['share'] = ((store_summary['sales'] / total_sales) * 100).round(2)
     store_summary = store_summary.sort_values(by='sales', ascending=False).reset_index(drop=True)
 
-    # 2. إجماليات الأصناف
+    # ربط المخزون SOH
+    def match_soh(row):
+        code_str = str(row['Organization Code']).strip()
+        m = re.search(r'\b[A-Za-z0-9]{3,8}\b', code_str)
+        c_code = m.group(0).upper() if m else code_str.upper()
+        if c_code in soh_map:
+            return soh_map[c_code]
+        for k, v in soh_map.items():
+            if k in c_code or c_code in k:
+                return v
+        return {"soh_units": 0, "soh_val": 0}
+
+    soh_matched = store_summary.apply(match_soh, axis=1)
+    store_summary['soh_units'] = [x['soh_units'] for x in soh_matched]
+    store_summary['soh_val'] = [x['soh_val'] for x in soh_matched]
+    total_soh_units = store_summary['soh_units'].sum()
+    total_soh_val = store_summary['soh_val'].sum()
+
+    weekly_units = store_summary['units'] / 4.3
+    store_summary['wos'] = (store_summary['soh_units'] / weekly_units.replace(0, np.nan)).fillna(0).round(1)
+
+    # مطابقة الأهداف
+    def match_target(row):
+        code_str = str(row['Organization Code']).strip().upper()
+        name_str = str(row['Organization Name']).strip().upper()
+        for k, v in targets_map.items():
+            if str(k).upper() in code_str or str(k).upper() in name_str:
+                return v
+        return None
+
+    store_summary['target'] = store_summary.apply(match_target, axis=1)
+    store_summary['ach_pct'] = store_summary.apply(
+        lambda r: (r['sales'] / r['target'] * 100) if pd.notna(r['target']) and r['target'] > 0 else None,
+        axis=1
+    )
+
+    valid_targets = store_summary[store_summary['target'].notna()]
+    total_target = valid_targets['target'].sum()
+    sales_with_target = valid_targets['sales'].sum()
+    overall_ach = (sales_with_target / total_target * 100) if total_target > 0 else 0
+
+    # تشخيص الفروع
+    def diagnose_store(row):
+        ach = row['ach_pct'] if pd.notna(row['ach_pct']) else 0
+        wos = row['wos']
+        
+        if row['soh_units'] == 0:
+            return {
+                "status": "No SOH Data",
+                "diag": "Inventory record not found in SOH file.",
+                "action": "Verify Org Code in SOH export.",
+                "color": "#64748b"
+            }
+        
+        if wos < 2.5 and ach >= 80:
+            return {
+                "status": "Stockout Risk",
+                "diag": f"High demand with critical stock cover ({wos} weeks). Risk of lost sales.",
+                "action": "Prioritize emergency warehouse replenishment immediately.",
+                "color": "#ef4444"
+            }
+        elif wos > 8.0 and ach < 70:
+            return {
+                "status": "Heavy Overstock",
+                "diag": f"Sluggish turnover coupled with excess inventory ({wos} weeks).",
+                "action": "Initiate Inter-Store Transfers (IST) to top branches & execute basket promos.",
+                "color": "#f59e0b"
+            }
+        elif wos > 5.0 and ach >= 90:
+            return {
+                "status": "High Performer",
+                "diag": f"Robust sales achievement ({ach:.1f}%) supported by healthy stock depth ({wos} weeks).",
+                "action": "Maintain core visual merchandising and steady restocking rhythm.",
+                "color": "#10b981"
+            }
+        elif ach < 70 and 2.5 <= wos <= 6.0:
+            return {
+                "status": "Conversion Bottleneck",
+                "diag": f"Adequate stock cover ({wos} weeks) but target is lagging ({ach:.1f}%).",
+                "action": "Focus on cashier upselling and customer conversion rather than inventory.",
+                "color": "#eab308"
+            }
+        else:
+            return {
+                "status": "Balanced",
+                "diag": f"Stock depth ({wos} weeks) matches current turnover pace.",
+                "action": "Standard replenishment schedule.",
+                "color": "#38bdf8"
+            }
+
+    diagnostics = store_summary.apply(diagnose_store, axis=1)
+    store_summary['diag_status'] = [d['status'] for d in diagnostics]
+    store_summary['diag_text'] = [d['diag'] for d in diagnostics]
+    store_summary['diag_action'] = [d['action'] for d in diagnostics]
+    store_summary['diag_color'] = [d['color'] for d in diagnostics]
+
+    # إجماليات الأصناف
     cat_summary = df_clean.groupby(cat_col).agg(
         sales=('Actual Sales Amount', 'sum'),
         units=('Sales Quantity', 'sum')
@@ -205,7 +400,6 @@ def process_and_build():
     cat_summary['contribution'] = ((cat_summary['sales'] / total_sales) * 100).round(2)
     cat_summary['asp'] = (cat_summary['sales'] / cat_summary['units'].replace(0, np.nan)).fillna(0).round(2)
 
-    # 3. بناء تفاصيل كل تصنيف حسب كل متجر (Category-to-Stores Breakdown for Click/Modal)
     cat_store_breakdown = {}
     grouped_cat_store = df_clean.groupby([cat_col, 'Organization Name', 'Organization Code']).agg(
         sales=('Actual Sales Amount', 'sum'),
@@ -231,7 +425,6 @@ def process_and_build():
             })
         cat_store_breakdown[c_name] = st_list
 
-    # أفضل متجر لكل تصنيف
     top_store_per_cat = {}
     for c_name, st_list in cat_store_breakdown.items():
         if st_list:
@@ -239,7 +432,7 @@ def process_and_build():
     cat_summary['leading_store'] = cat_summary['Category Name'].map(top_store_per_cat).fillna("-")
     cat_summary = cat_summary.sort_values(by='sales', ascending=False).reset_index(drop=True)
 
-    # 4. بناء تفاصيل كل متجر حسب كل تصنيف (Store-to-Categories Breakdown)
+    # تفاصيل المتجر لكل تصنيف
     store_category_details = {}
     grouped_store_cat = df_clean.groupby(['Organization Code', cat_col]).agg(
         cat_sales=('Actual Sales Amount', 'sum'),
@@ -264,39 +457,18 @@ def process_and_build():
             })
         store_category_details[str(code)] = cats_list
 
-    # أعلى تصنيف لكل متجر
     top_cat_per_store = {}
     for code, cats in store_category_details.items():
         if cats:
             top_cat_per_store[code] = f"{cats[0]['category']} ({cats[0]['share']})"
     store_summary['top_category'] = store_summary['Organization Code'].astype(str).map(top_cat_per_store).fillna("-")
 
-    # مطابقة الأهداف
-    def match_target(row):
-        code_str = str(row['Organization Code']).strip()
-        name_str = str(row['Organization Name']).strip()
-        for k, v in targets_map.items():
-            if str(k) in code_str or str(k) in name_str:
-                return v
-        return None
-
-    store_summary['target'] = store_summary.apply(match_target, axis=1)
-    store_summary['ach_pct'] = store_summary.apply(
-        lambda r: (r['sales'] / r['target'] * 100) if pd.notna(r['target']) and r['target'] > 0 else None,
-        axis=1
-    )
-
-    valid_targets = store_summary[store_summary['target'].notna()]
-    total_target = valid_targets['target'].sum()
-    sales_with_target = valid_targets['sales'].sum()
-    overall_ach = (sales_with_target / total_target * 100) if total_target > 0 else 0
-
-    insights = generate_claude_insights(store_summary, cat_summary, total_sales, total_target, overall_ach, network_atv, network_upt, network_asp)
+    insights = generate_claude_insights(store_summary, cat_summary, total_sales, total_target, overall_ach, network_atv, network_upt, network_asp, total_soh_units)
 
     chart_stores = store_summary.head(8)
     chart_svg_markup = build_svg_bar_chart(chart_stores)
 
-    # شريط بطاقات الأصناف
+    # بطاقات الأصناف
     colors = ['#38bdf8', '#818cf8', '#a855f7', '#ec4899', '#f59e0b', '#10b981', '#06b6d4', '#e11d48', '#84cc16']
     cat_cards_html = ""
     for idx, r in cat_summary.iterrows():
@@ -318,9 +490,10 @@ def process_and_build():
         </div>
         """
 
-    # جدول الفروع
     store_meta_map = {}
     store_table_rows = ""
+    action_cards_html = ""
+
     for idx, row in store_summary.iterrows():
         st_code = str(row['Organization Code'])
         st_name = str(row['Organization Name'])
@@ -331,13 +504,10 @@ def process_and_build():
             bar_w = min(ach_val, 100)
             if ach_val >= 100:
                 color = "#10b981"
-                status_badge = '<span class="badge badge-success">Target Met</span>'
             elif ach_val >= 80:
                 color = "#f59e0b"
-                status_badge = '<span class="badge badge-warning">On Track</span>'
             else:
                 color = "#ef4444"
-                status_badge = '<span class="badge badge-danger">Under Target</span>'
 
             ach_str = f"""
             <div style="display:flex;align-items:center;gap:8px;">
@@ -350,22 +520,49 @@ def process_and_build():
         else:
             target_str = "-"
             ach_str = '<span style="color:#64748b;">-</span>'
-            status_badge = '<span class="badge" style="background:#1e293b;color:#94a3b8;">Normal</span>'
+
+        diag_badge = f'<span class="badge" style="background:{row["diag_color"]}22; color:{row["diag_color"]}; border:1px solid {row["diag_color"]}66;">{row["diag_status"]}</span>'
 
         store_meta_map[st_code] = {
             "name": st_name,
             "sales": f"{row['sales']:,.2f} SAR",
-            "target": f"{target_str} SAR" if target_str != "-" else "No Target Assigned",
+            "target": f"{target_str} SAR" if target_str != "-" else "No Target",
             "ach": f"{row['ach_pct']:.1f}%" if pd.notna(row['ach_pct']) else "-",
             "share": f"{row['share']:.2f}%",
             "txns": f"{int(row['txns']):,}",
             "atv": f"{row['atv']:,.2f} SAR",
             "upt": f"{row['upt']:.2f}",
-            "asp": f"{row['asp']:,.2f} SAR"
+            "asp": f"{row['asp']:,.2f} SAR",
+            "soh_units": f"{int(row['soh_units']):,} Pcs",
+            "soh_val": f"{row['soh_val']:,.0f} SAR",
+            "wos": f"{row['wos']} Wks",
+            "problem": row['diag_text'],
+            "action": row['diag_action']
         }
 
+        if row['diag_status'] in ["Stockout Risk", "Heavy Overstock", "Conversion Bottleneck"]:
+            action_cards_html += f"""
+            <div style="background:var(--card); border:1px solid var(--border); border-left:4px solid {row['diag_color']}; border-radius:10px; padding:16px;">
+                <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
+                    <span style="font-weight:700; color:#fff; font-size:14px;">{st_name} ({st_code})</span>
+                    {diag_badge}
+                </div>
+                <div style="font-size:12px; color:#cbd5e1; margin-bottom:8px;">
+                    <strong>🔍 Problem:</strong> {row['diag_text']}
+                </div>
+                <div style="font-size:12px; color:#38bdf8; background:#090d16; padding:8px 12px; border-radius:6px; border:1px solid #1e293b;">
+                    <strong>⚡ Action Required:</strong> {row['diag_action']}
+                </div>
+                <div style="display:flex; gap:16px; margin-top:10px; font-size:11px; color:#94a3b8;">
+                    <span>SOH: <strong style="color:#fff;">{int(row['soh_units']):,} Pcs</strong></span>
+                    <span>WOS: <strong style="color:{row['diag_color']};">{row['wos']} Wks</strong></span>
+                    <span>Ach: <strong style="color:#fff;">{row['ach_pct']:.1f}%</strong></span>
+                </div>
+            </div>
+            """
+
         store_table_rows += f"""
-        <tr onclick="openStoreDetails('{st_code}')" style="cursor:pointer;" title="Click to view all categories in {st_name}">
+        <tr onclick="openStoreDetails('{st_code}')" style="cursor:pointer;" title="Click to view deep-dive analytics & action plan">
             <td style="color:#64748b;font-weight:600;">{idx+1}</td>
             <td style="color:#38bdf8;font-weight:600;">{st_code}</td>
             <td style="font-weight:600;color:#fff;">
@@ -373,18 +570,16 @@ def process_and_build():
             </td>
             <td style="font-weight:700;color:#f8fafc;">{row['sales']:,.2f}</td>
             <td style="color:#94a3b8;">{target_str}</td>
-            <td style="min-width:140px;">{ach_str}</td>
-            <td>{row['share']:.2f}%</td>
-            <td style="color:#cbd5e1;font-weight:500;">{row['top_category']}</td>
-            <td>{int(row['txns']):,}</td>
+            <td style="min-width:130px;">{ach_str}</td>
+            <td style="font-weight:700;color:#38bdf8;">{int(row['soh_units']):,}</td>
+            <td style="font-weight:700;color:{row['diag_color']};">{row['wos']} Wks</td>
+            <td>{diag_badge}</td>
             <td>{row['atv']:,.2f}</td>
             <td>{row['upt']:,.2f}</td>
             <td style="color:#38bdf8;font-weight:600;">{row['asp']:,.2f}</td>
-            <td>{status_badge}</td>
         </tr>
         """
 
-    # جدول جميع الأصناف مع تفعيل النقر التفاعلي لعرض المتاجر ومساهمتها
     cat_table_rows = ""
     for idx, r in cat_summary.iterrows():
         c_name = r['Category Name']
@@ -410,7 +605,6 @@ def process_and_build():
         </tr>
         """
 
-    # خيارات الـ Dropdown لاختيار أي متجر
     store_options_html = '<option value="ALL">-- Select Store to filter categories --</option>'
     for _, s in store_summary.iterrows():
         store_options_html += f'<option value="{s["Organization Code"]}">{s["Organization Name"]} ({s["Organization Code"]})</option>'
@@ -420,7 +614,7 @@ def process_and_build():
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>MMS Executive KPI Dashboard</title>
+    <title>MMS Executive KPI & SOH Diagnostic Dashboard</title>
     <style>
         :root {{
             --bg: #090d16;
@@ -451,11 +645,11 @@ def process_and_build():
         .insight-title {{ font-size: 13px; font-weight: 700; margin-bottom: 6px; }}
         .insight-body {{ font-size: 13px; color: var(--text-muted); line-height: 1.5; }}
 
-        .kpi-grid {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 16px; margin-bottom: 24px; }}
-        .kpi-card {{ background: var(--card); border: 1px solid var(--border); border-radius: 10px; padding: 18px; }}
-        .kpi-title {{ font-size: 12px; color: var(--text-muted); font-weight: 600; text-transform: uppercase; margin-bottom: 6px; }}
-        .kpi-value {{ font-size: 24px; font-weight: 700; color: #fff; }}
-        .kpi-unit {{ font-size: 13px; color: var(--text-muted); font-weight: 400; }}
+        .kpi-grid {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 14px; margin-bottom: 24px; }}
+        .kpi-card {{ background: var(--card); border: 1px solid var(--border); border-radius: 10px; padding: 16px; }}
+        .kpi-title {{ font-size: 11px; color: var(--text-muted); font-weight: 600; text-transform: uppercase; margin-bottom: 6px; }}
+        .kpi-value {{ font-size: 22px; font-weight: 700; color: #fff; }}
+        .kpi-unit {{ font-size: 12px; color: var(--text-muted); font-weight: 400; }}
 
         .chart-container {{ background: var(--card); border: 1px solid var(--border); border-radius: 10px; padding: 22px; margin-bottom: 24px; }}
 
@@ -470,18 +664,13 @@ def process_and_build():
         tr:hover td {{ background: var(--card-hover); }}
 
         .badge {{ padding: 4px 8px; border-radius: 4px; font-size: 11px; font-weight: 600; }}
-        .badge-success {{ background: rgba(16, 185, 129, 0.15); color: #10b981; }}
-        .badge-warning {{ background: rgba(245, 158, 11, 0.15); color: #f59e0b; }}
-        .badge-danger {{ background: rgba(239, 68, 68, 0.15); color: #ef4444; }}
-
         .cards-scroll-container {{ display: flex; gap: 14px; overflow-x: auto; padding-bottom: 12px; margin-bottom: 24px; scroll-behavior: smooth; }}
         .cards-scroll-container::-webkit-scrollbar {{ height: 6px; }}
         .cards-scroll-container::-webkit-scrollbar-track {{ background: #090d16; }}
         .cards-scroll-container::-webkit-scrollbar-thumb {{ background: #1e293b; border-radius: 3px; }}
 
-        /* Popup Modals */
         .app-modal {{ position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(9, 13, 22, 0.85); backdrop-filter: blur(5px); z-index: 99999; display: none; align-items: center; justify-content: center; }}
-        .modal-content {{ background: #131b2e; border: 1px solid #1e293b; border-radius: 14px; width: 90%; max-width: 900px; max-height: 88vh; display: flex; flex-direction: column; overflow: hidden; box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.7); }}
+        .modal-content {{ background: #131b2e; border: 1px solid #1e293b; border-radius: 14px; width: 90%; max-width: 950px; max-height: 88vh; display: flex; flex-direction: column; overflow: hidden; box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.7); }}
         .modal-header {{ padding: 20px 24px; border-bottom: 1px solid #1e293b; display: flex; justify-content: space-between; align-items: center; }}
         .modal-body {{ padding: 24px; overflow-y: auto; }}
         .close-btn {{ background: transparent; border: none; color: #94a3b8; font-size: 24px; cursor: pointer; line-height: 1; }}
@@ -500,17 +689,25 @@ def process_and_build():
   </div>
 </div>
 
-<!-- Modal 1: تفاصيل المتجر (Store Modal) -->
 <div id="store-modal" class="app-modal">
   <div class="modal-content">
     <div class="modal-header">
       <div>
-        <h2 id="modal-store-name" style="margin:0; font-size:18px; color:#fff;">Store Deep-Dive</h2>
+        <h2 id="modal-store-name" style="margin:0; font-size:18px; color:#fff;">Store Deep-Dive & SOH Diagnostics</h2>
         <span id="modal-store-code" style="color:#38bdf8; font-size:12px; font-weight:600;">CODE</span>
       </div>
       <button class="close-btn" onclick="closeModal('store-modal')">&times;</button>
     </div>
     <div class="modal-body">
+      <div style="background:#090d16; border:1px solid #1e293b; border-radius:10px; padding:16px; margin-bottom:20px;">
+        <div style="font-size:12px; font-weight:700; color:#cbd5e1; margin-bottom:6px;">
+          <span style="color:#ef4444;">● Root-Cause Diagnostic:</span> <span id="modal-problem" style="color:#f8fafc; font-weight:500;">-</span>
+        </div>
+        <div style="font-size:12px; font-weight:700; color:#38bdf8;">
+          <span>⚡ Corrective Action Plan:</span> <span id="modal-action" style="color:#38bdf8; font-weight:500;">-</span>
+        </div>
+      </div>
+
       <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(130px, 1fr)); gap:12px; margin-bottom:20px;">
         <div style="background:#090d16; padding:12px; border-radius:8px; border:1px solid #1e293b;">
           <div style="font-size:11px; color:#94a3b8;">SALES</div>
@@ -525,18 +722,19 @@ def process_and_build():
           <div id="modal-ach" style="font-size:16px; font-weight:700; color:#10b981;">-</div>
         </div>
         <div style="background:#090d16; padding:12px; border-radius:8px; border:1px solid #1e293b;">
-          <div style="font-size:11px; color:#94a3b8;">ATV</div>
-          <div id="modal-atv" style="font-size:16px; font-weight:700; color:#38bdf8;">-</div>
+          <div style="font-size:11px; color:#94a3b8;">SOH UNITS</div>
+          <div id="modal-soh-units" style="font-size:16px; font-weight:700; color:#38bdf8;">-</div>
         </div>
         <div style="background:#090d16; padding:12px; border-radius:8px; border:1px solid #1e293b;">
-          <div style="font-size:11px; color:#94a3b8;">UPT</div>
-          <div id="modal-upt" style="font-size:16px; font-weight:700; color:#f8fafc;">-</div>
+          <div style="font-size:11px; color:#94a3b8;">WOS (COVER)</div>
+          <div id="modal-wos" style="font-size:16px; font-weight:700; color:#f59e0b;">-</div>
         </div>
         <div style="background:#090d16; padding:12px; border-radius:8px; border:1px solid #1e293b;">
           <div style="font-size:11px; color:#94a3b8;">ASP</div>
-          <div id="modal-asp" style="font-size:16px; font-weight:700; color:#f59e0b;">-</div>
+          <div id="modal-asp" style="font-size:16px; font-weight:700; color:#fff;">-</div>
         </div>
       </div>
+
       <div style="margin-bottom:12px; font-size:13px; font-weight:700; text-transform:uppercase; color:#94a3b8;">Store Category Breakdown</div>
       <div style="border:1px solid #1e293b; border-radius:8px; overflow:hidden;">
         <table>
@@ -557,7 +755,6 @@ def process_and_build():
   </div>
 </div>
 
-<!-- Modal 2: تفاصيل الصنف حسب المتاجر (Category Store Breakdown Modal) -->
 <div id="cat-modal" class="app-modal">
   <div class="modal-content">
     <div class="modal-header">
@@ -590,8 +787,8 @@ def process_and_build():
 
 <div class="header">
     <div>
-        <h1>MMS Executive KPI Dashboard</h1>
-        <p>Complete Retail Matrix: Stores & Full Category Performance</p>
+        <h1>MMS Executive KPI & SOH Diagnostic Dashboard</h1>
+        <p>Operational Performance, Stock On Hand (SOH) Alignment & Solutions</p>
     </div>
 </div>
 
@@ -614,7 +811,7 @@ def process_and_build():
 <div class="kpi-grid">
     <div class="kpi-card">
         <div class="kpi-title">Total Sales</div>
-        <div class="kpi-value">{total_sales:,.2f} <span class="kpi-unit">SAR</span></div>
+        <div class="kpi-value">{total_sales:,.0f} <span class="kpi-unit">SAR</span></div>
     </div>
     <div class="kpi-card">
         <div class="kpi-title">Total Target</div>
@@ -623,6 +820,10 @@ def process_and_build():
     <div class="kpi-card">
         <div class="kpi-title">Achievement (% Ach)</div>
         <div class="kpi-value" style="color: {'#10b981' if overall_ach >= 100 else ('#f59e0b' if overall_ach >= 80 else '#ef4444')};">{overall_ach:.1f}%</div>
+    </div>
+    <div class="kpi-card">
+        <div class="kpi-title">Total Network SOH</div>
+        <div class="kpi-value" style="color:#38bdf8;">{total_soh_units:,.0f} <span class="kpi-unit">Units</span></div>
     </div>
     <div class="kpi-card">
         <div class="kpi-title">Network ATV</div>
@@ -639,12 +840,16 @@ def process_and_build():
 </div>
 
 <div class="view-toggle-bar">
-    <button class="view-btn active" id="btn-stores" onclick="switchView('stores')">🏢 Store-Wise Performance</button>
+    <button class="view-btn active" id="btn-stores" onclick="switchView('stores')">🏢 Store-Wise & SOH Diagnostics</button>
     <button class="view-btn" id="btn-business" onclick="switchView('business')">📦 Business-Wise Performance ({len(cat_summary)} Categories)</button>
 </div>
 
-<!-- 1. Store-Wise View -->
 <div id="view-stores">
+    <div class="section-title"><span>🚨 Operational Diagnostics & Priority Action Plan</span></div>
+    <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(320px, 1fr)); gap:14px; margin-bottom:24px;">
+        {action_cards_html}
+    </div>
+
     <div class="chart-container">
         <div class="section-title">
             <span>📊 Top Stores: Actual Sales vs Target</span>
@@ -661,8 +866,8 @@ def process_and_build():
     <div class="table-wrap">
         <div class="table-header">
             <div>
-                <h3>STORE PERFORMANCE MATRIX</h3>
-                <span style="color:var(--text-muted);font-size:12px;">Click any store row to open its full category breakdown & operational details</span>
+                <h3>STORE PERFORMANCE & SOH DIAGNOSTICS MATRIX</h3>
+                <span style="color:var(--text-muted);font-size:12px;">Click any row to open store category mix, WOS breakdown & actionable solutions</span>
             </div>
             <input type="text" id="storeSearch" class="table-search" placeholder="Search store name or code..." onkeyup="filterStores()">
         </div>
@@ -675,14 +880,13 @@ def process_and_build():
                         <th>Store Name</th>
                         <th>Sales (SAR)</th>
                         <th>Target (SAR)</th>
-                        <th>% Ach vs Target</th>
-                        <th>Share %</th>
-                        <th>Top Category Contribution</th>
-                        <th>Txns</th>
+                        <th>% Ach</th>
+                        <th>SOH (Units)</th>
+                        <th>WOS</th>
+                        <th>Diagnostic</th>
                         <th>ATV (SAR)</th>
                         <th>UPT</th>
                         <th>ASP (SAR)</th>
-                        <th>Status</th>
                     </tr>
                 </thead>
                 <tbody>
@@ -693,7 +897,6 @@ def process_and_build():
     </div>
 </div>
 
-<!-- 2. Business-Wise View -->
 <div id="view-business" style="display:none;">
     <div class="section-title">
         <span>📦 ALL CATEGORIES CONTRIBUTION MIX ({len(cat_summary)} CATEGORIES)</span>
@@ -755,9 +958,11 @@ def process_and_build():
     document.getElementById("modal-sales").innerText = meta.sales;
     document.getElementById("modal-target").innerText = meta.target;
     document.getElementById("modal-ach").innerText = meta.ach;
-    document.getElementById("modal-atv").innerText = meta.atv;
-    document.getElementById("modal-upt").innerText = meta.upt;
+    document.getElementById("modal-soh-units").innerText = meta.soh_units;
+    document.getElementById("modal-wos").innerText = meta.wos;
     document.getElementById("modal-asp").innerText = meta.asp;
+    document.getElementById("modal-problem").innerText = meta.problem;
+    document.getElementById("modal-action").innerText = meta.action;
 
     let rowsHtml = "";
     cats.forEach((c, idx) => {{
