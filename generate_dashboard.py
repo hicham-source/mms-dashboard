@@ -417,7 +417,7 @@ def process_and_build():
     sales_with_target = valid_targets['sales'].sum()
     overall_ach = (sales_with_target / total_target * 100) if total_target > 0 else 0
 
-    # 2. الهيكل السلعي
+    # 2. الهيكل السلعي للمبيعات
     main_cat_summary = df_clean.groupby('main_category').agg(
         sales=('Actual Sales Amount', 'sum'),
         units=('Sales Quantity', 'sum')
@@ -444,7 +444,7 @@ def process_and_build():
 
     store_total_sales_map = store_summary.set_index('clean_code')['sales'].to_dict()
 
-    # 4. تفاصيل الأصناف والأقسام داخل كل متجر
+    # 4. تفاصيل مساهمة الأقسام في كل متجر (Store Category Mix % Overall)
     store_cat_summary = df_clean.groupby(['Organization Code', 'main_category']).agg(
         sales=('Actual Sales Amount', 'sum'),
         units=('Sales Quantity', 'sum')
@@ -497,7 +497,7 @@ def process_and_build():
             diag_title, diag_col = "Assortment Mismatch", "#f59e0b"
             prob = f"Store holds solid display depth ({soh:,.0f} Pcs) but turnover is slow ({ach:.1f}% Ach). Gondolas tied to slow sub-subgroups."
             action = f"⚡ ACTION: Execute Category Assortment Swap. Reallocate front entrance to {missing_cats[0] if missing_cats else 'Children Toys & Beauty'} and bundle slow movers."
-            needs = f"Inject high-velocity categories."
+            needs = "Inject high-velocity categories."
         elif ach < 70 and soh < 40000:
             diag_title, diag_col = "Under-Display Deficit", "#ef4444"
             prob = f"Target achievement is lagging ({ach:.1f}%) and visual density ({soh:,.0f} Pcs) is thin, depressing walk-in impulse purchases."
@@ -536,7 +536,7 @@ def process_and_build():
         c_color = colors[idx % len(colors)]
         safe_c_name = html.escape(r['main_category']).replace("'", "\\'")
         main_cat_cards_html += f"""
-        <div onclick="filterByMainCategory('{safe_c_name}')" style="background:var(--card); border:1px solid var(--border); border-top:3px solid {c_color}; border-radius:10px; padding:16px; min-width:210px; max-width:240px; flex:1; cursor:pointer;" title="Click to filter {r['main_category']}">
+        <div onclick="filterByMainCategory('{safe_c_name}')" style="background:var(--card); border:1px solid var(--border); border-top:3px solid {c_color}; border-radius:10px; padding:16px; min-width:210px; max-width:240px; flex:1; cursor:pointer;" title="Click to filter sub-categories of {r['main_category']}">
             <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px;">
                 <span style="font-size:13px; font-weight:700; color:#fff; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">{r['main_category']}</span>
                 <span style="font-size:12px; font-weight:700; color:{c_color};">{r['contribution']:.1f}%</span>
@@ -843,7 +843,7 @@ def process_and_build():
         </tr>
         """
 
-    # جدول الأقسام
+    # جدول الأقسام في شاشة Business-Wise (Main Categories)
     main_cat_table_rows = ""
     for idx, r in main_cat_summary.iterrows():
         c_name = r['main_category']
@@ -871,7 +871,6 @@ def process_and_build():
         """
 
     subsub_json_data = subsub_summary.to_dict(orient='records')
-    store_cat_summary_dict_json = store_cat_summary_dict
     main_cat_options = '<option value="ALL" data-translate-key="all_cats">-- All Main Categories (Overview) --</option>'
     for c_name in main_cat_summary['main_category']:
         main_cat_options += f'<option value="{html.escape(c_name)}">{html.escape(c_name)}</option>'
@@ -975,16 +974,6 @@ def process_and_build():
     </style>
 </head>
 <body>
-
-<div id="auth-overlay" style="position:fixed;top:0;left:0;width:100%;height:100%;background:#090d16;z-index:999999;display:flex;align-items:center;justify-content:center;">
-  <div style="background:#131b2e;padding:32px;border-radius:12px;box-shadow:0 15px 30px rgba(0,0,0,0.6);text-align:center;width:90%;max-width:380px;border:1px solid #1e293b;">
-    <h3 style="color:#fff;margin:0 0 8px 0;font-size:20px;">🔒 MMS Executive Access</h3>
-    <p style="color:#94a3b8;font-size:13px;margin:0 0 20px 0;">Enter authorization PIN to unlock dashboard</p>
-    <input type="password" id="access-pass" placeholder="Password" style="width:100%;padding:12px;border-radius:6px;border:1px solid #334155;background:#090d16;color:#fff;font-size:16px;text-align:center;outline:none;box-sizing:border-box;margin-bottom:14px;">
-    <button onclick="checkAccess()" style="width:100%;padding:12px;border-radius:6px;border:none;background:#2563eb;color:#fff;font-weight:700;font-size:15px;cursor:pointer;">Unlock Dashboard</button>
-    <p id="error-msg" style="color:#ef4444;font-size:13px;margin:12px 0 0 0;display:none;">Invalid credentials</p>
-  </div>
-</div>
 
 <!-- Modal 1: Commercial Deep-Dive Modal -->
 <div id="store-modal" class="app-modal">
@@ -1244,7 +1233,6 @@ def process_and_build():
 </div>
 
 <script>
-  const PASS = "MMS2026";
   const STORE_DETAILS = {json.dumps(store_cat_summary_dict)};
   const STORE_META = {json.dumps(store_meta_map)};
   const SUBSUB_DATA = {json.dumps(subsub_json_data)};
@@ -1273,7 +1261,7 @@ def process_and_build():
       legend_sales: "Actual Sales (SAR)",
       legend_target: "Target (SAR)",
       store_matrix_title: "STORE COMMERCIAL & DISPLAY ASSORTMENT MATRIX",
-      click_row_hint: "Click any store row to open detailed store intelligence",
+      click_row_hint: "Click any store row to view category contribution breakdown for that store",
       regional_overview: "REGIONAL LEADERSHIP & AREA MANAGER OVERVIEW",
       main_cat_title: "MUMUSO MAIN PRODUCT CATEGORIES (LEVEL 1 HIERARCHY)",
       card_click_hint: "Click any category card to drill down into its sub-subgroups",
@@ -1521,7 +1509,7 @@ def process_and_build():
           <td style="color:#f59e0b;font-weight:700;">${{r.asp.toFixed(2)}}</td>
         </tr>
       `;
-    }};
+    }});
 
     if (tbody) {{
       tbody.innerHTML = rowsHtml || "<tr><td colspan='7' style='text-align:center;'>No sub-subgroups found for this category</td></tr>";
@@ -1572,24 +1560,6 @@ def process_and_build():
         businessView.style.display = "block";
         if (btnBusiness) btnBusiness.classList.add("active");
     }}
-  }}
-
-  function checkAccess() {{
-    const val = document.getElementById("access-pass").value;
-    if (val === PASS) {{
-      sessionStorage.setItem("mms_auth", "ok");
-      document.getElementById("auth-overlay").style.display = "none";
-    }} else {{
-      document.getElementById("error-msg").style.display = "block";
-    }}
-  }}
-
-  document.getElementById("access-pass").addEventListener("keypress", function(e) {{
-    if (e.key === "Enter") checkAccess();
-  }});
-
-  if (sessionStorage.getItem("mms_auth") === "ok") {{
-    document.getElementById("auth-overlay").style.display = "none";
   }}
 
   function filterStores() {{
