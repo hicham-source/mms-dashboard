@@ -53,7 +53,7 @@ def generate_claude_insights(store_summary, cat_summary, total_sales, total_targ
 
     top_stores = store_summary.head(3)[['Organization Name', 'sales', 'ach_pct', 'atv', 'upt', 'asp']].to_dict(orient="records")
     bottom_stores = store_summary.tail(3)[['Organization Name', 'sales', 'ach_pct', 'atv', 'upt', 'asp']].to_dict(orient="records")
-    top_categories = cat_summary.head(4)[['Category Name', 'sales', 'contribution']].to_dict(orient="records")
+    top_categories = cat_summary.head(5)[['Category Name', 'sales', 'contribution']].to_dict(orient="records")
 
     prompt = f"""
     You are a Retail Operations Executive. Based on the store and product mix performance below:
@@ -63,7 +63,7 @@ def generate_claude_insights(store_summary, cat_summary, total_sales, total_targ
     - Network ATV: {network_atv:.2f} SAR
     - Network UPT: {network_upt:.2f}
     - Network ASP: {network_asp:.2f} SAR
-    - Top Categories Contribution: {top_categories}
+    - Top Categories: {top_categories}
     - Top Stores: {top_stores}
     - Low Performing Stores: {bottom_stores}
 
@@ -159,8 +159,6 @@ def process_and_build():
 
     df = pd.read_excel(file_path, skiprows=1)
     df_clean = df.iloc[:-1].copy()
-    
-    # تنظيف أسماء الأعمدة من المحارف غير المرئية
     df_clean.columns = [c.replace('\u200c', '').replace('\ufeff', '').strip() for c in df_clean.columns]
 
     numeric_cols = [
@@ -171,7 +169,6 @@ def process_and_build():
         if col in df_clean.columns:
             df_clean[col] = pd.to_numeric(df_clean[col], errors='coerce').fillna(0)
 
-    # التحقق من عمود التصنيف
     cat_col = 'Category Name' if 'Category Name' in df_clean.columns else ('product_category' if 'product_category' in df_clean.columns else None)
     if cat_col:
         df_clean[cat_col] = df_clean[cat_col].fillna("Other").astype(str).str.strip()
@@ -200,16 +197,26 @@ def process_and_build():
     store_summary['share'] = ((store_summary['sales'] / total_sales) * 100).round(2)
     store_summary = store_summary.sort_values(by='sales', ascending=False).reset_index(drop=True)
 
-    # 2. حساب مساهمة التصنيفات (Category Contribution - Network)
+    # 2. إجماليات جميع الأصناف (All Categories بدون استثناء)
     cat_summary = df_clean.groupby(cat_col).agg(
         sales=('Actual Sales Amount', 'sum'),
-        units=('Sales Quantity', 'sum')
+        units=('Sales Quantity', 'sum'),
+        txns=('Receipt Number', 'nunique')
     ).reset_index().rename(columns={cat_col: 'Category Name'})
     cat_summary['contribution'] = ((cat_summary['sales'] / total_sales) * 100).round(2)
     cat_summary['asp'] = (cat_summary['sales'] / cat_summary['units'].replace(0, np.nan)).fillna(0).round(2)
+
+    # أفضل متجر لكل تصنيف
+    cat_store_matrix = df_clean.groupby([cat_col, 'Organization Name'])['Actual Sales Amount'].sum().reset_index()
+    top_store_per_cat = {}
+    for c_name, grp in cat_store_matrix.groupby(cat_col):
+        best_st = grp.sort_values(by='Actual Sales Amount', ascending=False).iloc[0]
+        top_store_per_cat[c_name] = f"{best_st['Organization Name']} ({best_st['Actual Sales Amount']:,.0f} SAR)"
+
+    cat_summary['leading_store'] = cat_summary['Category Name'].map(top_store_per_cat).fillna("-")
     cat_summary = cat_summary.sort_values(by='sales', ascending=False).reset_index(drop=True)
 
-    # 3. حساب أعلى تصنيف ومساهمته لكل فرع
+    # أعلى تصنيف لكل متجر
     store_cat = df_clean.groupby(['Organization Code', cat_col])['Actual Sales Amount'].sum().reset_index()
     top_cat_per_store = {}
     for code, group in store_cat.groupby('Organization Code'):
@@ -220,7 +227,7 @@ def process_and_build():
 
     store_summary['top_category'] = store_summary['Organization Code'].map(top_cat_per_store).fillna("-")
 
-    # مطابقة الأهداف
+    # مطابقة أهداف الفروع
     def match_target(row):
         code_str = str(row['Organization Code']).strip()
         name_str = str(row['Organization Name']).strip()
@@ -245,15 +252,15 @@ def process_and_build():
     chart_stores = store_summary.head(8)
     chart_svg_markup = build_svg_bar_chart(chart_stores)
 
-    # كروت الـ Category Contribution
-    colors = ['#38bdf8', '#818cf8', '#a855f7', '#ec4899', '#f59e0b', '#10b981', '#64748b']
+    # شريط بطاقات كل التصنيفات (All Categories Cards - Scrollable)
+    colors = ['#38bdf8', '#818cf8', '#a855f7', '#ec4899', '#f59e0b', '#10b981', '#06b6d4', '#e11d48', '#84cc16']
     cat_cards_html = ""
-    for idx, r in cat_summary.head(6).iterrows():
+    for idx, r in cat_summary.iterrows():
         c_color = colors[idx % len(colors)]
         cat_cards_html += f"""
-        <div style="background:var(--card); border:1px solid var(--border); border-radius:10px; padding:16px; min-width:180px; flex:1;">
+        <div style="background:var(--card); border:1px solid var(--border); border-radius:10px; padding:16px; min-width:210px; max-width:250px; flex:0 0 auto;">
             <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
-                <span style="font-size:13px; font-weight:700; color:#f8fafc;">{r['Category Name']}</span>
+                <span style="font-size:13px; font-weight:700; color:#f8fafc; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;" title="{r['Category Name']}">{r['Category Name']}</span>
                 <span style="font-size:12px; font-weight:700; color:{c_color};">{r['contribution']:.1f}%</span>
             </div>
             <div style="font-size:18px; font-weight:700; color:#fff; margin-bottom:6px;">{r['sales']:,.0f} <span style="font-size:11px; color:#94a3b8;">SAR</span></div>
@@ -267,7 +274,8 @@ def process_and_build():
         </div>
         """
 
-    table_rows = ""
+    # جدول الفروع
+    store_table_rows = ""
     for idx, row in store_summary.iterrows():
         if pd.notna(row['target']):
             target_str = f"{row['target']:,.0f}"
@@ -296,7 +304,7 @@ def process_and_build():
             ach_str = '<span style="color:#64748b;">-</span>'
             status_badge = '<span class="badge" style="background:#1e293b;color:#94a3b8;">Normal</span>'
 
-        table_rows += f"""
+        store_table_rows += f"""
         <tr>
             <td style="color:#64748b;font-weight:600;">{idx+1}</td>
             <td style="color:#38bdf8;font-weight:500;">{row['Organization Code']}</td>
@@ -311,6 +319,29 @@ def process_and_build():
             <td>{row['upt']:,.2f}</td>
             <td style="color:#38bdf8;font-weight:600;">{row['asp']:,.2f}</td>
             <td>{status_badge}</td>
+        </tr>
+        """
+
+    # جدول جميع الأصناف بالكامل
+    cat_table_rows = ""
+    for idx, r in cat_summary.iterrows():
+        bar_w = min(r['contribution'], 100)
+        cat_table_rows += f"""
+        <tr>
+            <td style="color:#64748b;font-weight:600;">{idx+1}</td>
+            <td style="font-weight:700;color:#fff;font-size:14px;">{r['Category Name']}</td>
+            <td style="font-weight:700;color:#38bdf8;">{r['sales']:,.2f}</td>
+            <td>{int(r['units']):,}</td>
+            <td style="min-width:140px;">
+                <div style="display:flex;align-items:center;gap:8px;">
+                    <span style="color:#f8fafc;font-weight:700;min-width:45px;">{r['contribution']:.1f}%</span>
+                    <div style="flex:1;background:#1e293b;border-radius:4px;height:6px;overflow:hidden;">
+                        <div style="width:{bar_w}%;background:#38bdf8;height:100%;"></div>
+                    </div>
+                </div>
+            </td>
+            <td style="color:#f59e0b;font-weight:700;">{r['asp']:,.2f}</td>
+            <td style="color:#94a3b8;font-weight:500;">{r['leading_store']}</td>
         </tr>
         """
 
@@ -336,6 +367,11 @@ def process_and_build():
         .header h1 {{ margin: 0; font-size: 24px; font-weight: 700; }}
         .header p {{ margin: 4px 0 0 0; color: var(--text-muted); font-size: 14px; }}
         
+        .view-toggle-bar {{ display: flex; background: #0c1220; padding: 4px; border-radius: 10px; border: 1px solid var(--border); margin-bottom: 24px; width: fit-content; gap: 4px; }}
+        .view-btn {{ background: transparent; border: none; color: var(--text-muted); padding: 10px 22px; border-radius: 8px; font-size: 14px; font-weight: 700; cursor: pointer; transition: 0.2s; display: flex; align-items: center; gap: 8px; }}
+        .view-btn.active {{ background: #2563eb; color: #fff; box-shadow: 0 4px 12px rgba(37,99,235,0.3); }}
+        .view-btn:hover:not(.active) {{ color: #fff; background: rgba(255,255,255,0.05); }}
+
         .section-title {{ font-size: 14px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px; color: var(--text-muted); margin-bottom: 14px; display: flex; align-items: center; justify-content:space-between; flex-wrap:wrap; gap:10px; }}
         .insights-grid {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 16px; margin-bottom: 24px; }}
         .insight-card {{ background: var(--card); border: 1px solid var(--border); border-radius: 10px; padding: 16px; border-left: 4px solid var(--border); }}
@@ -353,7 +389,7 @@ def process_and_build():
 
         .chart-container {{ background: var(--card); border: 1px solid var(--border); border-radius: 10px; padding: 22px; margin-bottom: 24px; }}
 
-        .table-wrap {{ background: var(--card); border: 1px solid var(--border); border-radius: 10px; overflow: hidden; }}
+        .table-wrap {{ background: var(--card); border: 1px solid var(--border); border-radius: 10px; overflow: hidden; margin-bottom: 24px; }}
         .table-header {{ padding: 16px 20px; display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid var(--border); flex-wrap: wrap; gap: 12px; }}
         .table-header h3 {{ margin: 0; font-size: 15px; font-weight: 700; }}
         .table-search {{ padding: 8px 14px; background: #090d16; border: 1px solid var(--border); border-radius: 6px; color: #fff; outline: none; width: 260px; font-size: 13px; }}
@@ -366,6 +402,12 @@ def process_and_build():
         .badge-success {{ background: rgba(16, 185, 129, 0.15); color: #10b981; }}
         .badge-warning {{ background: rgba(245, 158, 11, 0.15); color: #f59e0b; }}
         .badge-danger {{ background: rgba(239, 68, 68, 0.15); color: #ef4444; }}
+
+        /* Scrollable container for all category cards */
+        .cards-scroll-container {{ display: flex; gap: 14px; overflow-x: auto; padding-bottom: 12px; margin-bottom: 24px; scroll-behavior: smooth; }}
+        .cards-scroll-container::-webkit-scrollbar {{ height: 6px; }}
+        .cards-scroll-container::-webkit-scrollbar-track {{ background: #090d16; }}
+        .cards-scroll-container::-webkit-scrollbar-thumb {{ background: #1e293b; border-radius: 3px; }}
     </style>
 </head>
 <body>
@@ -383,7 +425,7 @@ def process_and_build():
 <div class="header">
     <div>
         <h1>MMS Executive KPI Dashboard</h1>
-        <p>Operational Performance, Category Mix & Target Alignment</p>
+        <p>Complete Retail Matrix: Stores & Full Category Performance</p>
     </div>
 </div>
 
@@ -430,60 +472,122 @@ def process_and_build():
     </div>
 </div>
 
-<div class="section-title"><span>📦 Category Contribution (Network Mix)</span></div>
-<div style="display:flex; flex-wrap:wrap; gap:14px; margin-bottom:24px;">
-    {cat_cards_html}
+<div class="view-toggle-bar">
+    <button class="view-btn active" id="btn-stores" onclick="switchView('stores')">🏢 Store-Wise Performance</button>
+    <button class="view-btn" id="btn-business" onclick="switchView('business')">📦 Business-Wise Performance ({len(cat_summary)} Categories)</button>
 </div>
 
-<div class="chart-container">
+<!-- 1. Store-Wise View -->
+<div id="view-stores">
+    <div class="chart-container">
+        <div class="section-title">
+            <span>📊 Top Stores: Actual Sales vs Target</span>
+            <div style="font-size:12px; font-weight:500; display:flex; gap:16px;">
+                <span style="display:flex; align-items:center; gap:6px;"><span style="display:inline-block; width:12px; height:12px; background:#38bdf8; border-radius:2px;"></span> Actual Sales (SAR)</span>
+                <span style="display:flex; align-items:center; gap:6px;"><span style="display:inline-block; width:12px; height:12px; background:#334155; border-radius:2px;"></span> Target (SAR)</span>
+            </div>
+        </div>
+        <div style="overflow-x:auto; width:100%;">
+            {chart_svg_markup}
+        </div>
+    </div>
+
+    <div class="table-wrap">
+        <div class="table-header">
+            <div>
+                <h3>STORE PERFORMANCE MATRIX</h3>
+                <span style="color:var(--text-muted);font-size:12px;">Ranked by revenue with achievement, leading category and store ASP</span>
+            </div>
+            <input type="text" id="storeSearch" class="table-search" placeholder="Search store name or code..." onkeyup="filterStores()">
+        </div>
+        <div style="overflow-x:auto;">
+            <table id="storesTable">
+                <thead>
+                    <tr>
+                        <th>#</th>
+                        <th>Store Code</th>
+                        <th>Store Name</th>
+                        <th>Sales (SAR)</th>
+                        <th>Target (SAR)</th>
+                        <th>% Ach vs Target</th>
+                        <th>Share %</th>
+                        <th>Top Category Contribution</th>
+                        <th>Txns</th>
+                        <th>ATV (SAR)</th>
+                        <th>UPT</th>
+                        <th>ASP (SAR)</th>
+                        <th>Status</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {store_table_rows}
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+
+<!-- 2. Business-Wise View (All Categories) -->
+<div id="view-business" style="display:none;">
     <div class="section-title">
-        <span>📊 Top Stores: Actual Sales vs Target</span>
-        <div style="font-size:12px; font-weight:500; display:flex; gap:16px;">
-            <span style="display:flex; align-items:center; gap:6px;"><span style="display:inline-block; width:12px; height:12px; background:#38bdf8; border-radius:2px;"></span> Actual Sales (SAR)</span>
-            <span style="display:flex; align-items:center; gap:6px;"><span style="display:inline-block; width:12px; height:12px; background:#334155; border-radius:2px;"></span> Target (SAR)</span>
-        </div>
+        <span>📦 ALL CATEGORIES CONTRIBUTION MIX ({len(cat_summary)} CATEGORIES)</span>
+        <span style="font-size:12px; color:var(--text-muted); font-weight:400;">Scroll horizontally to inspect all product groups &rarr;</span>
     </div>
-    <div style="overflow-x:auto; width:100%;">
-        {chart_svg_markup}
+    
+    <div class="cards-scroll-container">
+        {cat_cards_html}
     </div>
-</div>
 
-<div class="table-wrap">
-    <div class="table-header">
-        <div>
-            <h3>STORE PERFORMANCE MATRIX</h3>
-            <span style="color:var(--text-muted);font-size:12px;">Ranked by revenue with achievement, leading category and store ASP</span>
+    <div class="table-wrap">
+        <div class="table-header">
+            <div>
+                <h3>COMPLETE CATEGORY MATRIX</h3>
+                <span style="color:var(--text-muted);font-size:12px;">All retail categories ranked by revenue with volume, ASP, and primary branch</span>
+            </div>
+            <input type="text" id="catSearch" class="table-search" placeholder="Search any category..." onkeyup="filterCategories()">
         </div>
-        <input type="text" id="storeSearch" class="table-search" placeholder="Search store name or code..." onkeyup="filterStores()">
-    </div>
-    <div style="overflow-x:auto;">
-        <table id="storesTable">
-            <thead>
-                <tr>
-                    <th>#</th>
-                    <th>Store Code</th>
-                    <th>Store Name</th>
-                    <th>Sales (SAR)</th>
-                    <th>Target (SAR)</th>
-                    <th>% Ach vs Target</th>
-                    <th>Share %</th>
-                    <th>Top Category Contribution</th>
-                    <th>Txns</th>
-                    <th>ATV (SAR)</th>
-                    <th>UPT</th>
-                    <th>ASP (SAR)</th>
-                    <th>Status</th>
-                </tr>
-            </thead>
-            <tbody>
-                {table_rows}
-            </tbody>
-        </table>
+        <div style="overflow-x:auto;">
+            <table id="categoriesTable">
+                <thead>
+                    <tr>
+                        <th>#</th>
+                        <th>Category Name</th>
+                        <th>Sales Revenue (SAR)</th>
+                        <th>Sales Units</th>
+                        <th>Network Share (%)</th>
+                        <th>ASP (SAR)</th>
+                        <th>Leading Store Benchmark</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {cat_table_rows}
+                </tbody>
+            </table>
+        </div>
     </div>
 </div>
 
 <script>
   const PASS = "MMS2026";
+
+  function switchView(viewName) {{
+    const storesView = document.getElementById("view-stores");
+    const businessView = document.getElementById("view-business");
+    const btnStores = document.getElementById("btn-stores");
+    const btnBusiness = document.getElementById("btn-business");
+
+    if (viewName === 'stores') {{
+        storesView.style.display = "block";
+        businessView.style.display = "none";
+        btnStores.classList.add("active");
+        btnBusiness.classList.remove("active");
+    }} else {{
+        storesView.style.display = "none";
+        businessView.style.display = "block";
+        btnStores.classList.remove("active");
+        btnBusiness.classList.add("active");
+    }}
+  }}
 
   function checkAccess() {{
     const val = document.getElementById("access-pass").value;
@@ -506,6 +610,15 @@ def process_and_build():
   function filterStores() {{
       const query = document.getElementById("storeSearch").value.toLowerCase();
       const rows = document.querySelectorAll("#storesTable tbody tr");
+      rows.forEach(r => {{
+          const text = r.innerText.toLowerCase();
+          r.style.display = text.includes(query) ? "" : "none";
+      }});
+  }}
+
+  function filterCategories() {{
+      const query = document.getElementById("catSearch").value.toLowerCase();
+      const rows = document.querySelectorAll("#categoriesTable tbody tr");
       rows.forEach(r => {{
           const text = r.innerText.toLowerCase();
           r.style.display = text.includes(query) ? "" : "none";
