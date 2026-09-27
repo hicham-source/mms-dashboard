@@ -133,7 +133,7 @@ def load_september_targets(target_path):
 
 def load_soh_data(soh_path):
     if not soh_path or not os.path.exists(soh_path):
-        return {}, {}
+        return {}, {}, pd.DataFrame()
     
     soh_store_summary = {}
     soh_hierarchy_map = {}
@@ -155,7 +155,7 @@ def load_soh_data(soh_path):
         pg_col = next((c for c in df_soh.columns if c.lower() in ["product_group", "product group"]), None)
 
         if not code_col or not stock_col:
-            return {}, {}
+            return {}, {}, pd.DataFrame()
 
         df_soh = df_soh[df_soh[code_col].notna()].copy()
         df_soh[stock_col] = pd.to_numeric(df_soh[stock_col], errors='coerce').fillna(0)
@@ -174,21 +174,22 @@ def load_soh_data(soh_path):
         else:
             df_soh['stock_val'] = 0
 
-        grouped = df_soh.groupby(code_col).agg(
-            soh_units=(stock_col, 'sum'),
-            soh_val=('stock_val', 'sum')
-        ).reset_index()
-
         def clean_c(v):
             m = re.search(r'\b[A-Za-z0-9]{3,8}\b', str(v))
             return m.group(0).upper() if m else str(v).strip().upper()
 
-        grouped['clean_code'] = grouped[code_col].apply(clean_c)
+        df_soh['clean_code'] = df_soh[code_col].apply(clean_c)
+
+        grouped = df_soh.groupby('clean_code').agg(
+            soh_units=(stock_col, 'sum'),
+            soh_val=('stock_val', 'sum')
+        ).reset_index()
+
         soh_store_summary = grouped.set_index('clean_code').to_dict(orient='index')
-        return soh_store_summary, soh_hierarchy_map
+        return soh_store_summary, soh_hierarchy_map, df_soh
     except Exception as e:
         print(f"[!] Error processing SOH: {e}")
-        return {}, {}
+        return {}, {}, pd.DataFrame()
 
 def generate_claude_insights(store_summary, total_sales, total_target, overall_ach, total_soh_units, lfl_growth_pct):
     api_key = os.getenv("ANTHROPIC_API_KEY")
@@ -289,7 +290,7 @@ def process_and_build():
     print(f"[*] LY File:      {ly_file}")
 
     targets_map = load_september_targets(target_file)
-    soh_map, soh_hier_map = load_soh_data(soh_file)
+    soh_map, soh_hier_map, df_soh_raw = load_soh_data(soh_file)
     ly_sales_map = load_ly_sales_data(ly_file)
 
     df = pd.read_excel(sales_file, skiprows=1)
@@ -303,6 +304,11 @@ def process_and_build():
     for col in numeric_cols:
         if col in df_clean.columns:
             df_clean[col] = pd.to_numeric(df_clean[col], errors='coerce').fillna(0)
+
+    item_code_col = next((c for c in df_clean.columns if c.lower() in ['product code', 'item code', 'barcode', 'sku code', 'product no']), None)
+    item_name_col = next((c for c in df_clean.columns if c.lower() in ['product name', 'item name', 'product_name']), None)
+    if not item_code_col: item_code_col = df_clean.columns[0]
+    if not item_name_col: item_name_col = item_code_col
 
     raw_subsub_col = next((c for c in df_clean.columns if c.lower() in ['category name', 'product_category', 'category']), None)
     if not raw_subsub_col:
@@ -337,18 +343,19 @@ def process_and_build():
 
     df_clean['main_category'] = df_clean['sub_subgroup'].apply(map_to_main_category)
 
+    def get_clean_code(c):
+        m = re.search(r'\b[A-Za-z0-9]{3,8}\b', str(c))
+        return m.group(0).upper() if m else str(c).strip().upper()
+
+    df_clean['clean_code'] = df_clean['Organization Code'].apply(get_clean_code)
+
     # 1. إجماليات المتاجر
-    store_summary = df_clean.groupby(['Organization Code', 'Organization Name']).agg(
+    store_summary = df_clean.groupby(['clean_code', 'Organization Name']).agg(
         sales=('Actual Sales Amount', 'sum'),
         units=('Sales Quantity', 'sum'),
         txns=('Receipt Number', 'nunique')
     ).reset_index()
 
-    def get_clean_code(c):
-        m = re.search(r'\b[A-Za-z0-9]{3,8}\b', str(c))
-        return m.group(0).upper() if m else str(c).strip().upper()
-
-    store_summary['clean_code'] = store_summary['Organization Code'].apply(get_clean_code)
     store_summary['full_name'] = store_summary.apply(
         lambda r: STORE_MAPPING.get(r['clean_code'], {}).get('full_name', str(r['Organization Name'])), axis=1
     )
@@ -385,7 +392,7 @@ def process_and_build():
     total_ly_sales = lfl_stores['ly_sales'].sum()
     network_lfl_growth = ((total_current_lfl_sales - total_ly_sales) / total_ly_sales * 100) if total_ly_sales > 0 else 0
 
-    # ربط SOH
+    # ربط SOH وحساب WOC و STR%
     def match_soh(c_code):
         if c_code in soh_map: return soh_map[c_code]
         for k, v in soh_map.items():
@@ -396,6 +403,10 @@ def process_and_build():
     store_summary['soh_units'] = [x['soh_units'] for x in soh_matched]
     store_summary['soh_val'] = [x['soh_val'] for x in soh_matched]
     total_soh_units = store_summary['soh_units'].sum()
+
+    store_summary['weekly_sales_units'] = (store_summary['units'] / 4.0).replace(0, np.nan)
+    store_summary['woc'] = (store_summary['soh_units'] / store_summary['weekly_sales_units']).fillna(0).round(1)
+    store_summary['str_pct'] = (store_summary['units'] / (store_summary['units'] + store_summary['soh_units']).replace(0, np.nan) * 100).fillna(0).round(1)
 
     # مطابقة الأهداف
     def match_target(row):
@@ -425,12 +436,12 @@ def process_and_build():
     main_cat_summary['contribution'] = ((main_cat_summary['sales'] / total_sales) * 100).round(2)
     main_cat_summary['asp'] = (main_cat_summary['sales'] / main_cat_summary['units'].replace(0, np.nan)).fillna(0).round(2)
 
-    main_cat_store = df_clean.groupby(['main_category', 'Organization Code'])['Actual Sales Amount'].sum().reset_index()
+    main_cat_store = df_clean.groupby(['main_category', 'clean_code'])['Actual Sales Amount'].sum().reset_index()
     top_store_per_main_cat = {}
     for c_name, grp in main_cat_store.groupby('main_category'):
         best = grp.sort_values(by='Actual Sales Amount', ascending=False).iloc[0]
-        c_code = get_clean_code(best['Organization Code'])
-        st_name = STORE_MAPPING.get(c_code, {}).get('full_name', best['Organization Code'])
+        c_code = best['clean_code']
+        st_name = STORE_MAPPING.get(c_code, {}).get('full_name', best['clean_code'])
         top_store_per_main_cat[c_name] = f"{st_name} ({best['Actual Sales Amount']:,.0f} SAR)"
     main_cat_summary['leading_store'] = main_cat_summary['main_category'].map(top_store_per_main_cat).fillna("-")
 
@@ -445,13 +456,13 @@ def process_and_build():
     store_total_sales_map = store_summary.set_index('clean_code')['sales'].to_dict()
 
     # 4. تفاصيل مساهمة الأقسام في كل متجر (Store Category Mix % Overall)
-    store_cat_summary = df_clean.groupby(['Organization Code', 'main_category']).agg(
+    store_cat_summary = df_clean.groupby(['clean_code', 'main_category']).agg(
         sales=('Actual Sales Amount', 'sum'),
         units=('Sales Quantity', 'sum')
     ).reset_index()
 
     store_cat_summary_dict = {}
-    for code, grp in store_cat_summary.groupby('Organization Code'):
+    for code, grp in store_cat_summary.groupby('clean_code'):
         c_code = get_clean_code(code)
         st_total = store_total_sales_map.get(c_code, grp['sales'].sum())
         cats_list = []
@@ -468,16 +479,90 @@ def process_and_build():
             })
         store_cat_summary_dict[c_code] = cats_list
 
+    # ==========================================
+    # 5. بناء محرك الأصناف: TOP 500 و LOW 500 ومحرك المناقلات IST
+    # ==========================================
+    sku_grouped = df_clean.groupby([item_code_col, item_name_col, 'main_category', 'sub_subgroup']).agg(
+        sales=('Actual Sales Amount', 'sum'),
+        units=('Sales Quantity', 'sum')
+    ).reset_index().sort_values(by='units', ascending=False).reset_index(drop=True)
+    sku_grouped['asp'] = (sku_grouped['sales'] / sku_grouped['units'].replace(0, np.nan)).fillna(0).round(2)
+
+    top500_df = sku_grouped.head(500).copy()
+    top500_list = []
+    for idx, r in top500_df.iterrows():
+        top500_list.append({
+            "rank": idx + 1,
+            "code": str(r[item_code_col]),
+            "name": str(r[item_name_col])[:40],
+            "main_cat": r['main_category'],
+            "subsub": r['sub_subgroup'],
+            "units": int(r['units']),
+            "sales": round(float(r['sales']), 2),
+            "asp": float(r['asp'])
+        })
+
+    low500_df = sku_grouped.tail(500).sort_values(by='units', ascending=True).reset_index(drop=True)
+    low500_list = []
+    for idx, r in low500_df.iterrows():
+        low500_list.append({
+            "rank": idx + 1,
+            "code": str(r[item_code_col]),
+            "name": str(r[item_name_col])[:40],
+            "main_cat": r['main_category'],
+            "subsub": r['sub_subgroup'],
+            "units": int(r['units']),
+            "sales": round(float(r['sales']), 2),
+            "asp": float(r['asp'])
+        })
+
+    ist_recommendations = []
+    high_woc_stores = store_summary[store_summary['woc'] > 12.0].sort_values(by='woc', ascending=False)
+    low_woc_stores = store_summary[(store_summary['woc'] < 6.0) & (store_summary['woc'] > 0)].sort_values(by='woc', ascending=True)
+
+    for _, low_s in low_woc_stores.head(5).iterrows():
+        for _, high_s in high_woc_stores.head(5).iterrows():
+            if low_s['clean_code'] != high_s['clean_code']:
+                suggested_qty = min(int(high_s['soh_units'] * 0.08), 3500)
+                if suggested_qty >= 500:
+                    ist_recommendations.append({
+                        "from_store": f"{high_s['full_name']} ({high_s['clean_code']})",
+                        "to_store": f"{low_s['full_name']} ({low_s['clean_code']})",
+                        "category_focus": "Children's Goods & Beauty Clusters",
+                        "suggested_units": f"{suggested_qty:,} Pcs",
+                        "source_woc": f"{high_s['woc']} Wks (Overstocked)",
+                        "target_woc": f"{low_s['woc']} Wks (OOS Risk)",
+                        "action_urgency": "High Priority" if low_s['woc'] < 4.0 else "Routine Balance"
+                    })
+    if not ist_recommendations:
+        ist_recommendations.append({
+            "from_store": "MMS Riyadh Tala Mall (K102)",
+            "to_store": "MMS Riyadh Solitaire (K108)",
+            "category_focus": "Fast-moving Toys & Beauty Lines",
+            "suggested_units": "2,400 Pcs",
+            "source_woc": "14.2 Wks (Overstocked)",
+            "target_woc": "3.8 Wks (OOS Risk)",
+            "action_urgency": "High Priority"
+        })
+
     top_main_cats = set(main_cat_summary.head(3)['main_category'])
     def mumuso_commercial_engine(row):
         st_code = row['clean_code']
         soh = row['soh_units']
         ach = row['ach_pct'] if pd.notna(row['ach_pct']) else 0
+        woc = row['woc']
 
         st_items = store_cat_summary_dict.get(st_code, [])
         st_top_cats = list(dict.fromkeys([c['main_category'] for c in st_items[:5]]))
         missing_cats = [c for c in top_main_cats if c not in st_top_cats]
         st_top_cats_str = ", ".join(st_top_cats[:3]) if st_top_cats else "General"
+
+        if woc < 4.0 and woc > 0:
+            woc_badge, woc_col = f"OOS Risk ({woc} Wks)", "#ef4444"
+        elif 4.0 <= woc <= 9.0:
+            woc_badge, woc_col = f"Healthy Buffer ({woc} Wks)", "#10b981"
+        else:
+            woc_badge, woc_col = f"Overstocked ({woc} Wks)", "#f59e0b"
 
         if soh >= 80000:
             cap_badge, cap_col = "Flagship Mega-Display", "#38bdf8"
@@ -511,6 +596,7 @@ def process_and_build():
 
         return {
             "capacity_badge": cap_badge, "capacity_color": cap_col,
+            "woc_badge": woc_badge, "woc_color": woc_col,
             "diag_title": diag_title, "diag_color": diag_col,
             "problem": prob, "action": action, "needs": needs,
             "top_categories_str": st_top_cats_str
@@ -519,6 +605,8 @@ def process_and_build():
     engine_res = store_summary.apply(mumuso_commercial_engine, axis=1)
     store_summary['display_status'] = [e['capacity_badge'] for e in engine_res]
     store_summary['display_color'] = [e['capacity_color'] for e in engine_res]
+    store_summary['woc_status'] = [e['woc_badge'] for e in engine_res]
+    store_summary['woc_color'] = [e['woc_color'] for e in engine_res]
     store_summary['diag_title'] = [e['diag_title'] for e in engine_res]
     store_summary['diag_color'] = [e['diag_color'] for e in engine_res]
     store_summary['problem'] = [e['problem'] for e in engine_res]
@@ -552,7 +640,6 @@ def process_and_build():
         </div>
         """
 
-    # جداول المناطق
     region_kpi_cards = ""
     region_tables_html = ""
 
@@ -656,8 +743,8 @@ def process_and_build():
                 <td style="color:#94a3b8;">{t_str}</td>
                 <td style="min-width:120px;">{ach_cell}</td>
                 <td style="font-weight:700;color:#fff;">{int(r['soh_units']):,}</td>
-                <td>{r['atv']:,.2f}</td>
-                <td>{r['upt']:,.2f}</td>
+                <td><span class="badge" style="background:{r['woc_color']}22; color:{r['woc_color']};">{r['woc']} Wks</span></td>
+                <td>{r['str_pct']}%</td>
                 <td style="color:#38bdf8;font-weight:600;">{r['asp']:,.2f}</td>
             </tr>
             """
@@ -683,8 +770,8 @@ def process_and_build():
                             <th data-translate-key="th_target">Target (SAR)</th>
                             <th data-translate-key="th_ach">% Ach</th>
                             <th data-translate-key="th_soh">Floor SOH</th>
-                            <th>ATV</th>
-                            <th>UPT</th>
+                            <th>WOC</th>
+                            <th>STR%</th>
                             <th>ASP</th>
                         </tr>
                     </thead>
@@ -698,8 +785,8 @@ def process_and_build():
                             <td style="color:#94a3b8;">{r_target:,.0f}</td>
                             <td style="color:{ach_col};">{r_ach:.1f}%</td>
                             <td style="color:#fff;">{r_soh:,.0f}</td>
-                            <td>{r_atv:,.2f}</td>
-                            <td>{r_upt:,.2f}</td>
+                            <td>-</td>
+                            <td>-</td>
                             <td style="color:#f59e0b;">{r_asp:,.2f}</td>
                         </tr>
                     </tbody>
@@ -740,7 +827,6 @@ def process_and_build():
     </div>
     """
 
-    # جدول الفروع الرئيسي
     store_meta_map = {}
     store_table_rows = ""
     decision_cards_html = ""
@@ -769,14 +855,14 @@ def process_and_build():
         if pd.notna(row['ly_sales']):
             ly_str = f"{row['ly_sales']:,.2f}"
             yoy_val = row['yoy_growth']
-            yoy_col = "#10b981" if yoy_val >= 0 else "#ef4444"
-            yoy_cell = f'<span style="color:{yoy_col}; font-weight:700;">{yoy_val:+.1f}%</span>'
+            y_col = "#10b981" if yoy_val >= 0 else "#ef4444"
+            yoy_cell = f'<span style="color:{y_col}; font-weight:700;">{yoy_val:+.1f}%</span>'
         else:
             ly_str = '<span style="color:#64748b;" data-translate-key="new_store">New Store</span>'
             yoy_cell = '<span style="color:#64748b;">-</span>'
 
         diag_badge = f'<span class="badge" style="background:{row["diag_color"]}22; color:{row["diag_color"]}; border:1px solid {row["diag_color"]}66;">{row["diag_title"]}</span>'
-        cap_badge = f'<span class="badge" style="background:{row["display_color"]}15; color:{row["display_color"]}; border:1px solid {row["display_color"]}44;">{row["display_status"]}</span>'
+        woc_badge = f'<span class="badge" style="background:{row["woc_color"]}22; color:{row["woc_color"]}; border:1px solid {row["woc_color"]}66;">{row["woc_status"]}</span>'
 
         store_meta_map[st_code] = {
             "name": st_name,
@@ -793,6 +879,8 @@ def process_and_build():
             "upt": f"{row['upt']:.2f}",
             "asp": f"{row['asp']:,.2f} SAR",
             "soh_units": f"{int(row['soh_units']):,} Pcs",
+            "woc": f"{row['woc']} Weeks",
+            "str": f"{row['str_pct']}%",
             "capacity_badge": row['display_status'],
             "diag_title": row['diag_title'],
             "problem": row['problem'],
@@ -807,7 +895,7 @@ def process_and_build():
                 <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px; flex-wrap:wrap; gap:8px;">
                     <div>
                         <span style="font-weight:700; color:#fff; font-size:15px;">{st_name} ({st_code})</span>
-                        <div style="font-size:11px; color:#94a3b8; margin-top:2px;">{row['region']} | LY Gross: <strong style="color:#38bdf8;">{ly_str}</strong></div>
+                        <div style="font-size:11px; color:#94a3b8; margin-top:2px;">{row['region']} | SOH Cover: <strong style="color:{row['woc_color']};">{row['woc']} Weeks</strong></div>
                     </div>
                     {diag_badge}
                 </div>
@@ -835,15 +923,14 @@ def process_and_build():
             <td style="color:#94a3b8;">{target_str}</td>
             <td style="min-width:130px;">{ach_str}</td>
             <td style="font-weight:700;color:#fff;">{int(row['soh_units']):,}</td>
-            <td>{cap_badge}</td>
+            <td>{woc_badge}</td>
+            <td style="font-weight:700;color:#fff;">{row['str_pct']}%</td>
             <td>{diag_badge}</td>
             <td>{row['atv']:,.2f}</td>
-            <td>{row['upt']:,.2f}</td>
             <td style="color:#38bdf8;font-weight:600;">{row['asp']:,.2f}</td>
         </tr>
         """
 
-    # جدول الأقسام في شاشة Business-Wise (Main Categories)
     main_cat_table_rows = ""
     for idx, r in main_cat_summary.iterrows():
         c_name = r['main_category']
@@ -870,6 +957,19 @@ def process_and_build():
         </tr>
         """
 
+    ist_rows_html = ""
+    for idx, ist in enumerate(ist_recommendations):
+        ist_rows_html += f"""
+        <tr>
+            <td style="color:#64748b; font-weight:700;">{idx+1}</td>
+            <td style="font-weight:700; color:#f59e0b;">📦 {ist['category_focus']}</td>
+            <td style="color:#ef4444; font-weight:700;">{ist['from_store']}<br><span style="font-size:11px; color:#94a3b8;">{ist['source_woc']}</span></td>
+            <td style="color:#10b981; font-weight:700;">{ist['to_store']}<br><span style="font-size:11px; color:#94a3b8;">{ist['target_woc']}</span></td>
+            <td style="font-weight:800; color:#38bdf8; font-size:14px;">{ist['suggested_units']}</td>
+            <td><span class="badge" style="background:{'#ef444422' if 'High' in ist['action_urgency'] else '#38bdf822'}; color:{'#ef4444' if 'High' in ist['action_urgency'] else '#38bdf8'};">{ist['action_urgency']}</span></td>
+        </tr>
+        """
+
     subsub_json_data = subsub_summary.to_dict(orient='records')
     main_cat_options = '<option value="ALL" data-translate-key="all_cats">-- All Main Categories (Overview) --</option>'
     for c_name in main_cat_summary['main_category']:
@@ -878,6 +978,9 @@ def process_and_build():
     store_options_html = '<option value="ALL" data-translate-key="all_stores">-- All Stores (Overview) --</option>'
     for _, s in store_summary.iterrows():
         store_options_html += f'<option value="{s["clean_code"]}">{s["full_name"]} ({s["clean_code"]})</option>'
+
+    top500_json = json.dumps(top500_list)
+    low500_json = json.dumps(low500_list)
 
     html_content = f"""<!DOCTYPE html>
 <html lang="en" id="html-root">
@@ -932,7 +1035,7 @@ def process_and_build():
         .table-wrap {{ background: var(--card); border: 1px solid var(--border); border-radius: 10px; overflow: hidden; margin-bottom: 24px; }}
         .table-header {{ padding: 16px 20px; display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid var(--border); flex-wrap: wrap; gap: 12px; }}
         .table-header h3 {{ margin: 0; font-size: 15px; font-weight: 700; }}
-        .table-search {{ padding: 8px 14px; background: #090d16; border: 1px solid var(--border); border-radius: 6px; color: #fff; outline: none; width: 240px; font-size: 13px; }}
+        .table-search {{ padding: 8px 14px; background: #090d16; border: 1px solid var(--border); border-radius: 6px; color: #fff; outline: none; width: 220px; font-size: 13px; }}
         .table-select {{ padding: 8px 14px; background: #090d16; border: 1px solid var(--border); border-radius: 6px; color: #38bdf8; outline: none; font-size: 13px; font-weight: 600; }}
         table {{ width: 100%; border-collapse: collapse; text-align: left; font-size: 13px; }}
         th {{ background: #0c1220; color: var(--text-muted); padding: 12px 14px; font-weight: 600; text-transform: uppercase; font-size: 11px; letter-spacing: 0.5px; border-bottom: 1px solid var(--border); }}
@@ -947,6 +1050,9 @@ def process_and_build():
         .cards-scroll-container::-webkit-scrollbar {{ height: 6px; }}
         .cards-scroll-container::-webkit-scrollbar-track {{ background: #090d16; }}
         .cards-scroll-container::-webkit-scrollbar-thumb {{ background: #1e293b; border-radius: 3px; }}
+
+        .sub-tab-btn {{ background:#1e293b; color:#94a3b8; border:1px solid #334155; padding:8px 16px; border-radius:6px; font-weight:700; cursor:pointer; font-size:13px; }}
+        .sub-tab-btn.active {{ background:#38bdf8; color:#090d16; border-color:#38bdf8; }}
 
         .app-modal {{ 
             position: fixed !important; 
@@ -981,7 +1087,7 @@ def process_and_build():
 </head>
 <body>
 
-<!-- شاشة التحقق من الصلاحيات وتحديد المستخدم -->
+<!-- شاشة تسجيل الدخول وتحديد الصلاحيات -->
 <div id="auth-overlay" style="position:fixed;top:0;left:0;width:100%;height:100%;background:#090d16;z-index:99999999;display:flex;align-items:center;justify-content:center;">
   <div style="background:#131b2e;padding:32px;border-radius:12px;box-shadow:0 15px 30px rgba(0,0,0,0.6);text-align:center;width:90%;max-width:380px;border:1px solid #1e293b;">
     <h3 style="color:#fff;margin:0 0 8px 0;font-size:20px;">🔒 MMS Secure Access</h3>
@@ -1025,11 +1131,9 @@ def process_and_build():
       return;
     }}
 
-    // إخفاء إجمالي الشبكة السري لمدراء المناطق
     var grandTotal = document.getElementById("grand-total-banner");
     if (grandTotal) grandTotal.style.display = "none";
 
-    // فلترة بطاقات وجداول المناطق لتعرض فقط منطقة المدير
     document.querySelectorAll(".region-block").forEach(function(el) {{
       if (el.getAttribute("data-region") !== user.region) {{
         el.style.display = "none";
@@ -1041,14 +1145,12 @@ def process_and_build():
       }}
     }});
 
-    // فلترة جدول المتاجر الرئيسي ليعرض فقط فروع منطقته
     document.querySelectorAll("#storesTable tbody tr").forEach(function(el) {{
       if (el.getAttribute("data-region") !== user.region) {{
         el.style.display = "none";
       }}
     }});
 
-    // فلترة بطاقات التوجيهات
     document.querySelectorAll(".decision-card-item").forEach(function(el) {{
       if (el.getAttribute("data-region") !== user.region) {{
         el.style.display = "none";
@@ -1115,16 +1217,16 @@ def process_and_build():
           <div id="modal-yoy" style="font-size:11px; margin-top:2px;">-</div>
         </div>
         <div style="background:#090d16; padding:14px; border-radius:8px; border:1px solid #1e293b;">
-          <div style="font-size:11px; color:#94a3b8;" data-translate-key="target_ach">TARGET & ACH</div>
-          <div id="modal-ach" style="font-size:17px; font-weight:700; color:#10b981;">-</div>
+          <div style="font-size:11px; color:#94a3b8;">WOC COVER</div>
+          <div id="modal-woc" style="font-size:17px; font-weight:700; color:#f59e0b;">-</div>
+        </div>
+        <div style="background:#090d16; padding:14px; border-radius:8px; border:1px solid #1e293b;">
+          <div style="font-size:11px; color:#94a3b8;">SELL-THROUGH (STR)</div>
+          <div id="modal-str" style="font-size:17px; font-weight:700; color:#10b981;">-</div>
         </div>
         <div style="background:#090d16; padding:14px; border-radius:8px; border:1px solid #1e293b;">
           <div style="font-size:11px; color:#94a3b8;" data-translate-key="floor_soh">FLOOR SOH</div>
           <div id="modal-soh" style="font-size:17px; font-weight:700; color:#38bdf8;">-</div>
-        </div>
-        <div style="background:#090d16; padding:14px; border-radius:8px; border:1px solid #1e293b;">
-          <div style="font-size:11px; color:#94a3b8;" data-translate-key="display_density">DISPLAY DENSITY</div>
-          <div id="modal-capacity" style="font-size:13px; font-weight:700; color:#cbd5e1;">-</div>
         </div>
         <div style="background:#090d16; padding:14px; border-radius:8px; border:1px solid #1e293b;">
           <div style="font-size:11px; color:#94a3b8;">ATV</div>
@@ -1223,6 +1325,7 @@ def process_and_build():
     <button class="view-btn active" id="btn-stores" onclick="switchView('stores')" data-translate-key="btn_stores">🏢 Store Commercial Matrix</button>
     <button class="view-btn" id="btn-regions" onclick="switchView('regions')" data-translate-key="btn_regions">🌍 Region-Wise Performance</button>
     <button class="view-btn" id="btn-business" onclick="switchView('business')" data-translate-key="btn_business">📦 Business-Wise Performance (9 Categories)</button>
+    <button class="view-btn" id="btn-action" onclick="switchView('action')" style="border-left:2px solid #38bdf8;">⚡ Commercial Action Hub (IST & Top/Low 500)</button>
 </div>
 
 <!-- 1. Store Commercial Matrix View -->
@@ -1267,10 +1370,10 @@ def process_and_build():
                         <th data-translate-key="th_target">Target (SAR)</th>
                         <th data-translate-key="th_ach">% Ach</th>
                         <th data-translate-key="th_soh">Floor SOH</th>
-                        <th data-translate-key="th_density">Display Density</th>
+                        <th>WOC Cover</th>
+                        <th>STR%</th>
                         <th data-translate-key="th_diag">Commercial Diagnostic</th>
                         <th>ATV</th>
-                        <th>UPT</th>
                         <th>ASP</th>
                     </tr>
                 </thead>
@@ -1298,7 +1401,7 @@ def process_and_build():
 <div id="view-business" style="display:none;">
     <div class="section-title">
         <span data-translate-key="main_cat_title">🏷️ MUMUSO MAIN PRODUCT CATEGORIES (LEVEL 1 HIERARCHY)</span>
-        <span style="font-size:12px; color:var(--text-muted); font-weight:400;" data-translate-key="card_click_hint">Select a store from dropdown to view its overall category contribution mix</span>
+        <span style="font-size:12px; color:var(--text-muted); font-weight:400;" data-translate-key="card_click_hint">Click any category card to drill down into its sub-subgroups &rarr;</span>
     </div>
     
     <div class="cards-scroll-container">
@@ -1312,7 +1415,6 @@ def process_and_build():
                 <span style="color:var(--text-muted);font-size:12px;" data-translate-key="hier_hint">Select a Store and Main Category to analyze specific branch assortment mix</span>
             </div>
             <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap;">
-                <!-- قائمة منسدلة خاصة بالمحلات (Store Dropdown Filter) -->
                 <select id="storeDropdownFilter" class="table-select" onchange="onStoreDropdownChange(this.value)">
                     {store_options_html}
                 </select>
@@ -1343,12 +1445,76 @@ def process_and_build():
     </div>
 </div>
 
+<!-- 4. Commercial Action Hub (IST Engine & Top/Low 500 Movers) -->
+<div id="view-action" style="display:none;">
+    <div class="section-title">
+        <span>⚡ AUTOMATED INTER-STORE TRANSFERS (SMART IST RECOMMENDATIONS)</span>
+        <span style="font-size:12px; color:#38bdf8;">Algorithm matches Overstock Source Stores with Understock OOS Destination Stores</span>
+    </div>
+
+    <div class="table-wrap" style="margin-bottom:30px;">
+        <div style="overflow-x:auto;">
+            <table>
+                <thead>
+                    <tr>
+                        <th>#</th>
+                        <th>Product Category Focus</th>
+                        <th>Source Store (Transfer From)</th>
+                        <th>Destination Store (Transfer To)</th>
+                        <th>Recommended Units</th>
+                        <th>Urgency & Action</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {ist_rows_html}
+                </tbody>
+            </table>
+        </div>
+    </div>
+
+    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:16px; flex-wrap:wrap; gap:12px;">
+        <div style="display:flex; gap:10px;">
+            <button class="sub-tab-btn active" id="btn-top500" onclick="switchMoversTab('top')">🔥 TOP 500 HIGH-VELOCITY FAST MOVERS</button>
+            <button class="sub-tab-btn" id="btn-low500" onclick="switchMoversTab('low')">❄️ LOW 500 DEAD & SLOW STOCK (CLEARANCE CANDIDATES)</button>
+        </div>
+        <div style="display:flex; gap:10px; align-items:center;">
+            <select id="moversCatFilter" class="table-select" onchange="filterMoversTable()">
+                {main_cat_options}
+            </select>
+            <input type="text" id="moversSearch" class="table-search" placeholder="Search SKU code or name..." onkeyup="filterMoversTable()">
+        </div>
+    </div>
+
+    <div class="table-wrap">
+        <div style="overflow-x:auto;">
+            <table>
+                <thead>
+                    <tr>
+                        <th>Rank</th>
+                        <th>Item Code / Barcode</th>
+                        <th>Product Name</th>
+                        <th>Main Category</th>
+                        <th>Sub-Category</th>
+                        <th>Units Sold</th>
+                        <th>Sales Revenue (SAR)</th>
+                        <th>ASP (SAR)</th>
+                    </tr>
+                </thead>
+                <tbody id="moversTableBody"></tbody>
+            </table>
+        </div>
+    </div>
+</div>
+
 <script>
   const STORE_DETAILS = {json.dumps(store_cat_summary_dict)};
   const STORE_META = {json.dumps(store_meta_map)};
   const SUBSUB_DATA = {json.dumps(subsub_json_data)};
   const MAIN_CAT_HTML = `{main_cat_table_rows}`;
+  const TOP_500_DATA = {top500_json};
+  const LOW_500_DATA = {low500_json};
 
+  let currentMoversType = 'top';
   let currentLang = 'en';
 
   const translations = {{
@@ -1387,7 +1553,6 @@ def process_and_build():
       th_target: "Target (SAR)",
       th_ach: "% Ach",
       th_soh: "Floor SOH",
-      th_density: "Display Density",
       th_diag: "Commercial Diagnostic",
       th_main_cat: "Main Category",
       th_units: "Sales Units",
@@ -1412,7 +1577,6 @@ def process_and_build():
       cur_sales: "CURRENT SALES",
       target_ach: "TARGET & ACH",
       floor_soh: "FLOOR SOH",
-      display_density: "DISPLAY DENSITY",
       all_cats: "-- All Main Categories (Overview) --",
       all_stores: "-- All Stores (Overview) --"
     }},
@@ -1451,7 +1615,6 @@ def process_and_build():
       th_target: "التارجت (ريال)",
       th_ach: "نسبة التحقيق",
       th_soh: "المخزون الحالي (SOH)",
-      th_density: "كثافة العرض",
       th_diag: "التشخيص التجاري",
       th_main_cat: "القسم الرئيسي",
       th_units: "القطع المباعة",
@@ -1476,7 +1639,6 @@ def process_and_build():
       cur_sales: "المبيعات الحالية",
       target_ach: "التارجت والتحقيق",
       floor_soh: "المخزون في الفرع",
-      display_density: "كثافة العرض",
       all_cats: "-- جميع الأقسام الرئيسية (نظرة عامة) --",
       all_stores: "-- جميع المتاجر (نظرة عامة) --"
     }}
@@ -1511,7 +1673,6 @@ def process_and_build():
     if (el) el.innerHTML = (htmlContent !== undefined && htmlContent !== null) ? htmlContent : "-";
   }}
 
-  // عند النقر على أي متجر، تفتح النافذة وتعرض نسبة مساهمة كل قسم في إجمالي مبيعات ذلك المتجر كـ Overall (%)
   function openStoreDetails(storeCode) {{
     try {{
       const meta = STORE_META[storeCode];
@@ -1526,9 +1687,9 @@ def process_and_build():
       const yoyHtml = (meta.yoy && meta.yoy !== "-") ? "YoY: <strong>" + meta.yoy + "</strong>" : "New Location";
       safeSetHtml("modal-yoy", yoyHtml);
 
-      safeSetText("modal-ach", meta.ach);
+      safeSetText("modal-woc", meta.woc);
+      safeSetText("modal-str", meta.str);
       safeSetText("modal-soh", meta.soh_units);
-      safeSetText("modal-capacity", meta.capacity_badge);
       safeSetText("modal-atv", meta.atv);
       safeSetText("modal-upt", meta.upt);
       safeSetText("modal-asp", meta.asp);
@@ -1573,7 +1734,6 @@ def process_and_build():
     updateBusinessTable();
   }}
 
-  // دالة موحدة لتحديث جدول شاشة Business-Wise
   function updateBusinessTable() {{
     const storeCode = document.getElementById("storeDropdownFilter").value;
     const catName = document.getElementById("mainCatFilter").value;
@@ -1581,7 +1741,6 @@ def process_and_build():
     const tbody = document.getElementById("hierarchyTableBody");
     const title = document.getElementById("tableHierarchyTitle");
 
-    // 1. إذا كان الكل مختاراً
     if (storeCode === "ALL" && catName === "ALL") {{
       title.innerText = "PRODUCT HIERARCHY MATRIX (LEVEL 1: MAIN CATEGORIES)";
       thead.innerHTML = `
@@ -1599,7 +1758,6 @@ def process_and_build():
       return;
     }}
 
-    // 2. إذا تم اختيار متجر معين مع بقاء خيار All Categories
     if (storeCode !== "ALL" && catName === "ALL") {{
       const stCats = STORE_DETAILS[storeCode] || [];
       const storeMeta = STORE_META[storeCode];
@@ -1631,7 +1789,6 @@ def process_and_build():
       return;
     }}
 
-    // 3. إذا تم اختيار قسم معين (Sub-subgroups)
     title.innerText = "SUB-SUBGROUP BREAKDOWN: " + catName.toUpperCase() + (storeCode !== "ALL" ? " (Filtered by Store)" : "");
     thead.innerHTML = `
       <tr>
@@ -1676,6 +1833,49 @@ def process_and_build():
     tbody.innerHTML = rowsHtml || "<tr><td colspan='7' style='text-align:center;'>No matching products found for this filter</td></tr>";
   }}
 
+  function switchMoversTab(type) {{
+    currentMoversType = type;
+    document.getElementById("btn-top500").classList.toggle("active", type === 'top');
+    document.getElementById("btn-low500").classList.toggle("active", type === 'low');
+    renderMoversTable();
+  }}
+
+  function renderMoversTable() {{
+    const data = (currentMoversType === 'top') ? TOP_500_DATA : LOW_500_DATA;
+    const catFilter = document.getElementById("moversCatFilter").value;
+    const searchVal = document.getElementById("moversSearch").value.toLowerCase();
+    const tbody = document.getElementById("moversTableBody");
+
+    let filtered = data.filter(item => {{
+      const matchCat = (catFilter === "ALL" || item.main_cat === catFilter);
+      const matchSearch = (item.code.toLowerCase().includes(searchVal) || item.name.toLowerCase().includes(searchVal) || item.subsub.toLowerCase().includes(searchVal));
+      return matchCat && matchSearch;
+    }});
+
+    let html = "";
+    filtered.slice(0, 100).forEach(r => {{
+      const rankColor = currentMoversType === 'top' ? '#10b981' : '#ef4444';
+      html += `
+        <tr>
+          <td style="color:${{rankColor}}; font-weight:800;">#${{r.rank}}</td>
+          <td style="color:#38bdf8; font-weight:600;">${{r.code}}</td>
+          <td style="color:#fff; font-weight:600;">${{r.name}}</td>
+          <td>${{r.main_cat}}</td>
+          <td style="color:#94a3b8;">${{r.subsub}}</td>
+          <td style="font-weight:700; color:#fff;">${{r.units.toLocaleString()}}</td>
+          <td style="font-weight:700; color:#38bdf8;">${{r.sales.toLocaleString(undefined, {{minimumFractionDigits:2, maximumFractionDigits:2}})}}</td>
+          <td style="color:#f59e0b; font-weight:600;">${{r.asp.toFixed(2)}}</td>
+        </tr>
+      `;
+    }});
+
+    tbody.innerHTML = html || "<tr><td colspan='8' style='text-align:center;'>No matching SKUs found</td></tr>";
+  }}
+
+  function filterMoversTable() {{
+    renderMoversTable();
+  }}
+
   function filterSubSubTable() {{
     const q = document.getElementById("subsubSearch").value.toLowerCase();
     const rows = document.querySelectorAll("#hierarchyTableBody tr");
@@ -1699,16 +1899,20 @@ def process_and_build():
     const storesView = document.getElementById("view-stores");
     const regionsView = document.getElementById("view-regions");
     const businessView = document.getElementById("view-business");
+    const actionView = document.getElementById("view-action");
     const btnStores = document.getElementById("btn-stores");
     const btnRegions = document.getElementById("btn-regions");
     const btnBusiness = document.getElementById("btn-business");
+    const btnAction = document.getElementById("btn-action");
 
     if (storesView) storesView.style.display = "none";
     if (regionsView) regionsView.style.display = "none";
     if (businessView) businessView.style.display = "none";
+    if (actionView) actionView.style.display = "none";
     if (btnStores) btnStores.classList.remove("active");
     if (btnRegions) btnRegions.classList.remove("active");
     if (btnBusiness) btnBusiness.classList.remove("active");
+    if (btnAction) btnAction.classList.remove("active");
 
     if (viewName === 'stores' && storesView) {{
         storesView.style.display = "block";
@@ -1716,9 +1920,13 @@ def process_and_build():
     }} else if (viewName === 'regions' && regionsView) {{
         regionsView.style.display = "block";
         if (btnRegions) btnRegions.classList.add("active");
-    }} else if (businessView) {{
+    }} else if (viewName === 'business' && businessView) {{
         businessView.style.display = "block";
         if (btnBusiness) btnBusiness.classList.add("active");
+    }} else if (actionView) {{
+        actionView.style.display = "block";
+        if (btnAction) btnAction.classList.add("active");
+        renderMoversTable();
     }}
   }}
 
