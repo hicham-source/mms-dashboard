@@ -205,7 +205,7 @@ def generate_claude_insights(store_summary, total_sales, total_target, overall_a
     api_key = os.getenv("ANTHROPIC_API_KEY")
     if not api_key:
         return {
-            "critical": f"Warehouse stock stands at {wh_stock:,} units; replenish understock stores (WOC < 4 weeks) directly from KSWH before initiating store-to-store transfers.",
+            "critical": f"Central warehouse holds {wh_stock:,} units; execute targeted replenishment orders for all understock stores (WOC < 4 weeks) immediately.",
             "attention": "Preserve 40,000-80,000 visual merchandise units in regional flagships while rotating out stagnant sub-categories.",
             "opportunity": "Scale high-velocity children's toys and beauty categories across underperforming Western Region branches to beat LY benchmarks."
         }
@@ -491,7 +491,7 @@ def process_and_build():
         store_cat_summary_dict[c_code] = cats_list
 
     # ==========================================
-    # 5. بناء محرك الأصناف بدون .0 ومع استبعاد الأصفار + محرك الإمداد والمناقلات
+    # 5. محرك تحليل الإمداد والمناقلات الشامل لكل المحلات (Multi-Store Replenishment Engine)
     # ==========================================
     sku_grouped = df_clean[df_clean['Actual Sales Amount'] > 0].groupby([item_code_col, item_name_col, 'main_category', 'sub_subgroup']).agg(
         sales=('Actual Sales Amount', 'sum'),
@@ -533,55 +533,50 @@ def process_and_build():
             "asp": float(r['asp'])
         })
 
-    # محرك الإمداد والمناقلات الذكي (WH Replenishment First, then IST)
+    # تحليل شامل لجميع المتاجر التي تحتاج إلى تعبئة أو مناقلة
     replenishment_recommendations = []
-    low_woc_stores = store_summary[(store_summary['woc'] < 4.5) & (store_summary['woc'] > 0)].sort_values(by='woc', ascending=True)
-    high_woc_stores = store_summary[store_summary['woc'] > 10.0].sort_values(by='woc', ascending=False)
-    category_focus_list = list(main_cat_summary['main_category'].head(6))
-    cat_idx = 0
+    
+    # تصنيف المحلات حسب تغطية المخزون (WOC)
+    understock_stores = store_summary[store_summary['woc'] < 5.0].sort_values(by='woc', ascending=True)
+    overstock_stores = store_summary[store_summary['woc'] > 10.0].sort_values(by='woc', ascending=False)
 
-    for _, low_s in low_woc_stores.iterrows():
-        c_focus = category_focus_list[cat_idx % len(category_focus_list)]
-        cat_idx += 1
-        suggested_qty = 2000
+    for _, store in understock_stores.iterrows():
+        # تحديد الأقسام الأكثر مبيعاً في هذا المتجر بناءً على مبيعات سبتمبر
+        st_items = store_cat_summary_dict.get(store['clean_code'], [])
+        focus_cat = st_items[0]['main_category'] if st_items else "General Assortment"
+        
+        # حساب الكمية المقترحة للتعبئة بناءً على معدل بيع سبتمبر (لتغطية 6 أسابيع)
+        weekly_rate = store['weekly_sales_units'] if pd.notna(store['weekly_sales_units']) and store['weekly_sales_units'] > 0 else 100
+        target_stock = weekly_rate * 6.0
+        deficit_qty = int(max(target_stock - store['soh_units'], 500))
 
-        if wh_total_stock > 10000:
+        if wh_total_stock > 5000:
+            # اقتراح أمر توريد من المستودع الرئيسي KSWH
             replenishment_recommendations.append({
                 "type": "WH Replenishment",
                 "from_source": f"Central Warehouse (KSWH)",
-                "to_store": f"{low_s['full_name']} ({low_s['clean_code']})",
-                "category_focus": c_focus,
-                "suggested_units": f"{suggested_qty:,} Pcs",
-                "source_status": f"WH Available ({wh_total_stock:,} Pcs)",
-                "target_status": f"{low_s['woc']} Wks (OOS Risk)",
+                "to_store": f"{store['full_name']} ({store['clean_code']})",
+                "category_focus": focus_cat,
+                "suggested_units": f"{deficit_qty:,} Pcs",
+                "source_status": f"WH Stock Available",
+                "target_status": f"{store['woc']} Wks (OOS Risk)",
                 "urgency": "High Priority (WH Order)"
             })
         else:
-            if not high_woc_stores.empty:
-                high_s = high_woc_stores.iloc[0]
-                if low_s['clean_code'] != high_s['clean_code']:
+            # إذا نفد المستودع، نبحث عن فرع فائض للمناقلة (IST)
+            if not overstock_stores.empty:
+                donor = overstock_stores.iloc[0]
+                if store['clean_code'] != donor['clean_code']:
                     replenishment_recommendations.append({
                         "type": "Store Transfer (IST)",
-                        "from_source": f"{high_s['full_name']} ({high_s['clean_code']})",
-                        "to_store": f"{low_s['full_name']} ({low_s['clean_code']})",
-                        "category_focus": c_focus,
-                        "suggested_units": f"1,500 Pcs",
-                        "source_status": f"{high_s['woc']} Wks (Overstocked)",
-                        "target_status": f"{low_s['woc']} Wks (OOS Risk)",
+                        "from_source": f"{donor['full_name']} ({donor['clean_code']})",
+                        "to_store": f"{store['full_name']} ({store['clean_code']})",
+                        "category_focus": focus_cat,
+                        "suggested_units": f"{min(deficit_qty, 1500):,} Pcs",
+                        "source_status": f"{donor['woc']} Wks (Overstocked)",
+                        "target_status": f"{store['woc']} Wks (OOS Risk)",
                         "urgency": "Store Transfer (WH Stock Empty)"
                     })
-
-    if not replenishment_recommendations:
-        replenishment_recommendations.append({
-            "type": "WH Replenishment",
-            "from_source": "Central Warehouse (KSWH)",
-            "to_store": "MMS Riyadh Solitaire (K108)",
-            "category_focus": "Children's Goods & Beauty",
-            "suggested_units": "2,500 Pcs",
-            "source_status": f"WH Available ({wh_total_stock:,} Pcs)",
-            "target_status": "3.8 Wks (OOS Risk)",
-            "urgency": "High Priority (WH Order)"
-        })
 
     top_main_cats = set(main_cat_summary.head(3)['main_category'])
     def mumuso_commercial_engine(row):
@@ -767,7 +762,7 @@ def process_and_build():
                 y_col = "#10b981" if yoy_v >= 0 else "#ef4444"
                 yoy_cell = f'<span style="color:{y_col}; font-weight:700;">{yoy_v:+.1f}%</span>'
             else:
-                ly_str = '<span style="color:#64748b;" data-translate-key="new_store">New Store</span>'
+                ly_str = '<span style="color:#64748b;">New Store</span>'
                 yoy_cell = '<span style="color:#64748b;">-</span>'
 
             reg_rows += f"""
@@ -800,14 +795,14 @@ def process_and_build():
                     <thead>
                         <tr>
                             <th>#</th>
-                            <th data-translate-key="th_code">Code</th>
-                            <th data-translate-key="th_store">Full Store Name</th>
-                            <th data-translate-key="th_sales">Current Sales (SAR)</th>
-                            <th data-translate-key="th_ly">LY Gross Sales (SAR)</th>
-                            <th data-translate-key="th_yoy">YoY Growth</th>
-                            <th data-translate-key="th_target">Target (SAR)</th>
-                            <th data-translate-key="th_ach">% Ach</th>
-                            <th data-translate-key="th_soh">Floor SOH</th>
+                            <th>Code</th>
+                            <th>Full Store Name</th>
+                            <th>Current Sales (SAR)</th>
+                            <th>LY Gross Sales (SAR)</th>
+                            <th>YoY Growth</th>
+                            <th>Target (SAR)</th>
+                            <th>% Ach</th>
+                            <th>Floor SOH</th>
                             <th>WOC</th>
                             <th>STR%</th>
                             <th>ASP</th>
@@ -816,7 +811,7 @@ def process_and_build():
                     <tbody>
                         {reg_rows}
                         <tr style="background:#0c1220; font-weight:700; border-top:2px solid #38bdf8;">
-                            <td colspan="3" style="color:#38bdf8; font-size:13px;" data-translate-key="total_reg">TOTAL {reg_name.upper()} ({reg_mgr})</td>
+                            <td colspan="3" style="color:#38bdf8; font-size:13px;">TOTAL {reg_name.upper()} ({reg_mgr})</td>
                             <td style="color:#fff; font-size:14px;">{r_sales:,.2f}</td>
                             <td style="color:#38bdf8; font-size:14px;">{reg_ly_tot:,.2f}</td>
                             <td>{yoy_badge}</td>
@@ -837,7 +832,7 @@ def process_and_build():
     grand_total_html = f"""
     <div id="grand-total-banner" style="background:#131b2e; border:2px solid #2563eb; border-radius:12px; padding:18px 24px; display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:16px; margin-bottom:30px;">
         <div>
-            <div style="font-size:13px; color:#38bdf8; font-weight:700; text-transform:uppercase;" data-translate-key="network_total">Network Grand Total (All Regions)</div>
+            <div style="font-size:13px; color:#38bdf8; font-weight:700; text-transform:uppercase;">Network Grand Total (All Regions)</div>
             <div style="font-size:22px; font-weight:800; color:#fff; margin-top:2px;">{total_sales:,.0f} <span style="font-size:13px; font-weight:400; color:#94a3b8;">SAR</span></div>
         </div>
         <div style="display:flex; gap:20px; flex-wrap:wrap; align-items:center;">
@@ -1499,9 +1494,9 @@ def process_and_build():
                     <tr>
                         <th>#</th>
                         <th>Action Type</th>
+                        <th>Store Name & Code</th>
                         <th>Product Category Focus</th>
                         <th>Source (Warehouse / Overstock Store)</th>
-                        <th>Destination Store (OOS Risk)</th>
                         <th>Suggested Units</th>
                         <th>Urgency & Status</th>
                     </tr>
