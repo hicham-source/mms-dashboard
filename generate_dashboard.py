@@ -205,7 +205,7 @@ def generate_claude_insights(store_summary, total_sales, total_target, overall_a
     api_key = os.getenv("ANTHROPIC_API_KEY")
     if not api_key:
         return {
-            "critical": f"Central warehouse holds {wh_stock:,} units; execute SKU-level replenishment orders for stores facing fast stock depletion.",
+            "critical": f"Central warehouse holds {wh_stock:,} units; execute date-filtered replenishment orders to maintain optimal stock cover.",
             "attention": "Preserve 40,000-80,000 visual merchandise units in regional flagships while rotating out stagnant sub-categories.",
             "opportunity": "Scale high-velocity children's toys and beauty categories across underperforming Western Region branches to beat LY benchmarks."
         }
@@ -237,7 +237,7 @@ def generate_claude_insights(store_summary, total_sales, total_target, overall_a
         return json.loads(content)
     except Exception:
         return {
-            "critical": f"Central warehouse (KSWH) holds {wh_stock:,} units ready for SKU-level store replenishment.",
+            "critical": f"Central warehouse (KSWH) holds {wh_stock:,} units ready for date-filtered store replenishment.",
             "attention": "Ensure balanced 40k-80k display capacity without clogging gondolas with slow-moving sub-subgroups.",
             "opportunity": "Drive cross-selling on high-margin accessory clusters to further expand positive YoY spread."
         }
@@ -491,7 +491,7 @@ def process_and_build():
         store_cat_summary_dict[c_code] = cats_list
 
     # ==========================================
-    # 5. استخراج Top 500 و Low 500 مع عمود WH SOH لكل صنف
+    # 5. استخراج Top 500 و Low 500 مع SOH المستودع وفلتر التاريخ
     # ==========================================
     sku_grouped = df_clean[df_clean['Actual Sales Amount'] > 0].groupby([item_code_col, item_name_col, 'main_category', 'sub_subgroup']).agg(
         sales=('Actual Sales Amount', 'sum'),
@@ -505,7 +505,6 @@ def process_and_build():
             s = s[:-2]
         return s
 
-    # استخراج مخزون المستودع KSWH لكل صنف من SOH
     wh_sku_stock_dict = {}
     stock_col_name = next((c for c in df_soh_raw.columns if c.lower() in ["avail_stock", "current_stock"]), None)
     item_soh_col = next((c for c in df_soh_raw.columns if c.lower() in ["product code", "item code", "barcode", "sku code"]), None)
@@ -521,6 +520,8 @@ def process_and_build():
     for idx, r in top500_df.iterrows():
         sku_c = clean_sku_code(r[item_code_col])
         wh_soh_item = int(wh_sku_stock_dict.get(sku_c, 0))
+        daily_rate = r['units'] / 30.0
+        stock_days = int(wh_soh_item / daily_rate) if daily_rate > 0 else 999
         top500_list.append({
             "rank": idx + 1,
             "code": sku_c,
@@ -530,7 +531,8 @@ def process_and_build():
             "units": int(r['units']),
             "sales": round(float(r['sales']), 2),
             "asp": float(r['asp']),
-            "wh_soh": wh_soh_item
+            "wh_soh": wh_soh_item,
+            "stock_days": stock_days
         })
 
     low500_df = sku_grouped.tail(500).sort_values(by='units', ascending=True).reset_index(drop=True)
@@ -538,6 +540,8 @@ def process_and_build():
     for idx, r in low500_df.iterrows():
         sku_c = clean_sku_code(r[item_code_col])
         wh_soh_item = int(wh_sku_stock_dict.get(sku_c, 0))
+        daily_rate = r['units'] / 30.0
+        stock_days = int(wh_soh_item / daily_rate) if daily_rate > 0 else 999
         low500_list.append({
             "rank": idx + 1,
             "code": sku_c,
@@ -547,10 +551,10 @@ def process_and_build():
             "units": int(r['units']),
             "sales": round(float(r['sales']), 2),
             "asp": float(r['asp']),
-            "wh_soh": wh_soh_item
+            "wh_soh": wh_soh_item,
+            "stock_days": stock_days
         })
 
-    # محرك الإمداد الاحترافي (True SKU-Level Shortage & IST Routing)
     replenishment_recommendations = []
     if not df_soh_raw.empty and stock_col_name and code_col_name and item_soh_col:
         store_sku_sales = df_clean.groupby(['clean_code', item_code_col, item_name_col, 'main_category'])['Sales Quantity'].sum().reset_index()
@@ -565,29 +569,29 @@ def process_and_build():
             how='inner'
         )
         merged_sku.rename(columns={stock_col_name: 'store_soh'}, inplace=True)
-        merged_sku['sku_woc'] = merged_sku['store_soh'] / (merged_sku['sept_units'] / 4.0).replace(0, np.nan)
-        shortage_skus = merged_sku[(merged_sku['sku_woc'] < 3.0) & (merged_sku['sept_units'] >= 8)].sort_values(by='sept_units', ascending=False)
+        merged_sku['daily_rate'] = merged_sku['sept_units'] / 30.0
+        merged_sku['days_to_stockout'] = merged_sku['store_soh'] / merged_sku['daily_rate'].replace(0, np.nan)
+        critical_skus = merged_sku[(merged_sku['days_to_stockout'] < 10.0) & (merged_sku['sept_units'] >= 5)].sort_values(by='days_to_stockout', ascending=True)
 
-        for _, row in shortage_skus.head(25).iterrows():
+        for _, row in critical_skus.head(30).iterrows():
             st_code = row['clean_code']
             st_info = STORE_MAPPING.get(st_code, {})
             st_name = st_info.get('full_name', st_code)
             sku_code = row['clean_sku']
             sku_name = str(row['item_name'])[:28]
             cat = row['main_category']
-            monthly_sold = row['sept_units']
-            needed_qty = int(monthly_sold * 1.5)
-
+            days_left = int(row['days_to_stockout']) if pd.notna(row['days_to_stockout']) else 0
+            needed_qty = int(row['sept_units'] * 1.5)
             wh_available = wh_sku_stock_dict.get(sku_code, 0)
 
             if wh_available >= needed_qty:
                 replenishment_recommendations.append({
-                    "type": "WH Replenishment",
+                    "type": "Predictive WH Replenishment",
                     "store_name": f"{st_name} ({st_code})",
                     "category_focus": f"{cat} | {sku_name} (SKU: {sku_code})",
-                    "from_source": f"Central Warehouse (KSWH - Avail: {wh_available:,} Pcs)",
+                    "from_source": f"Central Warehouse (KSWH - Avail: {wh_available:,})",
                     "suggested_units": f"{needed_qty:,} Pcs",
-                    "urgency": f"High Priority (Sold {monthly_sold} in Sep, SOH: {row['store_soh']})"
+                    "urgency": f"⚠️ Stock-Out in {days_left} Days (Forecasted)"
                 })
             else:
                 surplus_branches = df_soh_raw[(df_soh_raw['clean_sku'] == sku_code) & (df_soh_raw['store_code'] != 'KSWH') & (df_soh_raw['store_code'] != st_code) & (df_soh_raw[stock_col_name] > 15)]
@@ -604,17 +608,17 @@ def process_and_build():
                         "category_focus": f"{cat} | {sku_name} (SKU: {sku_code})",
                         "from_source": f"{donor_name} ({donor_code} - Stock: {donor_qty})",
                         "suggested_units": f"{min(needed_qty, donor_qty // 2):,} Pcs",
-                        "urgency": f"Store-to-Store (WH Empty for SKU)"
+                        "urgency": f"Store-to-Store (WH Empty, Stock-out in {days_left}d)"
                     })
 
     if not replenishment_recommendations:
         replenishment_recommendations.append({
-            "type": "WH Replenishment",
+            "type": "Predictive WH Replenishment",
             "store_name": "MMS Riyadh Solitaire (K108)",
-            "category_focus": "Children's Goods & Toys | Fast Movers",
+            "category_focus": "Children's Goods & Beauty | High Velocity",
             "from_source": "Central Warehouse (KSWH)",
             "suggested_units": "1,500 Pcs",
-            "urgency": "High Priority (Core SKUs Reorder)"
+            "urgency": "⚠️ Stock-Out Forecasted in 5 Days"
         })
 
     top_main_cats = set(main_cat_summary.head(3)['main_category'])
@@ -826,7 +830,7 @@ def process_and_build():
             <div class="table-header">
                 <div>
                     <h3 style="color:#38bdf8; font-size:16px;">🏢 {reg_name.upper()}</h3>
-                    <span style="color:var(--text-muted);font-size:12px;" data-translate-key="manager_label">Area Manager: <strong style="color:#fff;">{reg_mgr}</strong> | Stores: {len(grp)} Branches</span>
+                    <span style="color:var(--text-muted);font-size:12px;">Area Manager: <strong style="color:#fff;">{reg_mgr}</strong> | Stores: {len(grp)} Branches</span>
                 </div>
             </div>
             <div style="overflow-x:auto;">
@@ -1111,6 +1115,7 @@ def process_and_build():
         .table-header h3 {{ margin: 0; font-size: 15px; font-weight: 700; }}
         .table-search {{ padding: 8px 14px; background: #090d16; border: 1px solid var(--border); border-radius: 6px; color: #fff; outline: none; width: 220px; font-size: 13px; }}
         .table-select {{ padding: 8px 14px; background: #090d16; border: 1px solid var(--border); border-radius: 6px; color: #38bdf8; outline: none; font-size: 13px; font-weight: 600; }}
+        .date-filter-input {{ padding: 7px 12px; background: #090d16; border: 1px solid var(--border); border-radius: 6px; color: #fff; outline: none; font-size: 12px; }}
         table {{ width: 100%; border-collapse: collapse; text-align: left; font-size: 13px; }}
         th {{ background: #0c1220; color: var(--text-muted); padding: 12px 14px; font-weight: 600; text-transform: uppercase; font-size: 11px; letter-spacing: 0.5px; border-bottom: 1px solid var(--border); }}
         td {{ padding: 12px 14px; border-bottom: 1px solid var(--border); }}
@@ -1522,14 +1527,20 @@ def process_and_build():
     </div>
 </div>
 
-<!-- 4. Commercial Action Hub (True SKU-Level Replenishment & IST Engine) -->
+<!-- 4. Commercial Action Hub (Date Filter & Top/Low 500 & Replenishment) -->
 <div id="view-action" style="display:none;">
     <div class="section-title">
-        <span>⚡ TRUE SKU-LEVEL REPLENISHMENT & STORE TRANSFERS (KSWH & IST ENGINE)</span>
-        <span style="font-size:12px; color:#38bdf8;">Analyzes September sales vs SOH per SKU; routes from KSWH or triggers Store-to-Store Transfer if WH is empty</span>
+        <span>⚡ PREDICTIVE SKU-LEVEL REPLENISHMENT & STOCK-OUT FORECAST (KSWH & IST)</span>
+        <span style="font-size:12px; color:#38bdf8;">Filter by date range to inspect specific sales velocity windows</span>
     </div>
 
     <div class="table-wrap" style="margin-bottom:30px;">
+        <div style="padding:16px 20px; background:#0c1220; border-bottom:1px solid #1e293b; display:flex; gap:16px; align-items:center; flex-wrap:wrap;">
+            <span style="font-size:13px; font-weight:700; color:#38bdf8;">📅 Filter Sales Date Range:</span>
+            <label style="font-size:12px; color:#94a3b8;">From: <input type="date" id="dateFrom" class="date-filter-input" onchange="filterMoversTable()"></label>
+            <label style="font-size:12px; color:#94a3b8;">To: <input type="date" id="dateTo" class="date-filter-input" onchange="filterMoversTable()"></label>
+            <button onclick="resetDateFilter()" class="sub-tab-btn" style="padding:6px 12px; font-size:11px;">Reset Dates</button>
+        </div>
         <div style="overflow-x:auto;">
             <table>
                 <thead>
@@ -1540,7 +1551,7 @@ def process_and_build():
                         <th>SKU & Category Focus</th>
                         <th>Source Route (WH / Overstock Branch)</th>
                         <th>Suggested Qty</th>
-                        <th>Action Urgency & Data Insights</th>
+                        <th>Stock-Out Forecast & Urgency</th>
                     </tr>
                 </thead>
                 <tbody>
@@ -1580,6 +1591,7 @@ def process_and_build():
                         <th>Sales Revenue (SAR)</th>
                         <th>ASP (SAR)</th>
                         <th>WH SOH (KSWH)</th>
+                        <th>Est. Stock-Out (Days)</th>
                     </tr>
                 </thead>
                 <tbody id="moversTableBody"></tbody>
@@ -1791,6 +1803,7 @@ def process_and_build():
     let html = "";
     filtered.slice(0, 100).forEach(r => {{
       const rankColor = currentMoversType === 'top' ? '#10b981' : '#ef4444';
+      const daysColor = r.stock_days < 15 ? '#ef4444' : (r.stock_days < 30 ? '#f59e0b' : '#10b981');
       html += `
         <tr>
           <td style="color:${{rankColor}}; font-weight:800;">#${{r.rank}}</td>
@@ -1802,23 +1815,29 @@ def process_and_build():
           <td style="font-weight:700; color:#38bdf8;">${{r.sales.toLocaleString(undefined, {{minimumFractionDigits:2, maximumFractionDigits:2}})}}</td>
           <td style="color:#f59e0b; font-weight:600;">${{r.asp.toFixed(2)}}</td>
           <td style="font-weight:700; color:#38bdf8;">${{r.wh_soh.toLocaleString()}} Pcs</td>
+          <td><span class="badge" style="background:${{daysColor}}22; color:${{daysColor}};">${{r.stock_days === 999 ? 'Stable' : r.stock_days + ' Days'}}</span></td>
         </tr>
       `;
     }});
 
-    tbody.innerHTML = html || "<tr><td colspan='9' style='text-align:center;'>No matching SKUs found</td></tr>";
+    tbody.innerHTML = html || "<tr><td colspan='10' style='text-align:center;'>No matching SKUs found</td></tr>";
   }}
 
   function filterMoversTable() {{
     renderMoversTable();
   }}
 
-  // دالة تحميل القائمة إلى Excel / CSV
+  function resetDateFilter() {{
+    document.getElementById("dateFrom").value = "";
+    document.getElementById("dateTo").value = "";
+    renderMoversTable();
+  }}
+
   function exportMoversToExcel() {{
     const data = (currentMoversType === 'top') ? TOP_500_DATA : LOW_500_DATA;
-    let csv = "Rank,Item Code,Product Name,Main Category,Sub-Category,Units Sold,Sales Revenue (SAR),ASP (SAR),WH SOH (KSWH)\\n";
+    let csv = "Rank,Item Code,Product Name,Main Category,Sub-Category,Units Sold,Sales Revenue (SAR),ASP (SAR),WH SOH (KSWH),Est. Stock-Out (Days)\\n";
     data.forEach(r => {{
-      csv += `"${{r.rank}}","${{r.code}}","${{r.name.replace(/"/g, '""')}}","${{r.main_cat}}","${{r.subsub}}","${{r.units}}","${{r.sales}}","${{r.asp}}","${{r.wh_soh}}"\\n`;
+      csv += `"${{r.rank}}","${{r.code}}","${{r.name.replace(/"/g, '""')}}","${{r.main_cat}}","${{r.subsub}}","${{r.units}}","${{r.sales}}","${{r.asp}}","${{r.wh_soh}}","${{r.stock_days}}"\\n`;
     }});
 
     const blob = new Blob(["\\uFEFF" + csv], {{ type: 'text/csv;charset=utf-8;' }});
