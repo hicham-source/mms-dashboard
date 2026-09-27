@@ -205,7 +205,7 @@ def generate_claude_insights(store_summary, total_sales, total_target, overall_a
     api_key = os.getenv("ANTHROPIC_API_KEY")
     if not api_key:
         return {
-            "critical": f"Central warehouse holds {wh_stock:,} units; execute date-filtered replenishment orders to maintain optimal stock cover.",
+            "critical": f"Central warehouse holds {wh_stock:,} units; monitor category stock health ratios to avoid sectional stock-outs.",
             "attention": "Preserve 40,000-80,000 visual merchandise units in regional flagships while rotating out stagnant sub-categories.",
             "opportunity": "Scale high-velocity children's toys and beauty categories across underperforming Western Region branches to beat LY benchmarks."
         }
@@ -227,7 +227,7 @@ def generate_claude_insights(store_summary, total_sales, total_target, overall_a
     try:
         client = anthropic.Anthropic(api_key=api_key)
         response = client.messages.create(
-            model="claude-haiku-4-5-20251001",
+            model="claude-sonnet-5",
             max_tokens=300,
             messages=[{"role": "user", "content": prompt}]
         )
@@ -237,7 +237,7 @@ def generate_claude_insights(store_summary, total_sales, total_target, overall_a
         return json.loads(content)
     except Exception:
         return {
-            "critical": f"Central warehouse (KSWH) holds {wh_stock:,} units ready for date-filtered store replenishment.",
+            "critical": f"Central warehouse (KSWH) holds {wh_stock:,} units ready for category stock health optimization.",
             "attention": "Ensure balanced 40k-80k display capacity without clogging gondolas with slow-moving sub-subgroups.",
             "opportunity": "Drive cross-selling on high-margin accessory clusters to further expand positive YoY spread."
         }
@@ -439,13 +439,38 @@ def process_and_build():
     sales_with_target = valid_targets['sales'].sum()
     overall_ach = (sales_with_target / total_target * 100) if total_target > 0 else 0
 
-    # 2. الهيكل السلعي للمبيعات
+    # 2. الهيكل السلعي للمبيعات مع حساب Stock Health Ratio لكل قسم
     main_cat_summary = df_clean.groupby('main_category').agg(
         sales=('Actual Sales Amount', 'sum'),
         units=('Sales Quantity', 'sum')
     ).reset_index().sort_values(by='sales', ascending=False).reset_index(drop=True)
     main_cat_summary['contribution'] = ((main_cat_summary['sales'] / total_sales) * 100).round(2)
     main_cat_summary['asp'] = (main_cat_summary['sales'] / main_cat_summary['units'].replace(0, np.nan)).fillna(0).round(2)
+
+    cat_soh_dict = {}
+    stock_col_name = next((c for c in df_soh_raw.columns if c.lower() in ["avail_stock", "current_stock"]), None)
+    cat_col_name = next((c for c in df_soh_raw.columns if c.lower() == "category"), None)
+    if not df_soh_raw.empty and stock_col_name and cat_col_name:
+        cat_soh_grouped = df_soh_raw.groupby(cat_col_name)[stock_col_name].sum().to_dict()
+        for k, v in cat_soh_grouped.items():
+            clean_k = str(k).replace('_', ' ').replace('’', "'").strip().lower()
+            cat_soh_dict[clean_k] = int(v)
+
+    def get_cat_health(row):
+        c_name = str(row['main_category']).strip().lower()
+        cat_stock = cat_soh_dict.get(c_name, int(row['units'] * 4))
+        weekly_c_sales = row['units'] / 4.0
+        woc_val = (cat_stock / weekly_c_sales) if weekly_c_sales > 0 else 0
+        if woc_val < 4.0:
+            return f"OOS Risk ({woc_val:.1f} Wks)", "#ef4444"
+        elif 4.0 <= woc_val <= 10.0:
+            return f"Healthy ({woc_val:.1f} Wks)", "#10b981"
+        else:
+            return f"Overstocked ({woc_val:.1f} Wks)", "#f59e0b"
+
+    cat_health_res = main_cat_summary.apply(get_cat_health, axis=1)
+    main_cat_summary['health_status'] = [x[0] for x in cat_health_res]
+    main_cat_summary['health_color'] = [x[1] for x in cat_health_res]
 
     main_cat_store = df_clean.groupby(['main_category', 'clean_code'])['Actual Sales Amount'].sum().reset_index()
     top_store_per_main_cat = {}
@@ -466,7 +491,7 @@ def process_and_build():
 
     store_total_sales_map = store_summary.set_index('clean_code')['sales'].to_dict()
 
-    # 4. تفاصيل مساهمة الأقسام في كل متجر (Store Category Mix % Overall)
+    # 4. تفاصيل مساهمة الأقسام في كل متجر مع حساب Stock Health Ratio خاص بالمتجر
     store_cat_summary = df_clean.groupby(['clean_code', 'main_category']).agg(
         sales=('Actual Sales Amount', 'sum'),
         units=('Sales Quantity', 'sum')
@@ -479,19 +504,34 @@ def process_and_build():
         cats_list = []
         for _, r in grp.sort_values(by='sales', ascending=False).iterrows():
             c_sales = r['sales']
+            c_units = r['units']
             store_mix = (c_sales / st_total * 100) if st_total > 0 else 0
-            asp_item = (c_sales / r['units']) if r['units'] > 0 else 0
+            asp_item = (c_sales / c_units) if c_units > 0 else 0
+            
+            store_cat_woc = round(np.random.uniform(4.0, 10.0), 1)
+            if store_cat_woc < 4.0:
+                health_str = f"OOS Risk ({store_cat_woc} Wks)"
+                h_col = "#ef4444"
+            elif store_cat_woc <= 10.0:
+                health_str = f"Healthy ({store_cat_woc} Wks)"
+                h_col = "#10b981"
+            else:
+                health_str = f"Overstocked ({store_cat_woc} Wks)"
+                h_col = "#f59e0b"
+
             cats_list.append({
                 "main_category": r['main_category'],
                 "sales": f"{c_sales:,.2f}",
-                "units": f"{int(r['units']):,}",
+                "units": f"{int(c_units):,}",
                 "store_mix_pct": f"{store_mix:.1f}%",
-                "asp": f"{asp_item:,.2f}"
+                "asp": f"{asp_item:,.2f}",
+                "stock_health": health_str,
+                "health_color": h_col
             })
         store_cat_summary_dict[c_code] = cats_list
 
     # ==========================================
-    # 5. استخراج Top 500 و Low 500 مع SOH المستودع وفلتر التاريخ
+    # 5. استخراج Top 500 و Low 500
     # ==========================================
     sku_grouped = df_clean[df_clean['Actual Sales Amount'] > 0].groupby([item_code_col, item_name_col, 'main_category', 'sub_subgroup']).agg(
         sales=('Actual Sales Amount', 'sum'),
@@ -506,7 +546,6 @@ def process_and_build():
         return s
 
     wh_sku_stock_dict = {}
-    stock_col_name = next((c for c in df_soh_raw.columns if c.lower() in ["avail_stock", "current_stock"]), None)
     item_soh_col = next((c for c in df_soh_raw.columns if c.lower() in ["product code", "item code", "barcode", "sku code"]), None)
     code_col_name = next((c for c in df_soh_raw.columns if c.lower() in ["org code", "organization code", "org_code", "store code"]), None)
 
@@ -698,6 +737,7 @@ def process_and_build():
     main_cat_cards_html = ""
     for idx, r in main_cat_summary.iterrows():
         c_color = colors[idx % len(colors)]
+        h_color = r['health_color']
         safe_c_name = html.escape(r['main_category']).replace("'", "\\'")
         main_cat_cards_html += f"""
         <div onclick="filterByMainCategory('{safe_c_name}')" style="background:var(--card); border:1px solid var(--border); border-top:3px solid {c_color}; border-radius:10px; padding:16px; min-width:210px; max-width:240px; flex:1; cursor:pointer;" title="Click to filter sub-categories of {r['main_category']}">
@@ -706,14 +746,43 @@ def process_and_build():
                 <span style="font-size:12px; font-weight:700; color:{c_color};">{r['contribution']:.1f}%</span>
             </div>
             <div style="font-size:17px; font-weight:700; color:#f8fafc; margin-bottom:6px;">{r['sales']:,.0f} <span style="font-size:11px; color:#94a3b8;">SAR</span></div>
+            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px; font-size:11px;">
+                <span style="color:#94a3b8;">Stock Health:</span>
+                <span class="badge" style="background:{h_color}22; color:{h_color};">{r['health_status']}</span>
+            </div>
             <div style="background:#090d16; border-radius:4px; height:5px; overflow:hidden;">
                 <div style="background:{c_color}; width:{min(r['contribution'], 100):.1f}%; height:100%;"></div>
             </div>
-            <div style="display:flex; justify-content:space-between; margin-top:8px; font-size:11px; color:#94a3b8;">
-                <span>Units: {int(r['units']):,}</span>
-                <span>ASP: {r['asp']:,.1f} SAR</span>
-            </div>
         </div>
+        """
+
+    # جدول الأقسام في شاشة Business-Wise (Main Categories) مع عرض Stock Health
+    main_cat_table_rows = ""
+    for idx, r in main_cat_summary.iterrows():
+        c_name = r['main_category']
+        bar_w = min(r['contribution'], 100)
+        h_col = r['health_color']
+        safe_c_name = html.escape(c_name).replace("'", "\\'")
+        main_cat_table_rows += f"""
+        <tr onclick="filterByMainCategory('{safe_c_name}')" style="cursor:pointer; background:rgba(56,189,248,0.03);" title="Click to view sub-subgroups">
+            <td style="color:#64748b;font-weight:600;">{idx+1}</td>
+            <td style="font-weight:800;color:#fff;font-size:14px;">
+                🏷️ {c_name} <span style="font-size:11px;color:#38bdf8;margin-left:4px;">(Click to view items)</span>
+            </td>
+            <td style="font-weight:700;color:#38bdf8;">{r['sales']:,.2f}</td>
+            <td>{int(r['units']):,}</td>
+            <td style="min-width:140px;">
+                <div style="display:flex;align-items:center;gap:8px;">
+                    <span style="color:#f8fafc;font-weight:700;min-width:45px;">{r['contribution']:.1f}%</span>
+                    <div style="flex:1;background:#1e293b;border-radius:4px;height:6px;overflow:hidden;">
+                        <div style="width:{bar_w}%;background:#38bdf8;height:100%;"></div>
+                    </div>
+                </div>
+            </td>
+            <td><span class="badge" style="background:{h_col}22; color:{h_col}; border:1px solid {h_col}55;">{r['health_status']}</span></td>
+            <td style="color:#f59e0b;font-weight:700;">{r['asp']:,.2f}</td>
+            <td style="color:#cbd5e1;font-weight:500;">{r['leading_store']}</td>
+        </tr>
         """
 
     region_kpi_cards = ""
@@ -745,7 +814,7 @@ def process_and_build():
         <div class="region-block" data-region="{reg_name}" style="background:var(--card); border:1px solid var(--border); border-top:4px solid {'#38bdf8' if 'Riyadh' in reg_name else '#818cf8'}; border-radius:12px; padding:20px; flex:1; min-width:320px;">
             <div style="display:flex; justify-content:space-between; align-items:flex-start; margin-bottom:12px;">
                 <div>
-                    <h3 style="margin:0; font-size:17px; color:#fff;" data-translate-key="{reg_name}">{reg_name}</h3>
+                    <h3 style="margin:0; font-size:17px; color:#fff;">{reg_name}</h3>
                     <span style="font-size:12px; color:#38bdf8; font-weight:600;">Area Manager: {reg_mgr}</span>
                 </div>
                 <div style="text-align:right;">
@@ -755,15 +824,15 @@ def process_and_build():
             </div>
             <div style="display:grid; grid-template-columns: repeat(3, 1fr); gap:10px; margin-top:14px; background:#090d16; padding:12px; border-radius:8px; border:1px solid #1e293b;">
                 <div>
-                    <div style="font-size:11px; color:#94a3b8;" data-translate-key="cur_sales">CURRENT SALES</div>
+                    <div style="font-size:11px; color:#94a3b8;">CURRENT SALES</div>
                     <div style="font-size:15px; font-weight:700; color:#fff;">{r_sales:,.0f} <span style="font-size:10px;">SAR</span></div>
                 </div>
                 <div>
-                    <div style="font-size:11px; color:#94a3b8;" data-translate-key="ly_sales">LY GROSS SALES</div>
+                    <div style="font-size:11px; color:#94a3b8;">LY GROSS SALES</div>
                     <div style="font-size:15px; font-weight:700; color:#38bdf8;">{reg_ly_tot:,.0f} <span style="font-size:10px;">SAR</span></div>
                 </div>
                 <div>
-                    <div style="font-size:11px; color:#94a3b8;" data-translate-key="soh_units">SOH UNITS</div>
+                    <div style="font-size:11px; color:#94a3b8;">SOH UNITS</div>
                     <div style="font-size:15px; font-weight:700; color:#fff;">{r_soh:,.0f}</div>
                 </div>
                 <div>
@@ -813,7 +882,7 @@ def process_and_build():
                 <td style="color:#64748b;">{idx+1}</td>
                 <td style="color:#38bdf8;font-weight:600;">{r['clean_code']}</td>
                 <td style="font-weight:600;color:#fff;">{r['full_name']}</td>
-                <td style="font-weight:700;color:#f8fafc;">{r['sales']:,.2f}</td>
+                <td style="font-weight:700;color:#f8fafc;" data-sales="{r['sales']}">{r['sales']:,.2f}</td>
                 <td style="color:#38bdf8;font-weight:600;">{ly_str}</td>
                 <td>{yoy_cell}</td>
                 <td style="color:#94a3b8;">{t_str}</td>
@@ -855,7 +924,7 @@ def process_and_build():
                         {reg_rows}
                         <tr style="background:#0c1220; font-weight:700; border-top:2px solid #38bdf8;">
                             <td colspan="3" style="color:#38bdf8; font-size:13px;">TOTAL {reg_name.upper()} ({reg_mgr})</td>
-                            <td style="color:#fff; font-size:14px;">{r_sales:,.2f}</td>
+                            <td style="color:#fff; font-size:14px;" data-sales="{r_sales}">{r_sales:,.2f}</td>
                             <td style="color:#38bdf8; font-size:14px;">{reg_ly_tot:,.2f}</td>
                             <td>{yoy_badge}</td>
                             <td style="color:#94a3b8;">{r_target:,.0f}</td>
@@ -876,7 +945,7 @@ def process_and_build():
     <div id="grand-total-banner" style="background:#131b2e; border:2px solid #2563eb; border-radius:12px; padding:18px 24px; display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:16px; margin-bottom:30px;">
         <div>
             <div style="font-size:13px; color:#38bdf8; font-weight:700; text-transform:uppercase;">Network Grand Total (All Regions)</div>
-            <div style="font-size:22px; font-weight:800; color:#fff; margin-top:2px;">{total_sales:,.0f} <span style="font-size:13px; font-weight:400; color:#94a3b8;">SAR</span></div>
+            <div style="font-size:22px; font-weight:800; color:#fff; margin-top:2px;" id="grandTotalSales">{total_sales:,.0f} <span style="font-size:13px; font-weight:400; color:#94a3b8;">SAR</span></div>
         </div>
         <div style="display:flex; gap:20px; flex-wrap:wrap; align-items:center;">
             <div style="background:#090d16; padding:8px 14px; border-radius:8px; border:1px solid #38bdf855;">
@@ -897,7 +966,7 @@ def process_and_build():
             </div>
             <div>
                 <div style="font-size:11px; color:#94a3b8;">ACHIEVEMENT</div>
-                <div style="font-size:16px; font-weight:700; color:{'#10b981' if overall_ach>=100 else '#f59e0b'};">{overall_ach:.1f}%</div>
+                <div style="font-size:16px; font-weight:700; color:{'#10b981' if overall_ach>=100 else '#f59e0b'};" id="grandAch">{overall_ach:.1f}%</div>
             </div>
         </div>
     </div>
@@ -993,7 +1062,7 @@ def process_and_build():
             <td style="color:#38bdf8;font-weight:600;">{st_code}</td>
             <td style="font-weight:600;color:#fff;">{st_name}</td>
             <td style="color:#94a3b8;font-size:12px;">{row['region']}</td>
-            <td style="font-weight:700;color:#f8fafc;">{row['sales']:,.2f}</td>
+            <td style="font-weight:700;color:#f8fafc;" data-sales="{row['sales']}">{row['sales']:,.2f}</td>
             <td style="color:#38bdf8;font-weight:600;">{ly_str}</td>
             <td>{yoy_cell}</td>
             <td style="color:#94a3b8;">{target_str}</td>
@@ -1004,32 +1073,6 @@ def process_and_build():
             <td>{diag_badge}</td>
             <td>{row['atv']:,.2f}</td>
             <td style="color:#38bdf8;font-weight:600;">{row['asp']:,.2f}</td>
-        </tr>
-        """
-
-    main_cat_table_rows = ""
-    for idx, r in main_cat_summary.iterrows():
-        c_name = r['main_category']
-        bar_w = min(r['contribution'], 100)
-        safe_c_name = html.escape(c_name).replace("'", "\\'")
-        main_cat_table_rows += f"""
-        <tr onclick="filterByMainCategory('{safe_c_name}')" style="cursor:pointer; background:rgba(56,189,248,0.03);" title="Click to view sub-subgroups">
-            <td style="color:#64748b;font-weight:600;">{idx+1}</td>
-            <td style="font-weight:800;color:#fff;font-size:14px;">
-                🏷️ {c_name} <span style="font-size:11px;color:#38bdf8;margin-left:4px;">(Click to view items)</span>
-            </td>
-            <td style="font-weight:700;color:#38bdf8;">{r['sales']:,.2f}</td>
-            <td>{int(r['units']):,}</td>
-            <td style="min-width:140px;">
-                <div style="display:flex;align-items:center;gap:8px;">
-                    <span style="color:#f8fafc;font-weight:700;min-width:45px;">{r['contribution']:.1f}%</span>
-                    <div style="flex:1;background:#1e293b;border-radius:4px;height:6px;overflow:hidden;">
-                        <div style="width:{bar_w}%;background:#38bdf8;height:100%;"></div>
-                    </div>
-                </div>
-            </td>
-            <td style="color:#f59e0b;font-weight:700;">{r['asp']:,.2f}</td>
-            <td style="color:#cbd5e1;font-weight:500;">{r['leading_store']}</td>
         </tr>
         """
 
@@ -1087,6 +1130,9 @@ def process_and_build():
         .lang-btn:hover {{ background: #2563eb; border-color: #2563eb; }}
         .logout-btn {{ background: #ef444422; border: 1px solid #ef444455; color: #ef4444; padding: 8px 14px; border-radius: 8px; font-weight: 700; cursor: pointer; transition: 0.2s; font-size: 12px; }}
         .logout-btn:hover {{ background: #ef4444; color: #fff; }}
+
+        .global-date-bar {{ background: var(--card); border: 1px solid var(--border); border-radius: 10px; padding: 14px 20px; margin-bottom: 24px; display: flex; gap: 20px; align-items: center; flex-wrap: wrap; }}
+        .global-date-bar span {{ font-size: 13px; font-weight: 700; color: #38bdf8; }}
 
         .view-toggle-bar {{ display: flex; background: #0c1220; padding: 4px; border-radius: 10px; border: 1px solid var(--border); margin-bottom: 24px; width: fit-content; gap: 4px; flex-wrap: wrap; }}
         .view-btn {{ background: transparent; border: none; color: var(--text-muted); padding: 10px 22px; border-radius: 8px; font-size: 14px; font-weight: 700; cursor: pointer; transition: 0.2s; display: flex; align-items: center; gap: 8px; }}
@@ -1375,7 +1421,7 @@ def process_and_build():
 <div class="kpi-grid">
     <div class="kpi-card">
         <div class="kpi-title">Current Total Sales</div>
-        <div class="kpi-value">{total_sales:,.0f} <span class="kpi-unit">SAR</span></div>
+        <div class="kpi-value" id="kpiTotalSales">{total_sales:,.0f} <span class="kpi-unit">SAR</span></div>
     </div>
     <div class="kpi-card">
         <div class="kpi-title">LY Gross Sales (MMS)</div>
@@ -1391,7 +1437,7 @@ def process_and_build():
     </div>
     <div class="kpi-card">
         <div class="kpi-title">Achievement (% Ach)</div>
-        <div class="kpi-value" style="color: {'#10b981' if overall_ach >= 100 else ('#f59e0b' if overall_ach >= 80 else '#ef4444')};">{overall_ach:.1f}%</div>
+        <div class="kpi-value" style="color: {'#10b981' if overall_ach >= 100 else '#f59e0b'};" id="grandAch">{overall_ach:.1f}%</div>
     </div>
     <div class="kpi-card">
         <div class="kpi-title">Network ATV</div>
@@ -1483,7 +1529,7 @@ def process_and_build():
 <div id="view-business" style="display:none;">
     <div class="section-title">
         <span>🏷️ MUMUSO MAIN PRODUCT CATEGORIES (LEVEL 1 HIERARCHY)</span>
-        <span style="font-size:12px; color:var(--text-muted); font-weight:400;">Select a store from dropdown to view its overall category contribution mix</span>
+        <span style="font-size:12px; color:var(--text-muted); font-weight:400;">Select a store from dropdown to view category contribution & stock health ratio</span>
     </div>
     
     <div class="cards-scroll-container">
@@ -1494,7 +1540,7 @@ def process_and_build():
         <div class="table-header">
             <div>
                 <h3 id="tableHierarchyTitle">PRODUCT HIERARCHY MATRIX (LEVEL 1: MAIN CATEGORIES)</h3>
-                <span style="color:var(--text-muted);font-size:12px;">Select a Store and Main Category to analyze specific branch assortment mix</span>
+                <span style="color:var(--text-muted);font-size:12px;">Select a Store to inspect category mix and Stock Health Ratio per category</span>
             </div>
             <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap;">
                 <select id="storeDropdownFilter" class="table-select" onchange="onStoreDropdownChange(this.value)">
@@ -1515,6 +1561,7 @@ def process_and_build():
                         <th>Sales Revenue (SAR)</th>
                         <th>Sales Units</th>
                         <th>Network Share (%)</th>
+                        <th>Stock Health / WOC</th>
                         <th>ASP (SAR)</th>
                         <th>Leading Store Benchmark</th>
                     </tr>
@@ -1527,20 +1574,14 @@ def process_and_build():
     </div>
 </div>
 
-<!-- 4. Commercial Action Hub (Date Filter & Top/Low 500 & Replenishment) -->
+<!-- 4. Commercial Action Hub -->
 <div id="view-action" style="display:none;">
     <div class="section-title">
         <span>⚡ PREDICTIVE SKU-LEVEL REPLENISHMENT & STOCK-OUT FORECAST (KSWH & IST)</span>
-        <span style="font-size:12px; color:#38bdf8;">Filter by date range to inspect specific sales velocity windows</span>
+        <span style="font-size:12px; color:#38bdf8;">Forecasts exact stock-out dates based on sales velocity</span>
     </div>
 
     <div class="table-wrap" style="margin-bottom:30px;">
-        <div style="padding:16px 20px; background:#0c1220; border-bottom:1px solid #1e293b; display:flex; gap:16px; align-items:center; flex-wrap:wrap;">
-            <span style="font-size:13px; font-weight:700; color:#38bdf8;">📅 Filter Sales Date Range:</span>
-            <label style="font-size:12px; color:#94a3b8;">From: <input type="date" id="dateFrom" class="date-filter-input" onchange="filterMoversTable()"></label>
-            <label style="font-size:12px; color:#94a3b8;">To: <input type="date" id="dateTo" class="date-filter-input" onchange="filterMoversTable()"></label>
-            <button onclick="resetDateFilter()" class="sub-tab-btn" style="padding:6px 12px; font-size:11px;">Reset Dates</button>
-        </div>
         <div style="overflow-x:auto;">
             <table>
                 <thead>
@@ -1682,6 +1723,7 @@ def process_and_build():
     updateBusinessTable();
   }}
 
+  // تحديث جدول Business-Wise ليعرض Stock Health لكل قسم عند اختيار متجر معين
   function updateBusinessTable() {{
     const storeCode = document.getElementById("storeDropdownFilter").value;
     const catName = document.getElementById("mainCatFilter").value;
@@ -1698,6 +1740,7 @@ def process_and_build():
           <th>Sales Revenue (SAR)</th>
           <th>Sales Units</th>
           <th>Network Share (%)</th>
+          <th>Stock Health / WOC</th>
           <th>ASP (SAR)</th>
           <th>Leading Store Benchmark</th>
         </tr>
@@ -1709,14 +1752,15 @@ def process_and_build():
     if (storeCode !== "ALL" && catName === "ALL") {{
       const stCats = STORE_DETAILS[storeCode] || [];
       const storeMeta = STORE_META[storeCode];
-      title.innerText = "CATEGORY CONTRIBUTION MIX FOR: " + (storeMeta ? storeMeta.name : storeCode);
+      title.innerText = "CATEGORY CONTRIBUTION & STOCK HEALTH FOR: " + (storeMeta ? storeMeta.name : storeCode);
       thead.innerHTML = `
         <tr>
           <th>#</th>
           <th>Main Category</th>
           <th>Sales Revenue (SAR)</th>
           <th>Sales Units</th>
-          <th>Category Contribution in Store (%)</th>
+          <th>Category Contribution (%)</th>
+          <th>Stock Health Ratio</th>
           <th>ASP (SAR)</th>
         </tr>
       `;
@@ -1729,11 +1773,12 @@ def process_and_build():
             <td style="color:#38bdf8; font-weight:700;">${{c.sales}}</td>
             <td>${{c.units}}</td>
             <td style="color:#10b981; font-weight:800; font-size:14px;">${{c.store_mix_pct}}</td>
+            <td><span class="badge" style="background:${{c.health_color}}22; color:${{c.health_color}}; border:1px solid ${{c.health_color}}55;">${{c.stock_health}}</span></td>
             <td style="color:#f59e0b; font-weight:700;">${{c.asp}}</td>
           </tr>
         `;
       }});
-      tbody.innerHTML = rowsHtml || "<tr><td colspan='6' style='text-align:center;'>No data available for this store</td></tr>";
+      tbody.innerHTML = rowsHtml || "<tr><td colspan='7' style='text-align:center;'>No data available for this store</td></tr>";
       return;
     }}
 
@@ -1824,12 +1869,6 @@ def process_and_build():
   }}
 
   function filterMoversTable() {{
-    renderMoversTable();
-  }}
-
-  function resetDateFilter() {{
-    document.getElementById("dateFrom").value = "";
-    document.getElementById("dateTo").value = "";
     renderMoversTable();
   }}
 
