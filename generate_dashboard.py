@@ -41,34 +41,36 @@ def load_september_targets(target_file="Sep_Target.xlsx"):
         print(f"Target load error: {e}")
         return {}
 
-def generate_claude_insights(store_summary, total_sales, total_target, overall_ach, network_atv, network_upt, network_asp):
+def generate_claude_insights(store_summary, cat_summary, total_sales, total_target, overall_ach, network_atv, network_upt, network_asp):
     api_key = os.getenv("ANTHROPIC_API_KEY")
     if not api_key:
         print("[!] Warning: ANTHROPIC_API_KEY not found in environment.")
         return {
-            "critical": "Stores showing high footfall but low ATV require immediate cashier upselling initiatives.",
-            "attention": f"Network ASP stands at {network_asp:.2f} SAR; optimize product assortment to drive higher transaction realization.",
-            "opportunity": "Top performing stores continue to lead network revenue; maintain full stock availability on high-velocity items."
+            "critical": "Category skew is evident across low ATV stores. Realign front gondolas towards higher ASP lifestyle items.",
+            "attention": f"Network ASP is {network_asp:.2f} SAR with primary category reliance; monitor cross-category basket penetration.",
+            "opportunity": "Top performing categories should receive priority stock replenishment across regional branch clusters."
         }
 
     top_stores = store_summary.head(3)[['Organization Name', 'sales', 'ach_pct', 'atv', 'upt', 'asp']].to_dict(orient="records")
     bottom_stores = store_summary.tail(3)[['Organization Name', 'sales', 'ach_pct', 'atv', 'upt', 'asp']].to_dict(orient="records")
+    top_categories = cat_summary.head(4)[['Category Name', 'sales', 'contribution']].to_dict(orient="records")
 
     prompt = f"""
-    You are a Retail Operations Executive. Based on the store performance below:
+    You are a Retail Operations Executive. Based on the store and product mix performance below:
     - Total Sales: {total_sales:,.2f} SAR
     - Total Target: {total_target:,.0f} SAR
     - Network Achievement: {overall_ach:.1f}%
     - Network ATV: {network_atv:.2f} SAR
     - Network UPT: {network_upt:.2f}
     - Network ASP: {network_asp:.2f} SAR
+    - Top Categories Contribution: {top_categories}
     - Top Stores: {top_stores}
     - Low Performing Stores: {bottom_stores}
 
     Provide 3 punchy, professional, and actionable business insights (1 sentence each):
-    1. Critical Issues: direct operational problem or underperformer risk.
-    2. Attention Required: basket size, UPT, ASP variations, or traffic conversion warning.
-    3. Opportunities: merchandising or replenishment leverage for top volume drivers.
+    1. Critical Issues: direct operational problem or underperformer category/store risk.
+    2. Attention Required: category penetration, basket building, or traffic conversion warning.
+    3. Opportunities: merchandising or replenishment leverage for top categories and stores.
 
     Respond ONLY with valid JSON in this exact structure:
     {{
@@ -94,13 +96,12 @@ def generate_claude_insights(store_summary, total_sales, total_target, overall_a
     except Exception as e:
         print(f"[!] Claude API error: {e}")
         return {
-            "critical": "Underperforming locations require focused cross-selling incentives to lift transaction value.",
-            "attention": f"Network ASP is {network_asp:.2f} SAR; evaluate markdown and pricing compliance across outlying branches.",
-            "opportunity": "Scale high-velocity display configurations from top-performing branches."
+            "critical": "Category imbalances are impacting underperforming stores; enforce minimum core category stock depth.",
+            "attention": f"Network ASP is {network_asp:.2f} SAR; push multi-item bundles across leading product categories.",
+            "opportunity": "Replicate high-performing category visual merchandising standards across all retail branches."
         }
 
 def build_svg_bar_chart(chart_stores):
-    # رسم مخطط أعمدة SVG نقي بنسبة 100% يظهر بدون أي جافاسكربت
     svg_w, svg_h = 900, 320
     pad_left, pad_right, pad_top, pad_bottom = 60, 20, 30, 60
     plot_w = svg_w - pad_left - pad_right
@@ -114,7 +115,6 @@ def build_svg_bar_chart(chart_stores):
     slot_w = plot_w / max(n_stores, 1)
     bar_w = min(slot_w * 0.35, 28)
 
-    # شبكة الخطوط الأفقية
     grid_lines = ""
     for i in range(5):
         val = (max_val / 4) * i
@@ -135,32 +135,22 @@ def build_svg_bar_chart(chart_stores):
 
         s_x = slot_center - bar_w - 2
         s_y = pad_top + plot_h - s_h
-
         t_x = slot_center + 2
         t_y = pad_top + plot_h - t_h
 
         name = str(r['Organization Name']).replace("MMS ", "")
 
         bars_svg += f"""
-        <!-- Actual Sales Bar -->
         <rect x="{s_x:.1f}" y="{s_y:.1f}" width="{bar_w:.1f}" height="{s_h:.1f}" rx="3" fill="#38bdf8">
             <title>{r['Organization Name']} Sales: {s_val:,.2f} SAR</title>
         </rect>
-        <!-- Target Bar -->
         <rect x="{t_x:.1f}" y="{t_y:.1f}" width="{bar_w:.1f}" height="{t_h:.1f}" rx="3" fill="#334155">
             <title>{r['Organization Name']} Target: {t_val:,.2f} SAR</title>
         </rect>
-        <!-- Label -->
         <text x="{slot_center:.1f}" y="{svg_h - 25}" fill="#cbd5e1" font-size="11" font-weight="600" text-anchor="middle">{name}</text>
         """
 
-    svg = f"""
-    <svg viewBox="0 0 {svg_w} {svg_h}" style="width:100%; height:auto; display:block;">
-        {grid_lines}
-        {bars_svg}
-    </svg>
-    """
-    return svg
+    return f"""<svg viewBox="0 0 {svg_w} {svg_h}" style="width:100%; height:auto; display:block;">{grid_lines}{bars_svg}</svg>"""
 
 def process_and_build():
     file_path = get_latest_sales_file()
@@ -169,7 +159,9 @@ def process_and_build():
 
     df = pd.read_excel(file_path, skiprows=1)
     df_clean = df.iloc[:-1].copy()
-    df_clean.columns = [c.replace('\u200c', '').strip() for c in df_clean.columns]
+    
+    # تنظيف أسماء الأعمدة من المحارف غير المرئية
+    df_clean.columns = [c.replace('\u200c', '').replace('\ufeff', '').strip() for c in df_clean.columns]
 
     numeric_cols = [
         'Sales Quantity', 'Selling Price', 'Sales Revenue', 'Discount Amount',
@@ -179,6 +171,15 @@ def process_and_build():
         if col in df_clean.columns:
             df_clean[col] = pd.to_numeric(df_clean[col], errors='coerce').fillna(0)
 
+    # التحقق من عمود التصنيف
+    cat_col = 'Category Name' if 'Category Name' in df_clean.columns else ('product_category' if 'product_category' in df_clean.columns else None)
+    if cat_col:
+        df_clean[cat_col] = df_clean[cat_col].fillna("Other").astype(str).str.strip()
+    else:
+        df_clean['Category Name'] = "General"
+        cat_col = 'Category Name'
+
+    # 1. إجماليات المتاجر
     store_summary = df_clean.groupby(['Organization Code', 'Organization Name']).agg(
         sales=('Actual Sales Amount', 'sum'),
         units=('Sales Quantity', 'sum'),
@@ -199,6 +200,27 @@ def process_and_build():
     store_summary['share'] = ((store_summary['sales'] / total_sales) * 100).round(2)
     store_summary = store_summary.sort_values(by='sales', ascending=False).reset_index(drop=True)
 
+    # 2. حساب مساهمة التصنيفات (Category Contribution - Network)
+    cat_summary = df_clean.groupby(cat_col).agg(
+        sales=('Actual Sales Amount', 'sum'),
+        units=('Sales Quantity', 'sum')
+    ).reset_index().rename(columns={cat_col: 'Category Name'})
+    cat_summary['contribution'] = ((cat_summary['sales'] / total_sales) * 100).round(2)
+    cat_summary['asp'] = (cat_summary['sales'] / cat_summary['units'].replace(0, np.nan)).fillna(0).round(2)
+    cat_summary = cat_summary.sort_values(by='sales', ascending=False).reset_index(drop=True)
+
+    # 3. حساب أعلى تصنيف ومساهمته لكل فرع
+    store_cat = df_clean.groupby(['Organization Code', cat_col])['Actual Sales Amount'].sum().reset_index()
+    top_cat_per_store = {}
+    for code, group in store_cat.groupby('Organization Code'):
+        top_row = group.sort_values(by='Actual Sales Amount', ascending=False).iloc[0]
+        st_total = group['Actual Sales Amount'].sum()
+        pct = (top_row['Actual Sales Amount'] / st_total * 100) if st_total > 0 else 0
+        top_cat_per_store[code] = f"{top_row[cat_col]} ({pct:.1f}%)"
+
+    store_summary['top_category'] = store_summary['Organization Code'].map(top_cat_per_store).fillna("-")
+
+    # مطابقة الأهداف
     def match_target(row):
         code_str = str(row['Organization Code']).strip()
         name_str = str(row['Organization Name']).strip()
@@ -218,10 +240,32 @@ def process_and_build():
     sales_with_target = valid_targets['sales'].sum()
     overall_ach = (sales_with_target / total_target * 100) if total_target > 0 else 0
 
-    insights = generate_claude_insights(store_summary, total_sales, total_target, overall_ach, network_atv, network_upt, network_asp)
+    insights = generate_claude_insights(store_summary, cat_summary, total_sales, total_target, overall_ach, network_atv, network_upt, network_asp)
 
     chart_stores = store_summary.head(8)
     chart_svg_markup = build_svg_bar_chart(chart_stores)
+
+    # كروت الـ Category Contribution
+    colors = ['#38bdf8', '#818cf8', '#a855f7', '#ec4899', '#f59e0b', '#10b981', '#64748b']
+    cat_cards_html = ""
+    for idx, r in cat_summary.head(6).iterrows():
+        c_color = colors[idx % len(colors)]
+        cat_cards_html += f"""
+        <div style="background:var(--card); border:1px solid var(--border); border-radius:10px; padding:16px; min-width:180px; flex:1;">
+            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
+                <span style="font-size:13px; font-weight:700; color:#f8fafc;">{r['Category Name']}</span>
+                <span style="font-size:12px; font-weight:700; color:{c_color};">{r['contribution']:.1f}%</span>
+            </div>
+            <div style="font-size:18px; font-weight:700; color:#fff; margin-bottom:6px;">{r['sales']:,.0f} <span style="font-size:11px; color:#94a3b8;">SAR</span></div>
+            <div style="background:#090d16; border-radius:4px; height:6px; overflow:hidden;">
+                <div style="background:{c_color}; width:{min(r['contribution'], 100):.1f}%; height:100%;"></div>
+            </div>
+            <div style="display:flex; justify-content:space-between; margin-top:8px; font-size:11px; color:#94a3b8;">
+                <span>Units: {int(r['units']):,}</span>
+                <span>ASP: {r['asp']:,.1f} SAR</span>
+            </div>
+        </div>
+        """
 
     table_rows = ""
     for idx, row in store_summary.iterrows():
@@ -261,6 +305,7 @@ def process_and_build():
             <td style="color:#94a3b8;">{target_str}</td>
             <td style="min-width:140px;">{ach_str}</td>
             <td>{row['share']:.2f}%</td>
+            <td style="color:#cbd5e1;font-weight:500;">{row['top_category']}</td>
             <td>{int(row['txns']):,}</td>
             <td>{row['atv']:,.2f}</td>
             <td>{row['upt']:,.2f}</td>
@@ -338,7 +383,7 @@ def process_and_build():
 <div class="header">
     <div>
         <h1>MMS Executive KPI Dashboard</h1>
-        <p>Operational Performance, Store Target Alignment & Metrics</p>
+        <p>Operational Performance, Category Mix & Target Alignment</p>
     </div>
 </div>
 
@@ -385,6 +430,11 @@ def process_and_build():
     </div>
 </div>
 
+<div class="section-title"><span>📦 Category Contribution (Network Mix)</span></div>
+<div style="display:flex; flex-wrap:wrap; gap:14px; margin-bottom:24px;">
+    {cat_cards_html}
+</div>
+
 <div class="chart-container">
     <div class="section-title">
         <span>📊 Top Stores: Actual Sales vs Target</span>
@@ -402,7 +452,7 @@ def process_and_build():
     <div class="table-header">
         <div>
             <h3>STORE PERFORMANCE MATRIX</h3>
-            <span style="color:var(--text-muted);font-size:12px;">Ranked by revenue with achievement progress and operational badges</span>
+            <span style="color:var(--text-muted);font-size:12px;">Ranked by revenue with achievement, leading category and store ASP</span>
         </div>
         <input type="text" id="storeSearch" class="table-search" placeholder="Search store name or code..." onkeyup="filterStores()">
     </div>
@@ -417,6 +467,7 @@ def process_and_build():
                     <th>Target (SAR)</th>
                     <th>% Ach vs Target</th>
                     <th>Share %</th>
+                    <th>Top Category Contribution</th>
                     <th>Txns</th>
                     <th>ATV (SAR)</th>
                     <th>UPT</th>
