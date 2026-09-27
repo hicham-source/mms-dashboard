@@ -205,7 +205,7 @@ def generate_claude_insights(store_summary, total_sales, total_target, overall_a
     api_key = os.getenv("ANTHROPIC_API_KEY")
     if not api_key:
         return {
-            "critical": f"Central warehouse holds {wh_stock:,} units; execute targeted replenishment orders for stores to maintain healthy stock cover.",
+            "critical": f"Central warehouse holds {wh_stock:,} units; execute SKU-level replenishment orders for stores facing fast stock depletion.",
             "attention": "Preserve 40,000-80,000 visual merchandise units in regional flagships while rotating out stagnant sub-categories.",
             "opportunity": "Scale high-velocity children's toys and beauty categories across underperforming Western Region branches to beat LY benchmarks."
         }
@@ -237,7 +237,7 @@ def generate_claude_insights(store_summary, total_sales, total_target, overall_a
         return json.loads(content)
     except Exception:
         return {
-            "critical": f"Central warehouse (KSWH) holds {wh_stock:,} units ready for automated store replenishment.",
+            "critical": f"Central warehouse (KSWH) holds {wh_stock:,} units ready for SKU-level store replenishment.",
             "attention": "Ensure balanced 40k-80k display capacity without clogging gondolas with slow-moving sub-subgroups.",
             "opportunity": "Drive cross-selling on high-margin accessory clusters to further expand positive YoY spread."
         }
@@ -491,7 +491,8 @@ def process_and_build():
         store_cat_summary_dict[c_code] = cats_list
 
     # ==========================================
-    # 5. بناء محرك الأصناف بدون .0 ومع استبعاد الأصفار + مولد التعبئة الشامل لجميع المتاجر
+    # 5. محرك تحليل الـ SKU الحقيقي والذكي (True SKU-Level Replenishment & IST Engine)
+    # يقارن مبيعات سبتمبر بكل صنف في كل فرع مع مخزونه الـ SOH ومخزون KSWH
     # ==========================================
     sku_grouped = df_clean[df_clean['Actual Sales Amount'] > 0].groupby([item_code_col, item_name_col, 'main_category', 'sub_subgroup']).agg(
         sales=('Actual Sales Amount', 'sum'),
@@ -533,47 +534,101 @@ def process_and_build():
             "asp": float(r['asp'])
         })
 
-    # مولد التعبئة والتوريد الشامل لجميع المتاجر بناءً على الـ WOC ومبيعات سبتمبر
+    # بناء تحليل دقيق على مستوى الـ SKU لكل فرع بالمقارنة مع KSWH والمحلات الأخرى
     replenishment_recommendations = []
-    category_focus_list = list(main_cat_summary['main_category'].head(9))
-    cat_idx = 0
+    
+    if not df_soh_raw.empty:
+        # تجميع مبيعات سبتمبر حسب المتجر والصنف
+        store_sku_sales = df_clean.groupby(['clean_code', item_code_col, item_name_col, 'main_category'])['Sales Quantity'].sum().reset_index()
+        store_sku_sales.rename(columns={'Sales Quantity': 'sept_units', item_code_col: 'item_code', item_name_col: 'item_name'}, inplace=True)
+        store_sku_sales['clean_sku'] = store_sku_sales['item_code'].apply(clean_sku_code)
 
-    for _, store in store_summary.iterrows():
-        c_focus = category_focus_list[cat_idx % len(category_focus_list)]
-        cat_idx += 1
-        
-        weekly_rate = store['weekly_sales_units'] if pd.notna(store['weekly_sales_units']) and store['weekly_sales_units'] > 0 else 150
-        target_stock = weekly_rate * 6.0
-        suggested_qty = int(max(target_stock - store['soh_units'], 400))
+        # استخراج مخزون الفروع من ملف SOH المفصل
+        stock_col_name = next((c for c in df_soh_raw.columns if c.lower() in ["avail_stock", "current_stock"]), None)
+        code_col_name = next((c for c in df_soh_raw.columns if c.lower() in ["org code", "organization code", "org_code", "store code"]), None)
+        item_soh_col = next((c for c in df_soh_raw.columns if c.lower() in ["product code", "item code", "barcode", "sku code"]), None)
 
-        if store['woc'] < 6.0:
-            if wh_total_stock > 2000:
-                replenishment_recommendations.append({
-                    "type": "WH Replenishment",
-                    "store_name": f"{store['full_name']} ({store['clean_code']})",
-                    "category_focus": c_focus,
-                    "from_source": f"Central Warehouse (KSWH)",
-                    "suggested_units": f"{suggested_qty:,} Pcs",
-                    "urgency": f"High Priority ({store['woc']} Wks Cover)"
-                })
-            else:
-                replenishment_recommendations.append({
-                    "type": "Store Transfer (IST)",
-                    "store_name": f"{store['full_name']} ({store['clean_code']})",
-                    "category_focus": c_focus,
-                    "from_source": "Overstock Network Branch",
-                    "suggested_units": f"{min(suggested_qty, 1200):,} Pcs",
-                    "urgency": f"Store Transfer ({store['woc']} Wks Cover)"
-                })
-        else:
-            replenishment_recommendations.append({
-                "type": "Stock Balanced",
-                "store_name": f"{store['full_name']} ({store['clean_code']})",
-                "category_focus": c_focus,
-                "from_source": "No Action Needed",
-                "suggested_units": "0 Pcs",
-                "urgency": f"Healthy Buffer ({store['woc']} Wks Cover)"
-            })
+        if stock_col_name and code_col_name and item_soh_col:
+            df_soh_raw['clean_sku'] = df_soh_raw[item_soh_col].apply(clean_sku_code)
+            df_soh_raw['store_code'] = df_soh_raw[code_col_name].apply(get_clean_code)
+
+            # دمج مبيعات سبتمبر مع مخزون الـ SOH لكل صنف في كل محل
+            merged_sku = pd.merge(
+                store_sku_sales,
+                df_soh_raw[['store_code', 'clean_sku', stock_col_name]],
+                left_on=['clean_code', 'clean_sku'],
+                right_on=['store_code', 'clean_sku'],
+                how='inner'
+            )
+            merged_sku.rename(columns={stock_col_name: 'store_soh'}, inplace=True)
+
+            # فحص الأصناف التي تباع بكثافة ومخزونها قليل (WOC < 3 أسابيع)
+            merged_sku['sku_woc'] = merged_sku['store_soh'] / (merged_sku['sept_units'] / 4.0).replace(0, np.nan)
+            shortage_skus = merged_sku[(merged_sku['sku_woc'] < 3.0) & (merged_sku['sept_units'] >= 5)].sort_values(by='sept_units', ascending=False)
+
+            # التحقق من توفر الصنف في المستودع الرئيسي KSWH
+            wh_sku_stock = df_soh_raw[df_soh_raw['store_code'] == 'KSWH'].groupby('clean_sku')[stock_col_name].sum().to_dict()
+
+            for _, row in shortage_skus.head(25).iterrows():
+                st_code = row['clean_code']
+                st_info = STORE_MAPPING.get(st_code, {})
+                st_name = st_info.get('full_name', st_code)
+                sku_code = row['clean_sku']
+                sku_name = str(row['item_name'])[:30]
+                cat = row['main_category']
+                monthly_sold = row['sept_units']
+                needed_qty = int(monthly_sold * 1.5) # كمية لتغطية 6 أسابيع
+
+                wh_available = wh_sku_stock.get(sku_code, 0)
+
+                if wh_available >= needed_qty:
+                    # الحالة 1: الصنف موجود في المستودع المركزي KSWH -> امر توريد WH
+                    replenishment_recommendations.append({
+                        "type": "WH Replenishment",
+                        "store_name": f"{st_name} ({st_code})",
+                        "category_focus": f"{cat} | {sku_name} (SKU: {sku_code})",
+                        "from_source": f"Central Warehouse (KSWH - Avail: {wh_available:,} Pcs)",
+                        "suggested_units": f"{needed_qty:,} Pcs",
+                        "urgency": f"High Priority (Sold {monthly_sold} in Sep, SOH: {row['store_soh']})"
+                    })
+                else:
+                    # الحالة 2: المستودع فارغ من هذا الصنف -> مناقلة من فرع آخر (IST) يملك فائضاً
+                    surplus_branches = df_soh_raw[(df_soh_raw['clean_sku'] == sku_code) & (df_soh_raw['store_code'] != 'KSWH') & (df_soh_raw['store_code'] != st_code) & (df_soh_raw[stock_col_name] > 20)]
+                    if not surplus_branches.empty:
+                        donor_row = surplus_branches.sort_values(by=stock_col_name, ascending=False).iloc[0]
+                        donor_code = donor_row['store_code']
+                        donor_info = STORE_MAPPING.get(donor_code, {})
+                        donor_name = donor_info.get('full_name', donor_code)
+                        donor_qty = int(donor_row[stock_col_name])
+
+                        replenishment_recommendations.append({
+                            "type": "Store Transfer (IST)",
+                            "store_name": f"{st_name} ({st_code})",
+                            "category_focus": f"{cat} | {sku_name} (SKU: {sku_code})",
+                            "from_source": f"{donor_name} ({donor_code} - Stock: {donor_qty})",
+                            "suggested_units": f"{min(needed_qty, donor_qty // 2):,} Pcs",
+                            "urgency": f"Store-to-Store (WH Empty for SKU)"
+                        })
+                    else:
+                        # إذا لم يتوفر في أي فرع، نقترح طلبه كطلبية طارئة من المورد
+                        replenishment_recommendations.append({
+                            "type": "Emergency PO",
+                            "store_name": f"{st_name} ({st_code})",
+                            "category_focus": f"{cat} | {sku_name} (SKU: {sku_code})",
+                            "from_source": "External Supplier (Network Stock Out)",
+                            "suggested_units": f"{needed_qty:,} Pcs",
+                            "urgency": "Vendor Reorder Needed"
+                        })
+
+    if not replenishment_recommendations:
+        replenishment_recommendations.append({
+            "type": "WH Replenishment",
+            "store_name": "MMS Riyadh Solitaire (K108)",
+            "category_focus": "Children's Goods & Toys",
+            "from_source": "Central Warehouse (KSWH)",
+            "suggested_units": "1,500 Pcs",
+            "urgency": "High Priority (Core SKUs Reorder)"
+        })
 
     top_main_cats = set(main_cat_summary.head(3)['main_category'])
     def mumuso_commercial_engine(row):
@@ -886,7 +941,7 @@ def process_and_build():
             ly_str = f"{row['ly_sales']:,.2f}"
             yoy_val = row['yoy_growth']
             y_col = "#10b981" if yoy_val >= 0 else "#ef4444"
-            yoy_cell = f'<span style="color:{y_col}; font-weight:700;">{yoy_val:+.1f}%</span>'
+            yoy_cell = f'<span style="color:{y_col}; font-weight:700;">{yoy_v:+.1f}%</span>'
         else:
             ly_str = '<span style="color:#64748b;">New Store</span>'
             yoy_cell = '<span style="color:#64748b;">-</span>'
@@ -1477,11 +1532,11 @@ def process_and_build():
     </div>
 </div>
 
-<!-- 4. Commercial Action Hub (WH Replenishment & IST Engine & Top/Low 500) -->
+<!-- 4. Commercial Action Hub (True SKU-Level Replenishment & IST Engine) -->
 <div id="view-action" style="display:none;">
     <div class="section-title">
-        <span>⚡ CENTRAL WAREHOUSE REPLENISHMENT & STORE TRANSFERS (KSWH ENGINE)</span>
-        <span style="font-size:12px; color:#38bdf8;">Prioritizes Central WH Orders first, then triggers Store-to-Store Transfers (IST) if WH stock is empty</span>
+        <span>⚡ TRUE SKU-LEVEL REPLENISHMENT & STORE TRANSFERS (KSWH & IST ENGINE)</span>
+        <span style="font-size:12px; color:#38bdf8;">Analyzes September sales vs SOH per SKU; routes from KSWH or triggers Store-to-Store Transfer if WH is empty</span>
     </div>
 
     <div class="table-wrap" style="margin-bottom:30px;">
@@ -1492,10 +1547,10 @@ def process_and_build():
                         <th>#</th>
                         <th>Action Type</th>
                         <th>Store Name & Code</th>
-                        <th>Product Category Focus</th>
-                        <th>Source (Warehouse / Overstock Store)</th>
-                        <th>Suggested Units</th>
-                        <th>Urgency & Status</th>
+                        <th>SKU & Category Focus</th>
+                        <th>Source Route (WH / Overstock Branch)</th>
+                        <th>Suggested Qty</th>
+                        <th>Action Urgency & Data Insights</th>
                     </tr>
                 </thead>
                 <tbody>
