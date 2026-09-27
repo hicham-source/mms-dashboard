@@ -133,35 +133,34 @@ def load_soh_data(soh_path):
         print(f"[!] Error processing SOH file: {e}")
         return {}
 
-def generate_claude_insights(store_summary, cat_summary, total_sales, total_target, overall_ach, network_atv, network_upt, network_asp, total_soh_units, total_ideal_stock):
+def generate_claude_insights(store_summary, cat_summary, total_sales, total_target, overall_ach, network_atv, network_upt, network_asp, total_soh_units):
     api_key = os.getenv("ANTHROPIC_API_KEY")
     if not api_key:
         print("[!] ANTHROPIC_API_KEY not found; using fallback executive insights.")
         return {
-            "critical": f"Network holds {total_soh_units:,.0f} units vs an ideal target of {total_ideal_stock:,.0f} units. Overstocked branches are freezing cash while under-stocked locations risk running out of key sellers.",
-            "attention": "Trigger direct Inter-Store Transfers (IST) from locations with WOS > 30 weeks directly to top footfall stores before placing new supplier orders.",
-            "opportunity": "Re-align branch gondola capacities toward leading categories with sell-through > 20% to maximize cash return per square meter."
+            "critical": "Store performance disparities stem from product mix mismatch rather than overall unit depth; underperforming branches lack adequate share of network volume drivers.",
+            "attention": "Avoid depleting display density in low-turnover stores; execute category assortment swaps rather than blanket stock withdrawals.",
+            "opportunity": "Replicate top-performer category gondola space allocations across regional branches to unlock immediate basket building."
         }
 
-    top_stores = store_summary.head(3)[['Organization Name', 'sales', 'ach_pct', 'wos', 'stock_gap_units']].to_dict(orient="records")
-    bottom_stores = store_summary.tail(3)[['Organization Name', 'sales', 'ach_pct', 'wos', 'stock_gap_units']].to_dict(orient="records")
+    top_stores = store_summary.head(3)[['Organization Name', 'sales', 'ach_pct', 'soh_units', 'display_status']].to_dict(orient="records")
+    bottom_stores = store_summary.tail(3)[['Organization Name', 'sales', 'ach_pct', 'soh_units', 'display_status']].to_dict(orient="records")
     top_categories = cat_summary.head(5)[['Category Name', 'sales', 'contribution']].to_dict(orient="records")
 
     prompt = f"""
-    You are a Senior Retail Operations & Merchandising Director reviewing store sales vs Stock on Hand (SOH).
+    You are a Senior Retail Operations & Merchandising Director for Mumuso (variety lifestyle brand with large-format display stores holding 40k-80k units for visual fullness).
     - Total Sales: {total_sales:,.0f} SAR
     - Total Target: {total_target:,.0f} SAR
     - Network Achievement: {overall_ach:.1f}%
     - Total SOH: {total_soh_units:,.0f} units
-    - Ideal Target SOH (5-week cover standard): {total_ideal_stock:,.0f} units
-    - Top Performing Stores: {top_stores}
+    - Top Stores: {top_stores}
     - Low Performing Stores: {bottom_stores}
-    - Key Categories: {top_categories}
+    - Leading Categories: {top_categories}
 
-    Generate 3 commercial, action-oriented directives (1 clear sentence each):
-    1. Critical Issues: address stock imbalance, stockouts, or capital tie-up.
-    2. Attention Required: specify Inter-Store Transfers (IST) and merchandising reallocation.
-    3. Opportunities: commercial moves to lift basket value and sell-through.
+    Generate 3 commercial merchandising directives (1 sentence each):
+    1. Critical Issues: address category assortment gaps in underperforming stores without stripping visual floor display.
+    2. Attention Required: category assortment swap (swapping dead gondola items with high-velocity toys/lifestyle).
+    3. Opportunities: commercial tactics to raise conversion and transaction value.
 
     Respond ONLY in valid JSON:
     {{
@@ -187,9 +186,9 @@ def generate_claude_insights(store_summary, cat_summary, total_sales, total_targ
     except Exception as e:
         print(f"[!] Claude API error: {e}")
         return {
-            "critical": f"Stock depth ({total_soh_units:,.0f} units) heavily exceeds operational demand ({total_ideal_stock:,.0f} units). Fast-track stock rebalancing.",
-            "attention": "Execute immediate Inter-Store Transfers (IST) from regional low-velocity branches to flagship locations.",
-            "opportunity": "Bundle sluggish inventory with high-velocity toys and accessories to stimulate cash recovery."
+            "critical": "Store divergence is driven by product assortment imbalances across gondolas rather than aggregate stock depth.",
+            "attention": "Execute targeted Category Assortment Swaps for lagging stores: replace slow-moving items with high-demand toys and lifestyle goods.",
+            "opportunity": "Protect visual merchandise density in flagship branches while reinforcing high-margin accessory clusters."
         }
 
 def build_svg_bar_chart(chart_stores):
@@ -292,7 +291,7 @@ def process_and_build():
     store_summary['share'] = ((store_summary['sales'] / total_sales) * 100).round(2)
     store_summary = store_summary.sort_values(by='sales', ascending=False).reset_index(drop=True)
 
-    # 2. ربط المخزون وحساب المقارنة التجارية (Actual SOH vs Ideal Stock)
+    # 2. ربط المخزون وحساب طاقة العرض الفعلية (Mumuso Display Model)
     def match_soh(row):
         code_str = str(row['Organization Code']).strip()
         m = re.search(r'\b[A-Za-z0-9]{3,8}\b', code_str)
@@ -310,28 +309,7 @@ def process_and_build():
     total_soh_units = store_summary['soh_units'].sum()
     total_soh_val = store_summary['soh_val'].sum()
 
-    # معدل البيع الأسبوعي ومتوسط المبيعات اليومية
-    weekly_units = store_summary['units'] / 4.3
-    daily_units = store_summary['units'] / 30.0
-    daily_sales_val = store_summary['sales'] / 30.0
-
-    store_summary['wos'] = (store_summary['soh_units'] / weekly_units.replace(0, np.nan)).fillna(0).round(1)
-
-    # حساب المخزون المثالي (Ideal Stock = 5 Weeks of Sales Run-Rate)
-    # المعيار التجاري الصحيح في متاجر التجزئة هو تغطية 5 أسابيع
-    store_summary['ideal_stock_units'] = (weekly_units * 5.0).round(0)
-    store_summary['ideal_stock_val'] = (store_summary['ideal_stock_units'] * store_summary['asp']).round(0)
-    
-    # فجوة المخزون (Stock Gap = Actual SOH - Ideal Stock)
-    store_summary['stock_gap_units'] = (store_summary['soh_units'] - store_summary['ideal_stock_units']).round(0)
-    store_summary['stock_gap_val'] = (store_summary['stock_gap_units'] * store_summary['asp']).round(0)
-
-    # نسبة استهلاك المخزون (Sell-Through %)
-    store_summary['sell_through'] = ((store_summary['units'] / (store_summary['units'] + store_summary['soh_units']).replace(0, np.nan)) * 100).fillna(0).round(1)
-
-    total_ideal_stock = store_summary['ideal_stock_units'].sum()
-
-    # 3. مطابقة الأهداف
+    # مطابقة الأهداف
     def match_target(row):
         code_str = str(row['Organization Code']).strip().upper()
         name_str = str(row['Organization Name']).strip().upper()
@@ -351,74 +329,7 @@ def process_and_build():
     sales_with_target = valid_targets['sales'].sum()
     overall_ach = (sales_with_target / total_target * 100) if total_target > 0 else 0
 
-    # 4. محرك التشخيص التجاري والقرار التشغيلي الحاسم (Commercial Decision Engine)
-    def commercial_decision(row):
-        ach = row['ach_pct'] if pd.notna(row['ach_pct']) else 0
-        wos = row['wos']
-        gap_u = row['stock_gap_units']
-        gap_v = row['stock_gap_val']
-        st = row['sell_through']
-        soh = row['soh_units']
-        ideal = row['ideal_stock_units']
-
-        if soh == 0:
-            return {
-                "status": "No SOH Synced",
-                "color": "#64748b",
-                "diag": "Inventory figures missing from export.",
-                "directive": "Verify warehouse stock mapping for this branch code.",
-                "action_type": "DATA SYNC"
-            }
-
-        if wos < 3.0 and ach >= 80:
-            return {
-                "status": "Stockout Risk",
-                "color": "#ef4444",
-                "diag": f"Critically lean stock ({wos} Wks cover vs 5 Wks benchmark). Store run-rate is burning stock faster than intake.",
-                "directive": f"⚡ DIRECTIVE: Emergency Warehouse Dispatch of +{int(abs(gap_u)):,} Units (~{abs(gap_v):,.0f} SAR) to protect target velocity.",
-                "action_type": "EMERGENCY REPLENISH"
-            }
-        elif wos > 15.0 and ach < 70:
-            return {
-                "status": "Heavy Overstock",
-                "color": "#f59e0b",
-                "diag": f"Massive stock overload ({wos} Wks cover). Excess of +{int(gap_u):,} Units tying up ~{gap_v:,.0f} SAR in idle capital.",
-                "directive": f"⚡ DIRECTIVE: Immediate Inter-Store Transfer (IST) of {int(gap_u * 0.6):,} Units to top performers + launch cashier multi-buy bundles.",
-                "action_type": "TRANSFER OUT (IST)"
-            }
-        elif wos > 10.0 and ach >= 80:
-            return {
-                "status": "High Stock Cover",
-                "color": "#38bdf8",
-                "diag": f"Healthy sales with substantial buffer ({wos} Wks). Holds surplus of +{int(gap_u):,} Units.",
-                "directive": f"⚡ DIRECTIVE: Freeze fresh warehouse purchase orders; fulfill demand from existing backroom capacity.",
-                "action_type": "FREEZE ORDERS"
-            }
-        elif ach < 70 and 3.0 <= wos <= 10.0:
-            return {
-                "status": "Conversion Bottleneck",
-                "color": "#eab308",
-                "diag": f"Stock level is adequate ({wos} Wks), but commercial conversion is lagging ({ach:.1f}% Ach, {st}% Sell-through).",
-                "directive": f"⚡ DIRECTIVE: Do NOT inject more inventory. Focus on sales floor coaching, gondola re-merchandising, and cashier ATV upselling.",
-                "action_type": "FLOOR COACHING"
-            }
-        else:
-            return {
-                "status": "Balanced Flow",
-                "color": "#10b981",
-                "diag": f"Optimal inventory alignment ({wos} Wks cover, {st}% Sell-through). Stock closely matches sales velocity.",
-                "directive": "⚡ DIRECTIVE: Maintain current replenishment cadence and display standards.",
-                "action_type": "MAINTAIN"
-            }
-
-    decisions = store_summary.apply(commercial_decision, axis=1)
-    store_summary['status'] = [d['status'] for d in decisions]
-    store_summary['color'] = [d['color'] for d in decisions]
-    store_summary['diag'] = [d['diag'] for d in decisions]
-    store_summary['directive'] = [d['directive'] for d in decisions]
-    store_summary['action_type'] = [d['action_type'] for d in decisions]
-
-    # 5. إجماليات الأصناف
+    # 3. إجماليات الأصناف
     cat_summary = df_clean.groupby(cat_col).agg(
         sales=('Actual Sales Amount', 'sum'),
         units=('Sales Quantity', 'sum')
@@ -458,7 +369,7 @@ def process_and_build():
     cat_summary['leading_store'] = cat_summary['Category Name'].map(top_store_per_cat).fillna("-")
     cat_summary = cat_summary.sort_values(by='sales', ascending=False).reset_index(drop=True)
 
-    # تفاصيل المتجر لكل تصنيف
+    # 4. تفاصيل الأصناف داخل كل متجر
     store_category_details = {}
     grouped_store_cat = df_clean.groupby(['Organization Code', cat_col]).agg(
         cat_sales=('Actual Sales Amount', 'sum'),
@@ -489,7 +400,94 @@ def process_and_build():
             top_cat_per_store[code] = f"{cats[0]['category']} ({cats[0]['share']})"
     store_summary['top_category'] = store_summary['Organization Code'].astype(str).map(top_cat_per_store).fillna("-")
 
-    insights = generate_claude_insights(store_summary, cat_summary, total_sales, total_target, overall_ach, network_atv, network_upt, network_asp, total_soh_units, total_ideal_stock)
+    # تحديد أفضل 5 تصنيفات مبيعاً على مستوى الشبكة
+    top_5_network_cats = set(cat_summary.head(5)['Category Name'])
+
+    # 5. محرك تحليل Mumuso التجاري المخصص (Display Density & Assortment Mix Diagnostics)
+    def mumuso_commercial_engine(row):
+        st_code = str(row['Organization Code'])
+        soh = row['soh_units']
+        sales = row['sales']
+        ach = row['ach_pct'] if pd.notna(row['ach_pct']) else 0
+        atv = row['atv']
+        upt = row['upt']
+        asp = row['asp']
+
+        # فحص حضور أفضل تصنيفات الشبكة داخل هذا المتجر
+        st_cats = store_category_details.get(st_code, [])
+        st_cat_names = [c['category'] for c in st_cats]
+        st_top_cats = [c['category'] for c in st_cats[:3]]
+        
+        # التصنيفات المفقودة أو الضعيفة في المتجر مقارنة بالشبكة
+        missing_top_cats = [c for c in top_5_network_cats if c not in st_top_cats]
+
+        # تصنيف حالة مساحة العرض (Display Capacity Status)
+        if soh >= 80000:
+            capacity_badge = "Flagship Mega-Display"
+            capacity_color = "#38bdf8"
+            cap_analysis = f"Massive display density ({soh:,.0f} Pcs). Suited for high visual volume."
+        elif 40000 <= soh < 80000:
+            capacity_badge = "Full Standard Display"
+            capacity_color = "#10b981"
+            cap_analysis = f"Optimal Mumuso visual floor coverage ({soh:,.0f} Pcs). Display is visually full."
+        elif 0 < soh < 40000:
+            capacity_badge = "Lean Visual Density"
+            capacity_color = "#f59e0b"
+            cap_analysis = f"Floor density is below typical Mumuso display standards ({soh:,.0f} Pcs). Risk of empty-looking gondolas."
+        else:
+            capacity_badge = "No SOH Data"
+            capacity_color = "#64748b"
+            cap_analysis = "Inventory sync required."
+
+        # التحليل التشخيصي والحل التجاري: ماذا باع وماذا يحتاج؟
+        if ach >= 95:
+            diag_title = "Powerhouse Performer (High Conversion)"
+            diag_color = "#10b981"
+            problem_statement = f"Excellent customer walk-in conversion ({ach:.1f}% Ach). Strong leadership in {', '.join(st_top_cats[:2])}."
+            commercial_action = f"Maintain full shelf depth on top sellers and introduce premium lifestyle novelties to elevate ASP (Current: {asp:.1f} SAR)."
+            what_it_needs = "Continuous auto-replenishment on top 20% SKUs to prevent gondola gaps during peak hours."
+        elif ach < 70 and soh >= 40000:
+            diag_title = "Assortment Mismatch (Weak Turnover)"
+            diag_color = "#f59e0b"
+            problem_statement = f"Store floor is visually full ({soh:,.0f} Pcs) but turnover is sluggish ({ach:.1f}% Ach). Gondolas hold dead product mix while network bestsellers are under-represented."
+            commercial_action = f"⚡ ACTION: Execute Category Assortment Swap. Allocate prime front-entrance gondolas to {', '.join(missing_top_cats[:2]) if missing_top_cats else 'high-velocity toys'} and clear slow-moving categories via checkout counter bundles."
+            what_it_needs = f"Inject high-velocity categories ({', '.join(missing_top_cats[:2])}) and run multi-item promos to lift UPT from {upt:.2f}."
+        elif ach < 70 and soh < 40000:
+            diag_title = "Under-Display Capacity Deficit"
+            diag_color = "#ef4444"
+            problem_statement = f"Target achievement is lagging ({ach:.1f}%) and floor stock ({soh:,.0f} Pcs) is thin for Mumuso standards, dampening impulse buys."
+            commercial_action = f"⚡ ACTION: Re-stock core lifestyle, beauty and toys to reach minimum visual threshold (40,000+ Pcs) to make the store appealing."
+            what_it_needs = "Store-fill buffer: +10,000 to +15,000 units of fast-moving impulse categories."
+        else:
+            diag_title = "Moderate Run-Rate (Basket Expansion)"
+            diag_color = "#38bdf8"
+            problem_statement = f"Steady flow with {ach:.1f}% achievement and balanced display ({soh:,.0f} Pcs). Room to expand transaction size."
+            commercial_action = f"Focus cashier incentives on cross-selling to lift ATV (Current: {atv:.1f} SAR) and refresh weekly thematic displays."
+            what_it_needs = "Visual merchandising rotation: rotate seasonal and promotional end-caps."
+
+        return {
+            "capacity_badge": capacity_badge,
+            "capacity_color": capacity_color,
+            "cap_analysis": cap_analysis,
+            "diag_title": diag_title,
+            "diag_color": diag_color,
+            "problem": problem_statement,
+            "action": commercial_action,
+            "needs": what_it_needs,
+            "top_categories_str": ", ".join(st_top_cats) if st_top_cats else "General"
+        }
+
+    engine_res = store_summary.apply(mumuso_commercial_engine, axis=1)
+    store_summary['display_status'] = [e['capacity_badge'] for e in engine_res]
+    store_summary['display_color'] = [e['capacity_color'] for e in engine_res]
+    store_summary['diag_title'] = [e['diag_title'] for e in engine_res]
+    store_summary['diag_color'] = [e['diag_color'] for e in engine_res]
+    store_summary['problem'] = [e['problem'] for e in engine_res]
+    store_summary['action'] = [e['action'] for e in engine_res]
+    store_summary['needs'] = [e['needs'] for e in engine_res]
+    store_summary['top_cats_str'] = [e['top_categories_str'] for e in engine_res]
+
+    insights = generate_claude_insights(store_summary, cat_summary, total_sales, total_target, overall_ach, network_atv, network_upt, network_asp, total_soh_units)
 
     chart_stores = store_summary.head(8)
     chart_svg_markup = build_svg_bar_chart(chart_stores)
@@ -516,7 +514,7 @@ def process_and_build():
         </div>
         """
 
-    # بناء بيانات المتاجر مع تفاصيل المقارنة الدقيقة
+    # كروت القرارات التشغيلية والحلول الذكية
     store_meta_map = {}
     store_table_rows = ""
     decision_cards_html = ""
@@ -548,11 +546,8 @@ def process_and_build():
             target_str = "-"
             ach_str = '<span style="color:#64748b;">-</span>'
 
-        diag_badge = f'<span class="badge" style="background:{row["color"]}22; color:{row["color"]}; border:1px solid {row["color"]}66;">{row["status"]}</span>'
-
-        gap_u = row['stock_gap_units']
-        gap_sign = "+" if gap_u > 0 else ""
-        gap_color = "#f59e0b" if gap_u > 0 else ("#ef4444" if gap_u < 0 else "#10b981")
+        diag_badge = f'<span class="badge" style="background:{row["diag_color"]}22; color:{row["diag_color"]}; border:1px solid {row["diag_color"]}66;">{row["diag_title"]}</span>'
+        cap_badge = f'<span class="badge" style="background:{row["display_color"]}15; color:{row["display_color"]}; border:1px solid {row["display_color"]}44;">{row["display_status"]}</span>'
 
         store_meta_map[st_code] = {
             "name": st_name,
@@ -565,51 +560,39 @@ def process_and_build():
             "upt": f"{row['upt']:.2f}",
             "asp": f"{row['asp']:,.2f} SAR",
             "soh_units": f"{int(row['soh_units']):,} Pcs",
-            "ideal_units": f"{int(row['ideal_stock_units']):,} Pcs",
-            "gap_units": f"{gap_sign}{int(gap_u):,} Pcs",
-            "gap_val": f"{gap_sign}{row['stock_gap_val']:,.0f} SAR",
-            "wos": f"{row['wos']} Wks",
-            "sell_through": f"{row['sell_through']:.1f}%",
-            "diag": row['diag'],
-            "directive": row['directive']
+            "capacity_badge": row['display_status'],
+            "diag_title": row['diag_title'],
+            "problem": row['problem'],
+            "action": row['action'],
+            "needs": row['needs'],
+            "top_cats": row['top_cats_str']
         }
 
-        # كروت التوجيهات التجارية الاستراتيجية (Executive Commercial Directives)
-        if row['status'] in ["Stockout Risk", "Heavy Overstock", "Conversion Bottleneck"]:
+        # كروت الأفرع ذات الأولوية (الأفرع المتعثرة أو ذات الاحتياج التجاري الحاد)
+        if "Mismatch" in row['diag_title'] or "Deficit" in row['diag_title'] or "Performer" in row['diag_title']:
             decision_cards_html += f"""
-            <div style="background:var(--card); border:1px solid var(--border); border-left:4px solid {row['color']}; border-radius:10px; padding:18px;">
-                <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
-                    <span style="font-weight:700; color:#fff; font-size:15px;">{st_name} ({st_code})</span>
+            <div style="background:var(--card); border:1px solid var(--border); border-left:4px solid {row['diag_color']}; border-radius:10px; padding:18px;">
+                <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px; flex-wrap:wrap; gap:8px;">
+                    <div>
+                        <span style="font-weight:700; color:#fff; font-size:15px;">{st_name} ({st_code})</span>
+                        <div style="font-size:11px; color:#94a3b8; margin-top:2px;">Floor Stock: <strong style="color:#fff;">{int(row['soh_units']):,} Pcs</strong> ({row['display_status']})</div>
+                    </div>
                     {diag_badge}
                 </div>
                 
-                <!-- مقارنة المخزون الفعلي بالمستهدف -->
-                <div style="display:grid; grid-template-columns: repeat(3, 1fr); gap:8px; background:#090d16; padding:10px; border-radius:6px; margin-bottom:10px; border:1px solid #1e293b;">
-                    <div>
-                        <div style="font-size:10px; color:#94a3b8;">CURRENT SOH</div>
-                        <div style="font-size:13px; font-weight:700; color:#fff;">{int(row['soh_units']):,}</div>
-                    </div>
-                    <div>
-                        <div style="font-size:10px; color:#94a3b8;">IDEAL (5 WKS)</div>
-                        <div style="font-size:13px; font-weight:700; color:#38bdf8;">{int(row['ideal_stock_units']):,}</div>
-                    </div>
-                    <div>
-                        <div style="font-size:10px; color:#94a3b8;">STOCK GAP</div>
-                        <div style="font-size:13px; font-weight:700; color:{gap_color};">{gap_sign}{int(gap_u):,}</div>
-                    </div>
+                <div style="background:#090d16; padding:10px 12px; border-radius:6px; margin-bottom:10px; border:1px solid #1e293b; font-size:12px;">
+                    <div style="color:#cbd5e1; margin-bottom:4px;"><strong>📦 What It Sold & Has:</strong> Leading in {row['top_cats_str']}</div>
+                    <div style="color:#f59e0b;"><strong>🎯 What It Needs:</strong> {row['needs']}</div>
                 </div>
 
-                <div style="font-size:12px; color:#cbd5e1; margin-bottom:8px; line-height:1.4;">
-                    <strong>🔍 Commercial Issue:</strong> {row['diag']}
-                </div>
-                <div style="font-size:12px; color:#38bdf8; background:rgba(56,189,248,0.08); padding:8px 12px; border-radius:6px; border:1px solid rgba(56,189,248,0.2); font-weight:600;">
-                    {row['directive']}
+                <div style="font-size:12px; color:#38bdf8; background:rgba(56,189,248,0.08); padding:8px 12px; border-radius:6px; border:1px solid rgba(56,189,248,0.2); font-weight:600; line-height:1.4;">
+                    {row['action']}
                 </div>
             </div>
             """
 
         store_table_rows += f"""
-        <tr onclick="openStoreDetails('{st_code}')" style="cursor:pointer;" title="Click to view full stock vs target comparison & action plan">
+        <tr onclick="openStoreDetails('{st_code}')" style="cursor:pointer;" title="Click to view detailed store assortment, sales mix & commercial directive">
             <td style="color:#64748b;font-weight:600;">{idx+1}</td>
             <td style="color:#38bdf8;font-weight:600;">{st_code}</td>
             <td style="font-weight:600;color:#fff;">
@@ -619,10 +602,10 @@ def process_and_build():
             <td style="color:#94a3b8;">{target_str}</td>
             <td style="min-width:130px;">{ach_str}</td>
             <td style="font-weight:700;color:#fff;">{int(row['soh_units']):,}</td>
-            <td style="font-weight:600;color:#38bdf8;">{int(row['ideal_stock_units']):,}</td>
-            <td style="font-weight:700;color:{gap_color};">{gap_sign}{int(gap_u):,}</td>
-            <td style="font-weight:700;color:{row['color']};">{row['wos']} Wks</td>
+            <td>{cap_badge}</td>
             <td>{diag_badge}</td>
+            <td>{row['atv']:,.2f}</td>
+            <td>{row['upt']:,.2f}</td>
             <td style="color:#38bdf8;font-weight:600;">{row['asp']:,.2f}</td>
         </tr>
         """
@@ -736,7 +719,7 @@ def process_and_build():
   </div>
 </div>
 
-<!-- Modal 1: Commercial Deep-Dive & Decision Engine Modal -->
+<!-- Modal 1: Commercial Deep-Dive Modal -->
 <div id="store-modal" class="app-modal">
   <div class="modal-content">
     <div class="modal-header">
@@ -748,48 +731,50 @@ def process_and_build():
     </div>
     <div class="modal-body">
       
-      <!-- الصندوق التنفيذي للقرار والتشخيص -->
+      <!-- الصندوق التنفيذي للتشخيص والقرار -->
       <div style="background:#090d16; border:1px solid #1e293b; border-radius:10px; padding:18px; margin-bottom:20px;">
         <div style="font-size:13px; color:#cbd5e1; margin-bottom:8px;">
-          <strong style="color:#ef4444;">● Root-Cause Diagnostic:</strong> <span id="modal-diag" style="color:#f8fafc;">-</span>
+          <strong style="color:#ef4444;">● Store Situation & Root Cause:</strong> <span id="modal-diag" style="color:#f8fafc;">-</span>
+        </div>
+        <div style="font-size:13px; color:#f59e0b; margin-bottom:10px;">
+          <strong>🎯 What This Store Needs:</strong> <span id="modal-needs" style="color:#fff;">-</span>
         </div>
         <div style="font-size:13px; color:#38bdf8; background:rgba(56,189,248,0.08); padding:10px 14px; border-radius:6px; border:1px solid rgba(56,189,248,0.25);">
           <strong style="color:#38bdf8;">⚡ Commercial Directive:</strong> <span id="modal-directive" style="color:#fff; font-weight:600;">-</span>
         </div>
       </div>
 
-      <!-- شبكة مقارنة المخزون الفعلي بالمستهدف والفجوة التجارية -->
-      <div style="margin-bottom:12px; font-size:12px; font-weight:700; text-transform:uppercase; color:#94a3b8;">Inventory Benchmark vs Sales Demand</div>
+      <!-- مقاييس المتجر -->
+      <div style="margin-bottom:12px; font-size:12px; font-weight:700; text-transform:uppercase; color:#94a3b8;">Store Commercial Metrics</div>
       <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(140px, 1fr)); gap:12px; margin-bottom:24px;">
         <div style="background:#090d16; padding:14px; border-radius:8px; border:1px solid #1e293b;">
-          <div style="font-size:11px; color:#94a3b8;">ACTUAL SOH</div>
-          <div id="modal-soh" style="font-size:18px; font-weight:700; color:#fff;">-</div>
+          <div style="font-size:11px; color:#94a3b8;">TOTAL SALES</div>
+          <div id="modal-sales" style="font-size:18px; font-weight:700; color:#fff;">-</div>
         </div>
         <div style="background:#090d16; padding:14px; border-radius:8px; border:1px solid #1e293b;">
-          <div style="font-size:11px; color:#94a3b8;">IDEAL TARGET (5 WKS)</div>
-          <div id="modal-ideal" style="font-size:18px; font-weight:700; color:#38bdf8;">-</div>
+          <div style="font-size:11px; color:#94a3b8;">TARGET & ACH</div>
+          <div id="modal-ach" style="font-size:18px; font-weight:700; color:#10b981;">-</div>
         </div>
         <div style="background:#090d16; padding:14px; border-radius:8px; border:1px solid #1e293b;">
-          <div style="font-size:11px; color:#94a3b8;">STOCK GAP (SURPLUS/DEFICIT)</div>
-          <div id="modal-gap-u" style="font-size:18px; font-weight:700; color:#f59e0b;">-</div>
-          <div id="modal-gap-v" style="font-size:11px; color:#94a3b8; margin-top:2px;">-</div>
+          <div style="font-size:11px; color:#94a3b8;">FLOOR SOH (UNITS)</div>
+          <div id="modal-soh" style="font-size:18px; font-weight:700; color:#38bdf8;">-</div>
         </div>
         <div style="background:#090d16; padding:14px; border-radius:8px; border:1px solid #1e293b;">
-          <div style="font-size:11px; color:#94a3b8;">WEEKS OF SUPPLY (WOS)</div>
-          <div id="modal-wos" style="font-size:18px; font-weight:700; color:#f59e0b;">-</div>
+          <div style="font-size:11px; color:#94a3b8;">DISPLAY CAPACITY</div>
+          <div id="modal-capacity" style="font-size:15px; font-weight:700; color:#cbd5e1;">-</div>
         </div>
         <div style="background:#090d16; padding:14px; border-radius:8px; border:1px solid #1e293b;">
-          <div style="font-size:11px; color:#94a3b8;">SELL-THROUGH RATE</div>
-          <div id="modal-st" style="font-size:18px; font-weight:700; color:#10b981;">-</div>
+          <div style="font-size:11px; color:#94a3b8;">AVERAGE TICKET (ATV)</div>
+          <div id="modal-atv" style="font-size:18px; font-weight:700; color:#fff;">-</div>
         </div>
         <div style="background:#090d16; padding:14px; border-radius:8px; border:1px solid #1e293b;">
-          <div style="font-size:11px; color:#94a3b8;">STORE ASP</div>
-          <div id="modal-asp" style="font-size:18px; font-weight:700; color:#fff;">-</div>
+          <div style="font-size:11px; color:#94a3b8;">UNITS PER TXN (UPT)</div>
+          <div id="modal-upt" style="font-size:18px; font-weight:700; color:#fff;">-</div>
         </div>
       </div>
 
       <!-- جدول تفاصيل الأصناف للمتجر -->
-      <div style="margin-bottom:12px; font-size:12px; font-weight:700; text-transform:uppercase; color:#94a3b8;">Store Category Breakdown</div>
+      <div style="margin-bottom:12px; font-size:12px; font-weight:700; text-transform:uppercase; color:#94a3b8;">Store Category Assortment Performance</div>
       <div style="border:1px solid #1e293b; border-radius:8px; overflow:hidden;">
         <table>
           <thead>
@@ -843,11 +828,11 @@ def process_and_build():
 <div class="header">
     <div>
         <h1>MMS Executive Commercial & SOH Intelligence Dashboard</h1>
-        <p>Target Alignment, Actual vs Ideal Stock Gap & Actionable Directives</p>
+        <p>Mumuso Large-Format Display Model, Assortment Mix Diagnostics & Action Directives</p>
     </div>
 </div>
 
-<div class="section-title"><span>🤖 AI Executive Directives (Powered by Claude)</span></div>
+<div class="section-title"><span>🤖 AI Merchandising Directives (Powered by Claude)</span></div>
 <div class="insights-grid">
     <div class="insight-card danger">
         <div class="insight-title" style="color:#ef4444;">● Critical Issues</div>
@@ -878,15 +863,15 @@ def process_and_build():
     </div>
     <div class="kpi-card">
         <div class="kpi-title">Total Network SOH</div>
-        <div class="kpi-value" style="color:#fff;">{total_soh_units:,.0f} <span class="kpi-unit">Units</span></div>
-    </div>
-    <div class="kpi-card">
-        <div class="kpi-title">Ideal Network Target SOH</div>
-        <div class="kpi-value" style="color:#38bdf8;">{total_ideal_stock:,.0f} <span class="kpi-unit">Units</span></div>
+        <div class="kpi-value" style="color:#38bdf8;">{total_soh_units:,.0f} <span class="kpi-unit">Units</span></div>
     </div>
     <div class="kpi-card">
         <div class="kpi-title">Network ATV</div>
         <div class="kpi-value">SAR {network_atv:.2f}</div>
+    </div>
+    <div class="kpi-card">
+        <div class="kpi-title">Network UPT</div>
+        <div class="kpi-value">{network_upt:.2f}</div>
     </div>
     <div class="kpi-card">
         <div class="kpi-title">Network ASP</div>
@@ -895,14 +880,14 @@ def process_and_build():
 </div>
 
 <div class="view-toggle-bar">
-    <button class="view-btn active" id="btn-stores" onclick="switchView('stores')">🏢 Store Commercial Matrix & Stock Gap</button>
+    <button class="view-btn active" id="btn-stores" onclick="switchView('stores')">🏢 Store Commercial Matrix & Display Diagnostics</button>
     <button class="view-btn" id="btn-business" onclick="switchView('business')">📦 Business-Wise Performance ({len(cat_summary)} Categories)</button>
 </div>
 
 <!-- 1. Store Commercial Matrix View -->
 <div id="view-stores">
     
-    <div class="section-title"><span>⚡ Critical Action Directives (Stockout & Overstock Priorities)</span></div>
+    <div class="section-title"><span>⚡ Critical Action Directives (Category Swaps & Rebalancing Priorities)</span></div>
     <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(320px, 1fr)); gap:14px; margin-bottom:24px;">
         {decision_cards_html}
     </div>
@@ -923,8 +908,8 @@ def process_and_build():
     <div class="table-wrap">
         <div class="table-header">
             <div>
-                <h3>STORE COMMERCIAL & INVENTORY GAP MATRIX</h3>
-                <span style="color:var(--text-muted);font-size:12px;">Click any row to open in-depth SOH comparison, Ideal Target gap & commercial directives</span>
+                <h3>STORE COMMERCIAL & DISPLAY ASSORTMENT MATRIX</h3>
+                <span style="color:var(--text-muted);font-size:12px;">Click any row to open store category performance, display density & tailored merchandise directives</span>
             </div>
             <input type="text" id="storeSearch" class="table-search" placeholder="Search store name or code..." onkeyup="filterStores()">
         </div>
@@ -938,11 +923,11 @@ def process_and_build():
                         <th>Sales (SAR)</th>
                         <th>Target (SAR)</th>
                         <th>% Ach</th>
-                        <th>Actual SOH</th>
-                        <th>Ideal SOH (5W)</th>
-                        <th>Stock Gap</th>
-                        <th>WOS</th>
-                        <th>Status</th>
+                        <th>Floor SOH (Units)</th>
+                        <th>Display Capacity</th>
+                        <th>Commercial Diagnostic</th>
+                        <th>ATV (SAR)</th>
+                        <th>UPT</th>
                         <th>ASP (SAR)</th>
                     </tr>
                 </thead>
@@ -1013,15 +998,15 @@ def process_and_build():
 
     document.getElementById("modal-store-name").innerText = meta.name;
     document.getElementById("modal-store-code").innerText = "BRANCH CODE: " + storeCode + " | TARGET: " + meta.target;
+    document.getElementById("modal-sales").innerText = meta.sales;
+    document.getElementById("modal-ach").innerText = meta.ach;
     document.getElementById("modal-soh").innerText = meta.soh_units;
-    document.getElementById("modal-ideal").innerText = meta.ideal_units;
-    document.getElementById("modal-gap-u").innerText = meta.gap_units;
-    document.getElementById("modal-gap-v").innerText = "Value Gap: " + meta.gap_val;
-    document.getElementById("modal-wos").innerText = meta.wos;
-    document.getElementById("modal-st").innerText = meta.sell_through;
-    document.getElementById("modal-asp").innerText = meta.asp;
-    document.getElementById("modal-diag").innerText = meta.diag;
-    document.getElementById("modal-directive").innerText = meta.directive;
+    document.getElementById("modal-capacity").innerText = meta.capacity_badge;
+    document.getElementById("modal-atv").innerText = meta.atv;
+    document.getElementById("modal-upt").innerText = meta.upt;
+    document.getElementById("modal-diag").innerText = meta.problem;
+    document.getElementById("modal-needs").innerText = meta.needs;
+    document.getElementById("modal-directive").innerText = meta.action;
 
     let rowsHtml = "";
     cats.forEach((c, idx) => {{
