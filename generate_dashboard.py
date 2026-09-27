@@ -769,8 +769,8 @@ def process_and_build():
             <td style="font-weight:800;color:#fff;font-size:14px;">
                 🏷️ {c_name} <span style="font-size:11px;color:#38bdf8;margin-left:4px;">(Click to view items)</span>
             </td>
-            <td style="font-weight:700;color:#38bdf8;">{r['sales']:,.2f}</td>
-            <td>{int(r['units']):,}</td>
+            <td style="font-weight:700;color:#38bdf8;" data-sales="{r['sales']}">{r['sales']:,.2f}</td>
+            <td data-units="{r['units']}">{int(r['units']):,}</td>
             <td style="min-width:140px;">
                 <div style="display:flex;align-items:center;gap:8px;">
                     <span style="color:#f8fafc;font-weight:700;min-width:45px;">{r['contribution']:.1f}%</span>
@@ -1073,6 +1073,34 @@ def process_and_build():
             <td>{diag_badge}</td>
             <td>{row['atv']:,.2f}</td>
             <td style="color:#38bdf8;font-weight:600;">{row['asp']:,.2f}</td>
+        </tr>
+        """
+
+    main_cat_table_rows = ""
+    for idx, r in main_cat_summary.iterrows():
+        c_name = r['main_category']
+        bar_w = min(r['contribution'], 100)
+        h_col = r['health_color']
+        safe_c_name = html.escape(c_name).replace("'", "\\'")
+        main_cat_table_rows += f"""
+        <tr onclick="filterByMainCategory('{safe_c_name}')" style="cursor:pointer; background:rgba(56,189,248,0.03);" title="Click to view sub-subgroups">
+            <td style="color:#64748b;font-weight:600;">{idx+1}</td>
+            <td style="font-weight:800;color:#fff;font-size:14px;">
+                🏷️ {c_name} <span style="font-size:11px;color:#38bdf8;margin-left:4px;">(Click to view items)</span>
+            </td>
+            <td style="font-weight:700;color:#38bdf8;" data-sales="{r['sales']}">{r['sales']:,.2f}</td>
+            <td data-units="{r['units']}">{int(r['units']):,}</td>
+            <td style="min-width:140px;">
+                <div style="display:flex;align-items:center;gap:8px;">
+                    <span style="color:#f8fafc;font-weight:700;min-width:45px;">{r['contribution']:.1f}%</span>
+                    <div style="flex:1;background:#1e293b;border-radius:4px;height:6px;overflow:hidden;">
+                        <div style="width:{bar_w}%;background:#38bdf8;height:100%;"></div>
+                    </div>
+                </div>
+            </td>
+            <td><span class="badge" style="background:{h_col}22; color:{h_col}; border:1px solid {h_col}55;">{r['health_status']}</span></td>
+            <td style="color:#f59e0b;font-weight:700;">{r['asp']:,.2f}</td>
+            <td style="color:#cbd5e1;font-weight:500;">{r['leading_store']}</td>
         </tr>
         """
 
@@ -1402,6 +1430,14 @@ def process_and_build():
     </div>
 </div>
 
+<!-- شريط فلتر التاريخ العالمي البارز في أعلى الصفحة تحت الترويسة مباشرة -->
+<div class="global-date-bar">
+    <span>📅 Global Sales Date Filter:</span>
+    <label style="font-size:12px; color:#94a3b8;">From: <input type="date" id="globalDateFrom" class="date-filter-input" value="2026-09-01" onchange="applyGlobalDateFilter()"></label>
+    <label style="font-size:12px; color:#94a3b8;">To: <input type="date" id="globalDateTo" class="date-filter-input" value="2026-09-30" onchange="applyGlobalDateFilter()"></label>
+    <button onclick="resetGlobalDateFilter()" class="sub-tab-btn" style="padding:6px 12px; font-size:11px;">Reset Dates</button>
+</div>
+
 <div class="section-title"><span>🤖 AI Merchandising Directives (Powered by Claude)</span></div>
 <div class="insights-grid">
     <div class="insight-card danger">
@@ -1723,7 +1759,6 @@ def process_and_build():
     updateBusinessTable();
   }}
 
-  // تحديث جدول Business-Wise ليعرض Stock Health لكل قسم عند اختيار متجر معين
   function updateBusinessTable() {{
     const storeCode = document.getElementById("storeDropdownFilter").value;
     const catName = document.getElementById("mainCatFilter").value;
@@ -1824,6 +1859,17 @@ def process_and_build():
     }});
 
     tbody.innerHTML = rowsHtml || "<tr><td colspan='7' style='text-align:center;'>No matching products found for this filter</td></tr>";
+  }}
+
+  function applyGlobalDateFilter() {{
+    const fromDate = document.getElementById("globalDateFrom").value;
+    const toDate = document.getElementById("globalDateTo").value;
+    console.log("Global date filter applied:", fromDate, toDate);
+  }}
+
+  function resetGlobalDateFilter() {{
+    document.getElementById("globalDateFrom").value = "";
+    document.getElementById("globalDateTo").value = "";
   }}
 
   function switchMoversTab(type) {{
