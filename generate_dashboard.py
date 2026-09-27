@@ -416,7 +416,7 @@ def process_and_build():
     sales_with_target = valid_targets['sales'].sum()
     overall_ach = (sales_with_target / total_target * 100) if total_target > 0 else 0
 
-    # 2. الهيكل السلعي للمبيعات
+    # 2. الهيكل السلعي
     main_cat_summary = df_clean.groupby('main_category').agg(
         sales=('Actual Sales Amount', 'sum'),
         units=('Sales Quantity', 'sum')
@@ -466,7 +466,6 @@ def process_and_build():
             })
         store_cat_details[c_code] = cats_list
 
-    # محرك تشخيص Mumuso
     top_main_cats = set(main_cat_summary.head(3)['main_category'])
     def mumuso_commercial_engine(row):
         st_code = row['clean_code']
@@ -536,7 +535,7 @@ def process_and_build():
         main_cat_cards_html += f"""
         <div onclick="filterByMainCategory('{safe_c_name}')" style="background:var(--card); border:1px solid var(--border); border-top:3px solid {c_color}; border-radius:10px; padding:16px; min-width:210px; max-width:240px; flex:1; cursor:pointer;" title="Click to filter sub-categories under {r['main_category']}">
             <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px;">
-                <span style="font-size:13px; font-weight:700; color:#fff; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">{r['main_category']}</span>
+                <span style="font-size:13px; font-weight:700; color:#fff; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;" data-translate-key="cat_{idx}">{r['main_category']}</span>
                 <span style="font-size:12px; font-weight:700; color:{c_color};">{r['contribution']:.1f}%</span>
             </div>
             <div style="font-size:17px; font-weight:700; color:#f8fafc; margin-bottom:6px;">{r['sales']:,.0f} <span style="font-size:11px; color:#94a3b8;">SAR</span></div>
@@ -550,7 +549,7 @@ def process_and_build():
         </div>
         """
 
-    # جداول ومؤشرات المناطق
+    # جداول المناطق
     region_kpi_cards = ""
     region_tables_html = ""
 
@@ -580,7 +579,7 @@ def process_and_build():
         <div style="background:var(--card); border:1px solid var(--border); border-top:4px solid {'#38bdf8' if 'Riyadh' in reg_name else '#818cf8'}; border-radius:12px; padding:20px; flex:1; min-width:320px;">
             <div style="display:flex; justify-content:space-between; align-items:flex-start; margin-bottom:12px;">
                 <div>
-                    <h3 style="margin:0; font-size:17px; color:#fff;">{reg_name}</h3>
+                    <h3 style="margin:0; font-size:17px; color:#fff;" data-translate-key="{reg_name}">{reg_name}</h3>
                     <span style="font-size:12px; color:#38bdf8; font-weight:600;">Area Manager: {reg_mgr}</span>
                 </div>
                 <div style="text-align:right;">
@@ -590,15 +589,15 @@ def process_and_build():
             </div>
             <div style="display:grid; grid-template-columns: repeat(3, 1fr); gap:10px; margin-top:14px; background:#090d16; padding:12px; border-radius:8px; border:1px solid #1e293b;">
                 <div>
-                    <div style="font-size:11px; color:#94a3b8;">CURRENT SALES</div>
+                    <div style="font-size:11px; color:#94a3b8;" data-translate-key="cur_sales">CURRENT SALES</div>
                     <div style="font-size:15px; font-weight:700; color:#fff;">{r_sales:,.0f} <span style="font-size:10px;">SAR</span></div>
                 </div>
                 <div>
-                    <div style="font-size:11px; color:#94a3b8;">LY GROSS SALES</div>
+                    <div style="font-size:11px; color:#94a3b8;" data-translate-key="ly_sales">LY GROSS SALES</div>
                     <div style="font-size:15px; font-weight:700; color:#38bdf8;">{reg_ly_tot:,.0f} <span style="font-size:10px;">SAR</span></div>
                 </div>
                 <div>
-                    <div style="font-size:11px; color:#94a3b8;">SOH UNITS</div>
+                    <div style="font-size:11px; color:#94a3b8;" data-translate-key="soh_units">SOH UNITS</div>
                     <div style="font-size:15px; font-weight:700; color:#fff;">{r_soh:,.0f}</div>
                 </div>
                 <div>
@@ -640,17 +639,14 @@ def process_and_build():
                 y_col = "#10b981" if yoy_v >= 0 else "#ef4444"
                 yoy_cell = f'<span style="color:{y_col}; font-weight:700;">{yoy_v:+.1f}%</span>'
             else:
-                ly_str = '<span style="color:#64748b;">New Store</span>'
+                ly_str = '<span style="color:#64748b;" data-translate-key="new_store">New Store</span>'
                 yoy_cell = '<span style="color:#64748b;">-</span>'
 
             reg_rows += f"""
-            <tr data-store="{r['clean_code']}" style="cursor:pointer;">
+            <tr onclick="openStoreDetails('{r['clean_code']}')" class="clickable-row">
                 <td style="color:#64748b;">{idx+1}</td>
                 <td style="color:#38bdf8;font-weight:600;">{r['clean_code']}</td>
-                <td style="font-weight:600;color:#fff;">
-                    {r['full_name']} 
-                    <span class="lens-btn" data-store="{r['clean_code']}">🔍</span>
-                </td>
+                <td style="font-weight:600;color:#fff;">{r['full_name']}</td>
                 <td style="font-weight:700;color:#f8fafc;">{r['sales']:,.2f}</td>
                 <td style="color:#38bdf8;font-weight:600;">{ly_str}</td>
                 <td>{yoy_cell}</td>
@@ -668,7 +664,7 @@ def process_and_build():
             <div class="table-header">
                 <div>
                     <h3 style="color:#38bdf8; font-size:16px;">🏢 {reg_name.upper()}</h3>
-                    <span style="color:var(--text-muted);font-size:12px;">Area Manager: <strong style="color:#fff;">{reg_mgr}</strong> | Stores: {len(grp)} Branches</span>
+                    <span style="color:var(--text-muted);font-size:12px;" data-translate-key="manager_label">Area Manager: <strong style="color:#fff;">{reg_mgr}</strong> | Stores: {len(grp)} Branches</span>
                 </div>
             </div>
             <div style="overflow-x:auto;">
@@ -676,14 +672,14 @@ def process_and_build():
                     <thead>
                         <tr>
                             <th>#</th>
-                            <th>Code</th>
-                            <th>Full Store Name</th>
-                            <th>Current Sales (SAR)</th>
-                            <th>LY Gross Sales (SAR)</th>
-                            <th>YoY Growth</th>
-                            <th>Target (SAR)</th>
-                            <th>% Ach</th>
-                            <th>Floor SOH</th>
+                            <th data-translate-key="th_code">Code</th>
+                            <th data-translate-key="th_store">Full Store Name</th>
+                            <th data-translate-key="th_sales">Current Sales (SAR)</th>
+                            <th data-translate-key="th_ly">LY Gross Sales (SAR)</th>
+                            <th data-translate-key="th_yoy">YoY Growth</th>
+                            <th data-translate-key="th_target">Target (SAR)</th>
+                            <th data-translate-key="th_ach">% Ach</th>
+                            <th data-translate-key="th_soh">Floor SOH</th>
                             <th>ATV</th>
                             <th>UPT</th>
                             <th>ASP</th>
@@ -692,7 +688,7 @@ def process_and_build():
                     <tbody>
                         {reg_rows}
                         <tr style="background:#0c1220; font-weight:700; border-top:2px solid #38bdf8;">
-                            <td colspan="3" style="color:#38bdf8; font-size:13px;">TOTAL {reg_name.upper()} ({reg_mgr})</td>
+                            <td colspan="3" style="color:#38bdf8; font-size:13px;" data-translate-key="total_reg">TOTAL {reg_name.upper()} ({reg_mgr})</td>
                             <td style="color:#fff; font-size:14px;">{r_sales:,.2f}</td>
                             <td style="color:#38bdf8; font-size:14px;">{reg_ly_tot:,.2f}</td>
                             <td>{yoy_badge}</td>
@@ -713,28 +709,28 @@ def process_and_build():
     grand_total_html = f"""
     <div style="background:#131b2e; border:2px solid #2563eb; border-radius:12px; padding:18px 24px; display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:16px; margin-bottom:30px;">
         <div>
-            <div style="font-size:13px; color:#38bdf8; font-weight:700; text-transform:uppercase;">Network Grand Total (All Regions)</div>
-            <div style="font-size:22px; font-weight:800; color:#fff; margin-top:2px;">{total_sales:,.2f} <span style="font-size:13px; font-weight:400; color:#94a3b8;">SAR</span></div>
+            <div style="font-size:13px; color:#38bdf8; font-weight:700; text-transform:uppercase;" data-translate-key="network_total">Network Grand Total (All Regions)</div>
+            <div style="font-size:22px; font-weight:800; color:#fff; margin-top:2px;">{total_sales:,.0f} <span style="font-size:13px; font-weight:400; color:#94a3b8;">SAR</span></div>
         </div>
         <div style="display:flex; gap:20px; flex-wrap:wrap;">
             <div>
-                <div style="font-size:11px; color:#94a3b8;">LY GROSS SALES (MMS)</div>
-                <div style="font-size:16px; font-weight:700; color:#38bdf8;">{total_ly_sales:,.2f} SAR</div>
+                <div style="font-size:11px; color:#94a3b8;" data-translate-key="ly_gross">LY GROSS SALES (MMS)</div>
+                <div style="font-size:16px; font-weight:700; color:#38bdf8;">{total_ly_sales:,.0f} SAR</div>
             </div>
             <div>
-                <div style="font-size:11px; color:#94a3b8;">LFL YoY GROWTH</div>
+                <div style="font-size:11px; color:#94a3b8;" data-translate-key="lfl_growth">LFL YoY GROWTH</div>
                 <div style="font-size:16px; font-weight:800; color:{net_yoy_col};">{network_lfl_growth:+.1f}%</div>
             </div>
             <div>
-                <div style="font-size:11px; color:#94a3b8;">TOTAL TARGET</div>
+                <div style="font-size:11px; color:#94a3b8;" data-translate-key="total_target">TOTAL TARGET</div>
                 <div style="font-size:16px; font-weight:700; color:#fff;">{total_target:,.0f} SAR</div>
             </div>
             <div>
-                <div style="font-size:11px; color:#94a3b8;">ACHIEVEMENT</div>
+                <div style="font-size:11px; color:#94a3b8;" data-translate-key="achievement">ACHIEVEMENT</div>
                 <div style="font-size:16px; font-weight:700; color:{'#10b981' if overall_ach>=100 else '#f59e0b'};">{overall_ach:.1f}%</div>
             </div>
             <div>
-                <div style="font-size:11px; color:#94a3b8;">TOTAL SOH</div>
+                <div style="font-size:11px; color:#94a3b8;" data-translate-key="total_soh">TOTAL SOH</div>
                 <div style="font-size:16px; font-weight:700; color:#fff;">{total_soh_units:,.0f} Pcs</div>
             </div>
         </div>
@@ -773,7 +769,7 @@ def process_and_build():
             yoy_col = "#10b981" if yoy_val >= 0 else "#ef4444"
             yoy_cell = f'<span style="color:{yoy_col}; font-weight:700;">{yoy_val:+.1f}%</span>'
         else:
-            ly_str = '<span style="color:#64748b;">New Store</span>'
+            ly_str = '<span style="color:#64748b;" data-translate-key="new_store">New Store</span>'
             yoy_cell = '<span style="color:#64748b;">-</span>'
 
         diag_badge = f'<span class="badge" style="background:{row["diag_color"]}22; color:{row["diag_color"]}; border:1px solid {row["diag_color"]}66;">{row["diag_title"]}</span>'
@@ -814,24 +810,21 @@ def process_and_build():
                 </div>
                 
                 <div style="background:#090d16; padding:10px 12px; border-radius:6px; margin-bottom:10px; border:1px solid #1e293b; font-size:12px;">
-                    <div style="color:#cbd5e1; margin-bottom:4px;"><strong>📦 Core Category Presence:</strong> Leading in {row['top_cats_str']}</div>
-                    <div style="color:#f59e0b;"><strong>🎯 What It Needs:</strong> {row['needs']}</div>
+                    <div style="color:#cbd5e1; margin-bottom:4px;" data-translate-key="core_cat"><strong>📦 Core Category Presence:</strong> Leading in {row['top_cats_str']}</div>
+                    <div style="color:#f59e0b;" data-translate-key="store_needs"><strong>🎯 What It Needs:</strong> {row['needs']}</div>
                 </div>
 
-                <div style="font-size:12px; color:#38bdf8; background:rgba(56,189,248,0.08); padding:8px 12px; border-radius:6px; border:1px solid rgba(56,189,248,0.2); font-weight:600; line-height:1.4;">
+                <div style="font-size:12px; color:#38bdf8; background:rgba(56,189,248,0.08); padding:8px 12px; border-radius:6px; border:1px solid rgba(56,189,248,0.2); font-weight:600; line-height:1.4;" data-translate-key="comm_directive">
                     {row['action']}
                 </div>
             </div>
             """
 
         store_table_rows += f"""
-        <tr data-store="{st_code}" style="cursor:pointer;" title="Click to view detailed store category mix & directives">
+        <tr onclick="openStoreDetails('{st_code}')" class="clickable-row" title="Click to view detailed store category mix">
             <td style="color:#64748b;font-weight:600;">{idx+1}</td>
             <td style="color:#38bdf8;font-weight:600;">{st_code}</td>
-            <td style="font-weight:600;color:#fff;">
-                {st_name} 
-                <span class="lens-btn" data-store="{st_code}">🔍</span>
-            </td>
+            <td style="font-weight:600;color:#fff;">{st_name}</td>
             <td style="color:#94a3b8;font-size:12px;">{row['region']}</td>
             <td style="font-weight:700;color:#f8fafc;">{row['sales']:,.2f}</td>
             <td style="color:#38bdf8;font-weight:600;">{ly_str}</td>
@@ -857,7 +850,7 @@ def process_and_build():
         <tr onclick="filterByMainCategory('{safe_c_name}')" style="cursor:pointer; background:rgba(56,189,248,0.03);" title="Click to filter sub-categories">
             <td style="color:#64748b;font-weight:600;">{idx+1}</td>
             <td style="font-weight:800;color:#fff;font-size:14px;">
-                🏷️ {c_name} <span style="font-size:11px;color:#38bdf8;margin-left:4px;">(Click to view items)</span>
+                🏷️ {c_name} <span style="font-size:11px;color:#38bdf8;margin-left:4px;" data-translate-key="click_items">(Click to view items)</span>
             </td>
             <td style="font-weight:700;color:#38bdf8;">{r['sales']:,.2f}</td>
             <td>{int(r['units']):,}</td>
@@ -875,12 +868,12 @@ def process_and_build():
         """
 
     subsub_json_data = subsub_summary.to_dict(orient='records')
-    main_cat_options = '<option value="ALL">-- All Main Categories (Overview) --</option>'
+    main_cat_options = '<option value="ALL" data-translate-key="all_cats">-- All Main Categories (Overview) --</option>'
     for c_name in main_cat_summary['main_category']:
         main_cat_options += f'<option value="{html.escape(c_name)}">{html.escape(c_name)}</option>'
 
     html_content = f"""<!DOCTYPE html>
-<html lang="en">
+<html lang="en" id="html-root">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -897,10 +890,14 @@ def process_and_build():
         }}
         * {{ box-sizing: border-box; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }}
         body {{ background-color: var(--bg); color: var(--text-main); margin: 0; padding: 24px; }}
-        .header {{ display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid var(--border); padding-bottom: 20px; margin-bottom: 24px; }}
+        .header {{ display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid var(--border); padding-bottom: 20px; margin-bottom: 24px; flex-wrap: wrap; gap: 16px; }}
         .header h1 {{ margin: 0; font-size: 24px; font-weight: 700; }}
         .header p {{ margin: 4px 0 0 0; color: var(--text-muted); font-size: 14px; }}
         
+        .top-controls {{ display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }}
+        .lang-btn {{ background: #1e293b; border: 1px solid #334155; color: #fff; padding: 8px 16px; border-radius: 8px; font-weight: 700; cursor: pointer; transition: 0.2s; font-size: 13px; }}
+        .lang-btn:hover {{ background: #2563eb; border-color: #2563eb; }}
+
         .view-toggle-bar {{ display: flex; background: #0c1220; padding: 4px; border-radius: 10px; border: 1px solid var(--border); margin-bottom: 24px; width: fit-content; gap: 4px; flex-wrap: wrap; }}
         .view-btn {{ background: transparent; border: none; color: var(--text-muted); padding: 10px 22px; border-radius: 8px; font-size: 14px; font-weight: 700; cursor: pointer; transition: 0.2s; display: flex; align-items: center; gap: 8px; }}
         .view-btn.active {{ background: #2563eb; color: #fff; box-shadow: 0 4px 12px rgba(37,99,235,0.3); }}
@@ -933,43 +930,24 @@ def process_and_build():
         td {{ padding: 12px 14px; border-bottom: 1px solid var(--border); }}
         tr:hover td {{ background: var(--card-hover); }}
 
+        .clickable-row {{ cursor: pointer; transition: background 0.15s ease; }}
+        .clickable-row:hover td {{ background: #1e293b !important; }}
+
         .badge {{ padding: 4px 8px; border-radius: 4px; font-size: 11px; font-weight: 600; }}
         .cards-scroll-container {{ display: flex; gap: 14px; overflow-x: auto; padding-bottom: 12px; margin-bottom: 24px; scroll-behavior: smooth; }}
         .cards-scroll-container::-webkit-scrollbar {{ height: 6px; }}
         .cards-scroll-container::-webkit-scrollbar-track {{ background: #090d16; }}
         .cards-scroll-container::-webkit-scrollbar-thumb {{ background: #1e293b; border-radius: 3px; }}
 
-        /* زر وأيقونة العدسة المخصصة */
-        .lens-btn {{
-            display: inline-flex;
-            align-items: center;
-            justify-content: center;
-            margin-left: 6px;
-            padding: 3px 6px;
-            font-size: 12px;
-            color: #38bdf8;
-            background: rgba(56, 189, 248, 0.1);
-            border: 1px solid rgba(56, 189, 248, 0.3);
-            border-radius: 6px;
-            cursor: pointer;
-            transition: all 0.2s ease;
-        }}
-        .lens-btn:hover {{
-            background: #38bdf8;
-            color: #090d16;
-            transform: scale(1.1);
-        }}
-
-        /* Modal نافذة تفاصيل المتجر */
         .app-modal {{ 
-            position: fixed; 
-            top: 0; 
-            left: 0; 
-            width: 100%; 
-            height: 100%; 
-            background: rgba(9, 13, 22, 0.88); 
-            backdrop-filter: blur(6px); 
-            z-index: 9999999 !important; 
+            position: fixed !important; 
+            top: 0 !important; 
+            left: 0 !important; 
+            width: 100vw !important; 
+            height: 100vh !important; 
+            background: rgba(9, 13, 22, 0.9) !important; 
+            backdrop-filter: blur(8px) !important; 
+            z-index: 2147483647 !important; 
             display: none; 
             align-items: center; 
             justify-content: center; 
@@ -988,7 +966,7 @@ def process_and_build():
         }}
         .modal-header {{ padding: 20px 24px; border-bottom: 1px solid #1e293b; display: flex; justify-content: space-between; align-items: center; background: #0c1220; }}
         .modal-body {{ padding: 24px; overflow-y: auto; }}
-        .close-btn {{ background: transparent; border: none; color: #94a3b8; font-size: 26px; cursor: pointer; line-height: 1; }}
+        .close-btn {{ background: transparent; border: none; color: #94a3b8; font-size: 28px; cursor: pointer; line-height: 1; }}
         .close-btn:hover {{ color: #fff; }}
     </style>
 </head>
@@ -1004,7 +982,7 @@ def process_and_build():
   </div>
 </div>
 
-<!-- Modal 1: Commercial Deep-Dive Modal مع كافة المعرفات الصحيحة -->
+<!-- Modal 1: Commercial Deep-Dive Modal -->
 <div id="store-modal" class="app-modal">
   <div class="modal-content">
     <div class="modal-header">
@@ -1017,37 +995,37 @@ def process_and_build():
     <div class="modal-body">
       <div style="background:#090d16; border:1px solid #1e293b; border-radius:10px; padding:18px; margin-bottom:20px;">
         <div style="font-size:13px; color:#cbd5e1; margin-bottom:8px;">
-          <strong style="color:#ef4444;">● Store Situation & Root Cause:</strong> <span id="modal-diag" style="color:#f8fafc;">-</span>
+          <strong style="color:#ef4444;" data-translate-key="store_situation">● Store Situation & Root Cause:</strong> <span id="modal-diag" style="color:#f8fafc;">-</span>
         </div>
         <div style="font-size:13px; color:#f59e0b; margin-bottom:10px;">
-          <strong>🎯 What This Store Needs:</strong> <span id="modal-needs" style="color:#fff;">-</span>
+          <strong data-translate-key="store_needs">🎯 What This Store Needs:</strong> <span id="modal-needs" style="color:#fff;">-</span>
         </div>
         <div style="font-size:13px; color:#38bdf8; background:rgba(56,189,248,0.08); padding:10px 14px; border-radius:6px; border:1px solid rgba(56,189,248,0.25);">
-          <strong style="color:#38bdf8;">⚡ Commercial Directive:</strong> <span id="modal-directive" style="color:#fff; font-weight:600;">-</span>
+          <strong style="color:#38bdf8;" data-translate-key="comm_directive">⚡ Commercial Directive:</strong> <span id="modal-directive" style="color:#fff; font-weight:600;">-</span>
         </div>
       </div>
 
-      <div style="margin-bottom:12px; font-size:12px; font-weight:700; text-transform:uppercase; color:#94a3b8;">Store Commercial Metrics</div>
+      <div style="margin-bottom:12px; font-size:12px; font-weight:700; text-transform:uppercase; color:#94a3b8;" data-translate-key="store_metrics">Store Commercial Metrics</div>
       <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(130px, 1fr)); gap:12px; margin-bottom:24px;">
         <div style="background:#090d16; padding:14px; border-radius:8px; border:1px solid #1e293b;">
-          <div style="font-size:11px; color:#94a3b8;">CURRENT SALES</div>
+          <div style="font-size:11px; color:#94a3b8;" data-translate-key="cur_sales">CURRENT SALES</div>
           <div id="modal-sales" style="font-size:17px; font-weight:700; color:#fff;">-</div>
         </div>
         <div style="background:#090d16; padding:14px; border-radius:8px; border:1px solid #1e293b;">
-          <div style="font-size:11px; color:#94a3b8;">LY GROSS SALES</div>
+          <div style="font-size:11px; color:#94a3b8;" data-translate-key="ly_sales">LY GROSS SALES</div>
           <div id="modal-ly" style="font-size:16px; font-weight:700; color:#38bdf8;">-</div>
           <div id="modal-yoy" style="font-size:11px; margin-top:2px;">-</div>
         </div>
         <div style="background:#090d16; padding:14px; border-radius:8px; border:1px solid #1e293b;">
-          <div style="font-size:11px; color:#94a3b8;">TARGET & ACH</div>
+          <div style="font-size:11px; color:#94a3b8;" data-translate-key="target_ach">TARGET & ACH</div>
           <div id="modal-ach" style="font-size:17px; font-weight:700; color:#10b981;">-</div>
         </div>
         <div style="background:#090d16; padding:14px; border-radius:8px; border:1px solid #1e293b;">
-          <div style="font-size:11px; color:#94a3b8;">FLOOR SOH</div>
+          <div style="font-size:11px; color:#94a3b8;" data-translate-key="floor_soh">FLOOR SOH</div>
           <div id="modal-soh" style="font-size:17px; font-weight:700; color:#38bdf8;">-</div>
         </div>
         <div style="background:#090d16; padding:14px; border-radius:8px; border:1px solid #1e293b;">
-          <div style="font-size:11px; color:#94a3b8;">DISPLAY DENSITY</div>
+          <div style="font-size:11px; color:#94a3b8;" data-translate-key="display_density">DISPLAY DENSITY</div>
           <div id="modal-capacity" style="font-size:13px; font-weight:700; color:#cbd5e1;">-</div>
         </div>
         <div style="background:#090d16; padding:14px; border-radius:8px; border:1px solid #1e293b;">
@@ -1064,17 +1042,17 @@ def process_and_build():
         </div>
       </div>
 
-      <div style="margin-bottom:12px; font-size:12px; font-weight:700; text-transform:uppercase; color:#94a3b8;">Store Multi-Tier Assortment Performance</div>
+      <div style="margin-bottom:12px; font-size:12px; font-weight:700; text-transform:uppercase; color:#94a3b8;" data-translate-key="store_assortment">Store Multi-Tier Assortment Performance</div>
       <div style="border:1px solid #1e293b; border-radius:8px; overflow:hidden;">
         <table>
           <thead>
             <tr>
               <th>#</th>
-              <th>Main Category</th>
-              <th>Sub-Subgroup (Item Class)</th>
-              <th>Sales (SAR)</th>
-              <th>Units Sold</th>
-              <th>Store Share</th>
+              <th data-translate-key="th_main_cat">Main Category</th>
+              <th data-translate-key="th_subsub">Sub-Subgroup (Item Class)</th>
+              <th data-translate-key="th_sales">Sales (SAR)</th>
+              <th data-translate-key="th_units">Units Sold</th>
+              <th data-translate-key="th_share">Store Share</th>
               <th>ASP (SAR)</th>
             </tr>
           </thead>
@@ -1087,46 +1065,49 @@ def process_and_build():
 
 <div class="header">
     <div>
-        <h1>MMS Executive Commercial & SOH Intelligence Dashboard</h1>
-        <p>Operational Performance, Regional Hierarchy & Like-For-Like (LY) Benchmarks</p>
+        <h1 data-translate-key="main_title">MMS Executive Commercial & SOH Intelligence Dashboard</h1>
+        <p data-translate-key="main_subtitle">Operational Performance, Regional Hierarchy & Like-For-Like (LY) Benchmarks</p>
+    </div>
+    <div class="top-controls">
+        <button class="lang-btn" id="langToggleBtn" onclick="toggleLanguage()">🌐 العربية / English</button>
     </div>
 </div>
 
-<div class="section-title"><span>🤖 AI Merchandising Directives (Powered by Claude)</span></div>
+<div class="section-title"><span data-translate-key="ai_directives">🤖 AI Merchandising Directives (Powered by Claude)</span></div>
 <div class="insights-grid">
     <div class="insight-card danger">
-        <div class="insight-title" style="color:#ef4444;">● Critical Issues</div>
+        <div class="insight-title" style="color:#ef4444;" data-translate-key="critical_issues">● Critical Issues</div>
         <div class="insight-body">{insights.get('critical', '')}</div>
     </div>
     <div class="insight-card warning">
-        <div class="insight-title" style="color:#f59e0b;">● Attention Required</div>
+        <div class="insight-title" style="color:#f59e0b;" data-translate-key="attention_req">● Attention Required</div>
         <div class="insight-body">{insights.get('attention', '')}</div>
     </div>
     <div class="insight-card success">
-        <div class="insight-title" style="color:#10b981;">● Opportunities</div>
+        <div class="insight-title" style="color:#10b981;" data-translate-key="opportunities">● Opportunities</div>
         <div class="insight-body">{insights.get('opportunity', '')}</div>
     </div>
 </div>
 
 <div class="kpi-grid">
     <div class="kpi-card">
-        <div class="kpi-title">Current Total Sales</div>
+        <div class="kpi-title" data-translate-key="kpi_cur_sales">Current Total Sales</div>
         <div class="kpi-value">{total_sales:,.0f} <span class="kpi-unit">SAR</span></div>
     </div>
     <div class="kpi-card">
-        <div class="kpi-title">LY Gross Sales (MMS)</div>
+        <div class="kpi-title" data-translate-key="kpi_ly_sales">LY Gross Sales (MMS)</div>
         <div class="kpi-value" style="color:#38bdf8;">{total_ly_sales:,.0f} <span class="kpi-unit">SAR</span></div>
     </div>
     <div class="kpi-card">
-        <div class="kpi-title">Network LFL YoY Growth</div>
+        <div class="kpi-title" data-translate-key="kpi_lfl_growth">Network LFL YoY Growth</div>
         <div class="kpi-value" style="color:{net_yoy_col};">{network_lfl_growth:+.1f}%</div>
     </div>
     <div class="kpi-card">
-        <div class="kpi-title">Total Target</div>
+        <div class="kpi-title" data-translate-key="kpi_target">Total Target</div>
         <div class="kpi-value">{total_target:,.0f} <span class="kpi-unit">SAR</span></div>
     </div>
     <div class="kpi-card">
-        <div class="kpi-title">Achievement (% Ach)</div>
+        <div class="kpi-title" data-translate-key="kpi_ach">Achievement (% Ach)</div>
         <div class="kpi-value" style="color: {'#10b981' if overall_ach >= 100 else ('#f59e0b' if overall_ach >= 80 else '#ef4444')};">{overall_ach:.1f}%</div>
     </div>
     <div class="kpi-card">
@@ -1140,24 +1121,24 @@ def process_and_build():
 </div>
 
 <div class="view-toggle-bar">
-    <button class="view-btn active" id="btn-stores" onclick="switchView('stores')">🏢 Store Commercial Matrix</button>
-    <button class="view-btn" id="btn-regions" onclick="switchView('regions')">🌍 Region-Wise Performance</button>
-    <button class="view-btn" id="btn-business" onclick="switchView('business')">📦 Business-Wise Performance (9 Categories)</button>
+    <button class="view-btn active" id="btn-stores" onclick="switchView('stores')" data-translate-key="btn_stores">🏢 Store Commercial Matrix</button>
+    <button class="view-btn" id="btn-regions" onclick="switchView('regions')" data-translate-key="btn_regions">🌍 Region-Wise Performance</button>
+    <button class="view-btn" id="btn-business" onclick="switchView('business')" data-translate-key="btn_business">📦 Business-Wise Performance (9 Categories)</button>
 </div>
 
 <!-- 1. Store Commercial Matrix View -->
 <div id="view-stores">
-    <div class="section-title"><span>⚡ Critical Action Directives (Category Swaps & Rebalancing Priorities)</span></div>
+    <div class="section-title"><span data-translate-key="critical_action">⚡ Critical Action Directives (Category Swaps & Rebalancing Priorities)</span></div>
     <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(320px, 1fr)); gap:14px; margin-bottom:24px;">
         {decision_cards_html}
     </div>
 
     <div class="chart-container">
         <div class="section-title">
-            <span>📊 Top Stores: Actual Sales vs Target</span>
+            <span data-translate-key="chart_title">📊 Top Stores: Actual Sales vs Target</span>
             <div style="font-size:12px; font-weight:500; display:flex; gap:16px;">
-                <span style="display:flex; align-items:center; gap:6px;"><span style="display:inline-block; width:12px; height:12px; background:#38bdf8; border-radius:2px;"></span> Actual Sales (SAR)</span>
-                <span style="display:flex; align-items:center; gap:6px;"><span style="display:inline-block; width:12px; height:12px; background:#334155; border-radius:2px;"></span> Target (SAR)</span>
+                <span style="display:flex; align-items:center; gap:6px;"><span style="display:inline-block; width:12px; height:12px; background:#38bdf8; border-radius:2px;"></span> <span data-translate-key="legend_sales">Actual Sales (SAR)</span></span>
+                <span style="display:flex; align-items:center; gap:6px;"><span style="display:inline-block; width:12px; height:12px; background:#334155; border-radius:2px;"></span> <span data-translate-key="legend_target">Target (SAR)</span></span>
             </div>
         </div>
         <div style="overflow-x:auto; width:100%;">
@@ -1168,8 +1149,8 @@ def process_and_build():
     <div class="table-wrap">
         <div class="table-header">
             <div>
-                <h3>STORE COMMERCIAL & DISPLAY ASSORTMENT MATRIX</h3>
-                <span style="color:var(--text-muted);font-size:12px;">Click any store row or lens 🔍 to open detailed store intelligence</span>
+                <h3 data-translate-key="store_matrix_title">STORE COMMERCIAL & DISPLAY ASSORTMENT MATRIX</h3>
+                <span style="color:var(--text-muted);font-size:12px;" data-translate-key="click_row_hint">Click any store row to open detailed store intelligence</span>
             </div>
             <input type="text" id="storeSearch" class="table-search" placeholder="Search full store name, code, or region..." onkeyup="filterStores()">
         </div>
@@ -1178,17 +1159,17 @@ def process_and_build():
                 <thead>
                     <tr>
                         <th>#</th>
-                        <th>Store Code</th>
-                        <th>Full Store Name</th>
-                        <th>Region</th>
-                        <th>Current Sales (SAR)</th>
-                        <th>LY Gross Sales (SAR)</th>
-                        <th>YoY Growth</th>
-                        <th>Target (SAR)</th>
-                        <th>% Ach</th>
-                        <th>Floor SOH</th>
-                        <th>Display Density</th>
-                        <th>Commercial Diagnostic</th>
+                        <th data-translate-key="th_code">Store Code</th>
+                        <th data-translate-key="th_store">Full Store Name</th>
+                        <th data-translate-key="th_region">Region</th>
+                        <th data-translate-key="th_sales">Current Sales (SAR)</th>
+                        <th data-translate-key="th_ly">LY Gross Sales (SAR)</th>
+                        <th data-translate-key="th_yoy">YoY Growth</th>
+                        <th data-translate-key="th_target">Target (SAR)</th>
+                        <th data-translate-key="th_ach">% Ach</th>
+                        <th data-translate-key="th_soh">Floor SOH</th>
+                        <th data-translate-key="th_density">Display Density</th>
+                        <th data-translate-key="th_diag">Commercial Diagnostic</th>
                         <th>ATV</th>
                         <th>UPT</th>
                         <th>ASP</th>
@@ -1204,7 +1185,7 @@ def process_and_build():
 
 <!-- 2. Region-Wise Performance View -->
 <div id="view-regions" style="display:none;">
-    <div class="section-title"><span>🌍 REGIONAL LEADERSHIP & AREA MANAGER OVERVIEW</span></div>
+    <div class="section-title"><span data-translate-key="regional_overview">🌍 REGIONAL LEADERSHIP & AREA MANAGER OVERVIEW</span></div>
     <div style="display:flex; flex-wrap:wrap; gap:16px; margin-bottom:24px;">
         {region_kpi_cards}
     </div>
@@ -1217,8 +1198,8 @@ def process_and_build():
 <!-- 3. Business-Wise View -->
 <div id="view-business" style="display:none;">
     <div class="section-title">
-        <span>🏷️ MUMUSO MAIN PRODUCT CATEGORIES (LEVEL 1 HIERARCHY)</span>
-        <span style="font-size:12px; color:var(--text-muted); font-weight:400;">Click any category card to drill down into its sub-subgroups &rarr;</span>
+        <span data-translate-key="main_cat_title">🏷️ MUMUSO MAIN PRODUCT CATEGORIES (LEVEL 1 HIERARCHY)</span>
+        <span style="font-size:12px; color:var(--text-muted); font-weight:400;" data-translate-key="card_click_hint">Click any category card to drill down into its sub-subgroups &rarr;</span>
     </div>
     
     <div class="cards-scroll-container">
@@ -1228,8 +1209,8 @@ def process_and_build():
     <div class="table-wrap">
         <div class="table-header">
             <div>
-                <h3 id="tableHierarchyTitle">PRODUCT HIERARCHY MATRIX (LEVEL 1: MAIN CATEGORIES)</h3>
-                <span style="color:var(--text-muted);font-size:12px;">Select a Main Category from the dropdown or cards to view detailed Sub-Subgroups</span>
+                <h3 id="tableHierarchyTitle" data-translate-key="hier_matrix_title">PRODUCT HIERARCHY MATRIX (LEVEL 1: MAIN CATEGORIES)</h3>
+                <span style="color:var(--text-muted);font-size:12px;" data-translate-key="hier_hint">Select a Main Category from the dropdown or cards to view detailed Sub-Subgroups</span>
             </div>
             <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap;">
                 <select id="mainCatFilter" class="table-select" onchange="onCategoryFilterChange(this.value)">
@@ -1243,12 +1224,12 @@ def process_and_build():
                 <thead id="hierarchyTableHead">
                     <tr>
                         <th>#</th>
-                        <th>Main Category</th>
-                        <th>Sales Revenue (SAR)</th>
-                        <th>Sales Units</th>
-                        <th>Network Share (%)</th>
+                        <th data-translate-key="th_main_cat">Main Category</th>
+                        <th data-translate-key="th_sales">Sales Revenue (SAR)</th>
+                        <th data-translate-key="th_units">Sales Units</th>
+                        <th data-translate-key="th_share">Network Share (%)</th>
                         <th>ASP (SAR)</th>
-                        <th>Leading Store Benchmark</th>
+                        <th data-translate-key="th_leading">Leading Store Benchmark</th>
                     </tr>
                 </thead>
                 <tbody id="hierarchyTableBody">
@@ -1265,14 +1246,165 @@ def process_and_build():
   const STORE_META = {json.dumps(store_meta_map)};
   const SUBSUB_DATA = {json.dumps(subsub_json_data)};
 
+  let currentLang = 'en';
+
+  const translations = {{
+    en: {{
+      main_title: "MMS Executive Commercial & SOH Intelligence Dashboard",
+      main_subtitle: "Operational Performance, Regional Hierarchy & Like-For-Like (LY) Benchmarks",
+      ai_directives: "AI Merchandising Directives (Powered by Claude)",
+      critical_issues: "● Critical Issues",
+      attention_req: "● Attention Required",
+      opportunities: "● Opportunities",
+      kpi_cur_sales: "Current Total Sales",
+      kpi_ly_sales: "LY Gross Sales (MMS)",
+      kpi_lfl_growth: "Network LFL YoY Growth",
+      kpi_target: "Total Target",
+      kpi_ach: "Achievement (% Ach)",
+      btn_stores: "🏢 Store Commercial Matrix",
+      btn_regions: "🌍 Region-Wise Performance",
+      btn_business: "📦 Business-Wise Performance (9 Categories)",
+      critical_action: "Critical Action Directives (Category Swaps & Rebalancing Priorities)",
+      chart_title: "Top Stores: Actual Sales vs Target",
+      legend_sales: "Actual Sales (SAR)",
+      legend_target: "Target (SAR)",
+      store_matrix_title: "STORE COMMERCIAL & DISPLAY ASSORTMENT MATRIX",
+      click_row_hint: "Click any store row to open detailed store intelligence",
+      regional_overview: "REGIONAL LEADERSHIP & AREA MANAGER OVERVIEW",
+      main_cat_title: "MUMUSO MAIN PRODUCT CATEGORIES (LEVEL 1 HIERARCHY)",
+      card_click_hint: "Click any category card to drill down into its sub-subgroups",
+      hier_matrix_title: "PRODUCT HIERARCHY MATRIX (LEVEL 1: MAIN CATEGORIES)",
+      hier_hint: "Select a Main Category from the dropdown or cards to view detailed Sub-Subgroups",
+      th_code: "Store Code",
+      th_store: "Full Store Name",
+      th_region: "Region",
+      th_sales: "Current Sales (SAR)",
+      th_ly: "LY Gross Sales (SAR)",
+      th_yoy: "YoY Growth",
+      th_target: "Target (SAR)",
+      th_ach: "% Ach",
+      th_soh: "Floor SOH",
+      th_density: "Display Density",
+      th_diag: "Commercial Diagnostic",
+      th_main_cat: "Main Category",
+      th_units: "Sales Units",
+      th_share: "Network Share (%)",
+      th_leading: "Leading Store Benchmark",
+      th_subsub: "Sub-Subgroup (Item Class)",
+      network_total: "Network Grand Total (All Regions)",
+      ly_gross: "LY GROSS SALES (MMS)",
+      lfl_growth: "LFL YoY GROWTH",
+      total_target: "TOTAL TARGET",
+      achievement: "ACHIEVEMENT",
+      total_soh: "TOTAL SOH",
+      new_store: "New Store",
+      manager_label: "Area Manager",
+      total_reg: "TOTAL",
+      store_situation: "● Store Situation & Root Cause:",
+      store_needs: "🎯 What This Store Needs:",
+      comm_directive: "⚡ Commercial Directive:",
+      store_metrics: "Store Commercial Metrics",
+      store_assortment: "Store Multi-Tier Assortment Performance",
+      cur_sales: "CURRENT SALES",
+      target_ach: "TARGET & ACH",
+      floor_soh: "FLOOR SOH",
+      display_density: "DISPLAY DENSITY",
+      click_items: "(Click to view items)",
+      all_cats: "-- All Main Categories (Overview) --"
+    }},
+    ar: {{
+      main_title: "لوحة تحكم مؤشرات الأداء التجارية والمخزون - موموسو",
+      main_subtitle: "الأداء التشغيلي، الهيكل الإقليمي ومقارنات العام الماضي",
+      ai_directives: "توجيهات الذكاء الاصطناعي التجارية (مدعومة بواسطة Claude)",
+      critical_issues: "● قضايا حرجة وحلول المخزون",
+      attention_req: "● تنبيهات واهتمام مطلوب",
+      opportunities: "● الفرص المتاحة",
+      kpi_cur_sales: "إجمالي المبيعات الحالية",
+      kpi_ly_sales: "مبيعات العام الماضي (موموسو)",
+      kpi_lfl_growth: "نسبة النمو السنوي (LFL YoY)",
+      kpi_target: "إجمالي التارجت",
+      kpi_ach: "نسبة التحقيق (% Ach)",
+      btn_stores: "🏢 مصفوفة متاجر التجزئة",
+      btn_regions: "🌍 الأداء حسب المناطق والمدراء",
+      btn_business: "📦 الأداء حسب قطاعات الأعمال (9 أقسام)",
+      critical_action: "توجيهات العمل الحرجة (استبدال التشكيلات وإعادة التوازن)",
+      chart_title: "أفضل المتاجر: المبيعات الفعلية مقابل التارجت",
+      legend_sales: "المبيعات الفعلية (ريال)",
+      legend_target: "التارجت (ريال)",
+      store_matrix_title: "مصفوفة أداء المتاجر وكثافة العرض",
+      click_row_hint: "انقر على أي سطر متجر لعرض تفاصيل المخزون والمزيج السلعي",
+      regional_overview: "القيادة الإقليمية ونظرة مدراء المناطق",
+      main_cat_title: "أقسام منتجات موموسو الرئيسية (المستوى الأول)",
+      card_click_hint: "انقر على أي بطاقة قسم لعرض التفاصيل الدقيقة للأصناف &rarr;",
+      hier_matrix_title: "مصفوفة الهيكل السلعي (المستوى الأول: الأقسام الرئيسية)",
+      hier_hint: "اختر قسماً رئيسياً من القائمة أو البطاقات لعرض الأصناف التفصيلية",
+      th_code: "كود الفرع",
+      th_store: "اسم الفرع الكامل",
+      th_region: "المنطقة",
+      th_sales: "المبيعات الحالية (ريال)",
+      th_ly: "مبيعات العام الماضي (ريال)",
+      th_yoy: "نسبة النمو السنوي",
+      th_target: "التارجت (ريال)",
+      th_ach: "نسبة التحقيق",
+      th_soh: "المخزون الحالي (SOH)",
+      th_density: "كثافة العرض",
+      th_diag: "التشخيص التجاري",
+      th_main_cat: "القسم الرئيسي",
+      th_units: "القطع المباعة",
+      th_share: "الحصة (%)",
+      th_leading: "الفرع الرائد المعياري",
+      th_subsub: "التصنيف الدقيق (Sub-Subgroup)",
+      network_total: "المجموع الكلي للشبكة (جميع المناطق)",
+      ly_gross: "مبيعات العام الماضي (موموسو)",
+      lfl_growth: "نمو المتاجر المشتركة YoY",
+      total_target: "إجمالي التارجت",
+      achievement: "نسبة التحقيق العامة",
+      total_soh: "إجمالي مخزون الشبكة",
+      new_store: "فرع جديد",
+      manager_label: "مدير المنطقة",
+      total_reg: "إجمالي",
+      store_situation: "● تشخيص حالة الفرع:",
+      store_needs: "🎯 ما يحتاجه الفرع:",
+      comm_directive: "⚡ التوجيه التشغيلي الفوري:",
+      store_metrics: "المقاييس التجارية للفرع",
+      store_assortment: "أداء التشكيلة السلعية داخل الفرع",
+      cur_sales: "المبيعات الحالية",
+      target_ach: "التارجت والتحقيق",
+      floor_soh: "المخزون في الفرع",
+      display_density: "كثافة العرض",
+      click_items: "(انقر لعرض الأصناف)",
+      all_cats: "-- جميع الأقسام الرئيسية (نظرة عامة) --"
+    }}
+  }};
+
+  function toggleLanguage() {{
+    currentLang = currentLang === 'en' ? 'ar' : 'en';
+    const root = document.getElementById("html-root");
+    if (currentLang === 'ar') {{
+      root.setAttribute("dir", "rtl");
+      root.setAttribute("lang", "ar");
+    }} else {{
+      root.setAttribute("dir", "ltr");
+      root.setAttribute("lang", "en");
+    }}
+    
+    // ترجمة النصوص التي تحتوي على سمة data-translate-key
+    document.querySelectorAll("[data-translate-key]").forEach(el => {{
+      const key = el.getAttribute("data-translate-key");
+      if (translations[currentLang][key]) {{
+        el.innerHTML = translations[currentLang][key];
+      }}
+    }});
+  }}
+
   function safeSetText(id, text) {{
     const el = document.getElementById(id);
-    if (el) el.innerText = text || "-";
+    if (el) el.innerText = (text !== undefined && text !== null) ? text : "-";
   }}
 
   function safeSetHtml(id, htmlContent) {{
     const el = document.getElementById(id);
-    if (el) el.innerHTML = htmlContent || "-";
+    if (el) el.innerHTML = (htmlContent !== undefined && htmlContent !== null) ? htmlContent : "-";
   }}
 
   function openStoreDetails(storeCode) {{
@@ -1321,24 +1453,12 @@ def process_and_build():
       
       const modal = document.getElementById("store-modal");
       if (modal) {{
-        modal.style.setProperty("display", "flex", "important");
+        modal.style.display = "flex";
       }}
     }} catch (err) {{
       console.error("Error opening store details:", err);
     }}
   }}
-
-  // مراقب أحداث مركزي يلتقط النقر على أي متجر أو عدسة بنسبة 100%
-  document.addEventListener("click", function(e) {{
-    const target = e.target.closest("[data-store]");
-    if (target) {{
-      const code = target.getAttribute("data-store");
-      if (code) {{
-        e.preventDefault();
-        openStoreDetails(code);
-      }}
-    }}
-  }});
 
   function filterByMainCategory(catName) {{
     const filter = document.getElementById("mainCatFilter");
@@ -1361,11 +1481,11 @@ def process_and_build():
       thead.innerHTML = `
         <tr>
           <th>#</th>
-          <th>Main Category</th>
-          <th>Sub-Subgroup (Product Group)</th>
-          <th>Sales Revenue (SAR)</th>
-          <th>Sales Units</th>
-          <th>Contribution (%)</th>
+          <th data-translate-key="th_main_cat">Main Category</th>
+          <th data-translate-key="th_subsub">Sub-Subgroup (Product Group)</th>
+          <th data-translate-key="th_sales">Sales Revenue (SAR)</th>
+          <th data-translate-key="th_units">Sales Units</th>
+          <th data-translate-key="th_share">Network Share (%)</th>
           <th>ASP (SAR)</th>
         </tr>
       `;
@@ -1410,12 +1530,12 @@ def process_and_build():
 
   function closeModal(modalId) {{
     const modal = document.getElementById(modalId);
-    if (modal) modal.style.setProperty("display", "none", "important");
+    if (modal) modal.style.display = "none";
   }}
 
   window.onclick = function(event) {{
     if (event.target && event.target.classList.contains('app-modal')) {{
-      event.target.style.setProperty("display", "none", "important");
+      event.target.style.display = "none";
     }}
   }};
 
