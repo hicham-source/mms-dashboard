@@ -197,37 +197,81 @@ def process_and_build():
     store_summary['share'] = ((store_summary['sales'] / total_sales) * 100).round(2)
     store_summary = store_summary.sort_values(by='sales', ascending=False).reset_index(drop=True)
 
-    # 2. إجماليات جميع الأصناف (All Categories بدون استثناء)
+    # 2. إجماليات الأصناف
     cat_summary = df_clean.groupby(cat_col).agg(
         sales=('Actual Sales Amount', 'sum'),
-        units=('Sales Quantity', 'sum'),
-        txns=('Receipt Number', 'nunique')
+        units=('Sales Quantity', 'sum')
     ).reset_index().rename(columns={cat_col: 'Category Name'})
     cat_summary['contribution'] = ((cat_summary['sales'] / total_sales) * 100).round(2)
     cat_summary['asp'] = (cat_summary['sales'] / cat_summary['units'].replace(0, np.nan)).fillna(0).round(2)
 
-    # أفضل متجر لكل تصنيف
-    cat_store_matrix = df_clean.groupby([cat_col, 'Organization Name'])['Actual Sales Amount'].sum().reset_index()
-    top_store_per_cat = {}
-    for c_name, grp in cat_store_matrix.groupby(cat_col):
-        best_st = grp.sort_values(by='Actual Sales Amount', ascending=False).iloc[0]
-        top_store_per_cat[c_name] = f"{best_st['Organization Name']} ({best_st['Actual Sales Amount']:,.0f} SAR)"
+    # 3. بناء تفاصيل كل تصنيف حسب كل متجر (Category-to-Stores Breakdown for Click/Modal)
+    cat_store_breakdown = {}
+    grouped_cat_store = df_clean.groupby([cat_col, 'Organization Name', 'Organization Code']).agg(
+        sales=('Actual Sales Amount', 'sum'),
+        units=('Sales Quantity', 'sum')
+    ).reset_index()
 
+    for c_name, grp in grouped_cat_store.groupby(cat_col):
+        c_total = grp['sales'].sum()
+        grp_sorted = grp.sort_values(by='sales', ascending=False)
+        st_list = []
+        for _, s_row in grp_sorted.iterrows():
+            st_sales = s_row['sales']
+            st_units = s_row['units']
+            st_share = (st_sales / c_total * 100) if c_total > 0 else 0
+            st_asp = (st_sales / st_units) if st_units > 0 else 0
+            st_list.append({
+                "store": s_row['Organization Name'],
+                "code": str(s_row['Organization Code']),
+                "sales": f"{st_sales:,.2f}",
+                "units": f"{int(st_units):,}",
+                "share": f"{st_share:.1f}%",
+                "asp": f"{st_asp:,.2f}"
+            })
+        cat_store_breakdown[c_name] = st_list
+
+    # أفضل متجر لكل تصنيف
+    top_store_per_cat = {}
+    for c_name, st_list in cat_store_breakdown.items():
+        if st_list:
+            top_store_per_cat[c_name] = f"{st_list[0]['store']} ({st_list[0]['sales']} SAR - {st_list[0]['share']})"
     cat_summary['leading_store'] = cat_summary['Category Name'].map(top_store_per_cat).fillna("-")
     cat_summary = cat_summary.sort_values(by='sales', ascending=False).reset_index(drop=True)
 
+    # 4. بناء تفاصيل كل متجر حسب كل تصنيف (Store-to-Categories Breakdown)
+    store_category_details = {}
+    grouped_store_cat = df_clean.groupby(['Organization Code', cat_col]).agg(
+        cat_sales=('Actual Sales Amount', 'sum'),
+        cat_units=('Sales Quantity', 'sum')
+    ).reset_index()
+
+    for code, grp in grouped_store_cat.groupby('Organization Code'):
+        st_total = grp['cat_sales'].sum()
+        grp_sorted = grp.sort_values(by='cat_sales', ascending=False)
+        cats_list = []
+        for _, c_row in grp_sorted.iterrows():
+            c_sales = c_row['cat_sales']
+            c_units = c_row['cat_units']
+            share_st = (c_sales / st_total * 100) if st_total > 0 else 0
+            asp_st = (c_sales / c_units) if c_units > 0 else 0
+            cats_list.append({
+                "category": c_row[cat_col],
+                "sales": f"{c_sales:,.2f}",
+                "units": f"{int(c_units):,}",
+                "share": f"{share_st:.1f}%",
+                "asp": f"{asp_st:,.2f}"
+            })
+        store_category_details[str(code)] = cats_list
+
     # أعلى تصنيف لكل متجر
-    store_cat = df_clean.groupby(['Organization Code', cat_col])['Actual Sales Amount'].sum().reset_index()
     top_cat_per_store = {}
-    for code, group in store_cat.groupby('Organization Code'):
-        top_row = group.sort_values(by='Actual Sales Amount', ascending=False).iloc[0]
-        st_total = group['Actual Sales Amount'].sum()
-        pct = (top_row['Actual Sales Amount'] / st_total * 100) if st_total > 0 else 0
-        top_cat_per_store[code] = f"{top_row[cat_col]} ({pct:.1f}%)"
+    for code, cats in store_category_details.items():
+        if cats:
+            top_cat_per_store[code] = f"{cats[0]['category']} ({cats[0]['share']})"
+    store_summary['top_category'] = store_summary['Organization Code'].astype(str).map(top_cat_per_store).fillna("-")
 
-    store_summary['top_category'] = store_summary['Organization Code'].map(top_cat_per_store).fillna("-")
-
-    # مطابقة أهداف الفروع
+    # مطابقة الأهداف
     def match_target(row):
         code_str = str(row['Organization Code']).strip()
         name_str = str(row['Organization Name']).strip()
@@ -252,15 +296,15 @@ def process_and_build():
     chart_stores = store_summary.head(8)
     chart_svg_markup = build_svg_bar_chart(chart_stores)
 
-    # شريط بطاقات كل التصنيفات (All Categories Cards - Scrollable)
+    # شريط بطاقات الأصناف
     colors = ['#38bdf8', '#818cf8', '#a855f7', '#ec4899', '#f59e0b', '#10b981', '#06b6d4', '#e11d48', '#84cc16']
     cat_cards_html = ""
     for idx, r in cat_summary.iterrows():
         c_color = colors[idx % len(colors)]
         cat_cards_html += f"""
-        <div style="background:var(--card); border:1px solid var(--border); border-radius:10px; padding:16px; min-width:210px; max-width:250px; flex:0 0 auto;">
+        <div onclick="openCategoryStores('{r['Category Name']}')" style="background:var(--card); border:1px solid var(--border); border-radius:10px; padding:16px; min-width:210px; max-width:250px; flex:0 0 auto; cursor:pointer;" title="Click to see all stores selling {r['Category Name']}">
             <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
-                <span style="font-size:13px; font-weight:700; color:#f8fafc; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;" title="{r['Category Name']}">{r['Category Name']}</span>
+                <span style="font-size:13px; font-weight:700; color:#f8fafc; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">{r['Category Name']}</span>
                 <span style="font-size:12px; font-weight:700; color:{c_color};">{r['contribution']:.1f}%</span>
             </div>
             <div style="font-size:18px; font-weight:700; color:#fff; margin-bottom:6px;">{r['sales']:,.0f} <span style="font-size:11px; color:#94a3b8;">SAR</span></div>
@@ -275,8 +319,12 @@ def process_and_build():
         """
 
     # جدول الفروع
+    store_meta_map = {}
     store_table_rows = ""
     for idx, row in store_summary.iterrows():
+        st_code = str(row['Organization Code'])
+        st_name = str(row['Organization Name'])
+        
         if pd.notna(row['target']):
             target_str = f"{row['target']:,.0f}"
             ach_val = row['ach_pct']
@@ -304,11 +352,25 @@ def process_and_build():
             ach_str = '<span style="color:#64748b;">-</span>'
             status_badge = '<span class="badge" style="background:#1e293b;color:#94a3b8;">Normal</span>'
 
+        store_meta_map[st_code] = {
+            "name": st_name,
+            "sales": f"{row['sales']:,.2f} SAR",
+            "target": f"{target_str} SAR" if target_str != "-" else "No Target Assigned",
+            "ach": f"{row['ach_pct']:.1f}%" if pd.notna(row['ach_pct']) else "-",
+            "share": f"{row['share']:.2f}%",
+            "txns": f"{int(row['txns']):,}",
+            "atv": f"{row['atv']:,.2f} SAR",
+            "upt": f"{row['upt']:.2f}",
+            "asp": f"{row['asp']:,.2f} SAR"
+        }
+
         store_table_rows += f"""
-        <tr>
+        <tr onclick="openStoreDetails('{st_code}')" style="cursor:pointer;" title="Click to view all categories in {st_name}">
             <td style="color:#64748b;font-weight:600;">{idx+1}</td>
-            <td style="color:#38bdf8;font-weight:500;">{row['Organization Code']}</td>
-            <td style="font-weight:600;color:#fff;">{row['Organization Name']}</td>
+            <td style="color:#38bdf8;font-weight:600;">{st_code}</td>
+            <td style="font-weight:600;color:#fff;">
+                {st_name} <span style="font-size:11px;color:#38bdf8;margin-left:4px;">🔍</span>
+            </td>
             <td style="font-weight:700;color:#f8fafc;">{row['sales']:,.2f}</td>
             <td style="color:#94a3b8;">{target_str}</td>
             <td style="min-width:140px;">{ach_str}</td>
@@ -322,14 +384,17 @@ def process_and_build():
         </tr>
         """
 
-    # جدول جميع الأصناف بالكامل
+    # جدول جميع الأصناف مع تفعيل النقر التفاعلي لعرض المتاجر ومساهمتها
     cat_table_rows = ""
     for idx, r in cat_summary.iterrows():
+        c_name = r['Category Name']
         bar_w = min(r['contribution'], 100)
         cat_table_rows += f"""
-        <tr>
+        <tr onclick="openCategoryStores('{c_name}')" style="cursor:pointer;" title="Click to see each store's contribution in {c_name}">
             <td style="color:#64748b;font-weight:600;">{idx+1}</td>
-            <td style="font-weight:700;color:#fff;font-size:14px;">{r['Category Name']}</td>
+            <td style="font-weight:700;color:#fff;font-size:14px;">
+                {c_name} <span style="font-size:11px;color:#38bdf8;margin-left:4px;">🔍</span>
+            </td>
             <td style="font-weight:700;color:#38bdf8;">{r['sales']:,.2f}</td>
             <td>{int(r['units']):,}</td>
             <td style="min-width:140px;">
@@ -341,9 +406,14 @@ def process_and_build():
                 </div>
             </td>
             <td style="color:#f59e0b;font-weight:700;">{r['asp']:,.2f}</td>
-            <td style="color:#94a3b8;font-weight:500;">{r['leading_store']}</td>
+            <td style="color:#cbd5e1;font-weight:500;">{r['leading_store']}</td>
         </tr>
         """
+
+    # خيارات الـ Dropdown لاختيار أي متجر
+    store_options_html = '<option value="ALL">-- Select Store to filter categories --</option>'
+    for _, s in store_summary.iterrows():
+        store_options_html += f'<option value="{s["Organization Code"]}">{s["Organization Name"]} ({s["Organization Code"]})</option>'
 
     html_content = f"""<!DOCTYPE html>
 <html lang="en">
@@ -392,7 +462,8 @@ def process_and_build():
         .table-wrap {{ background: var(--card); border: 1px solid var(--border); border-radius: 10px; overflow: hidden; margin-bottom: 24px; }}
         .table-header {{ padding: 16px 20px; display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid var(--border); flex-wrap: wrap; gap: 12px; }}
         .table-header h3 {{ margin: 0; font-size: 15px; font-weight: 700; }}
-        .table-search {{ padding: 8px 14px; background: #090d16; border: 1px solid var(--border); border-radius: 6px; color: #fff; outline: none; width: 260px; font-size: 13px; }}
+        .table-search {{ padding: 8px 14px; background: #090d16; border: 1px solid var(--border); border-radius: 6px; color: #fff; outline: none; width: 240px; font-size: 13px; }}
+        .table-select {{ padding: 8px 14px; background: #090d16; border: 1px solid var(--border); border-radius: 6px; color: #38bdf8; outline: none; font-size: 13px; font-weight: 600; }}
         table {{ width: 100%; border-collapse: collapse; text-align: left; font-size: 13px; }}
         th {{ background: #0c1220; color: var(--text-muted); padding: 12px 14px; font-weight: 600; text-transform: uppercase; font-size: 11px; letter-spacing: 0.5px; border-bottom: 1px solid var(--border); }}
         td {{ padding: 12px 14px; border-bottom: 1px solid var(--border); }}
@@ -403,11 +474,18 @@ def process_and_build():
         .badge-warning {{ background: rgba(245, 158, 11, 0.15); color: #f59e0b; }}
         .badge-danger {{ background: rgba(239, 68, 68, 0.15); color: #ef4444; }}
 
-        /* Scrollable container for all category cards */
         .cards-scroll-container {{ display: flex; gap: 14px; overflow-x: auto; padding-bottom: 12px; margin-bottom: 24px; scroll-behavior: smooth; }}
         .cards-scroll-container::-webkit-scrollbar {{ height: 6px; }}
         .cards-scroll-container::-webkit-scrollbar-track {{ background: #090d16; }}
         .cards-scroll-container::-webkit-scrollbar-thumb {{ background: #1e293b; border-radius: 3px; }}
+
+        /* Popup Modals */
+        .app-modal {{ position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(9, 13, 22, 0.85); backdrop-filter: blur(5px); z-index: 99999; display: none; align-items: center; justify-content: center; }}
+        .modal-content {{ background: #131b2e; border: 1px solid #1e293b; border-radius: 14px; width: 90%; max-width: 900px; max-height: 88vh; display: flex; flex-direction: column; overflow: hidden; box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.7); }}
+        .modal-header {{ padding: 20px 24px; border-bottom: 1px solid #1e293b; display: flex; justify-content: space-between; align-items: center; }}
+        .modal-body {{ padding: 24px; overflow-y: auto; }}
+        .close-btn {{ background: transparent; border: none; color: #94a3b8; font-size: 24px; cursor: pointer; line-height: 1; }}
+        .close-btn:hover {{ color: #fff; }}
     </style>
 </head>
 <body>
@@ -419,6 +497,94 @@ def process_and_build():
     <input type="password" id="access-pass" placeholder="Password" style="width:100%;padding:12px;border-radius:6px;border:1px solid #334155;background:#090d16;color:#fff;font-size:16px;text-align:center;outline:none;box-sizing:border-box;margin-bottom:14px;">
     <button onclick="checkAccess()" style="width:100%;padding:12px;border-radius:6px;border:none;background:#2563eb;color:#fff;font-weight:700;font-size:15px;cursor:pointer;">Unlock Dashboard</button>
     <p id="error-msg" style="color:#ef4444;font-size:13px;margin:12px 0 0 0;display:none;">Invalid credentials</p>
+  </div>
+</div>
+
+<!-- Modal 1: تفاصيل المتجر (Store Modal) -->
+<div id="store-modal" class="app-modal">
+  <div class="modal-content">
+    <div class="modal-header">
+      <div>
+        <h2 id="modal-store-name" style="margin:0; font-size:18px; color:#fff;">Store Deep-Dive</h2>
+        <span id="modal-store-code" style="color:#38bdf8; font-size:12px; font-weight:600;">CODE</span>
+      </div>
+      <button class="close-btn" onclick="closeModal('store-modal')">&times;</button>
+    </div>
+    <div class="modal-body">
+      <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(130px, 1fr)); gap:12px; margin-bottom:20px;">
+        <div style="background:#090d16; padding:12px; border-radius:8px; border:1px solid #1e293b;">
+          <div style="font-size:11px; color:#94a3b8;">SALES</div>
+          <div id="modal-sales" style="font-size:16px; font-weight:700; color:#fff;">-</div>
+        </div>
+        <div style="background:#090d16; padding:12px; border-radius:8px; border:1px solid #1e293b;">
+          <div style="font-size:11px; color:#94a3b8;">TARGET</div>
+          <div id="modal-target" style="font-size:16px; font-weight:700; color:#94a3b8;">-</div>
+        </div>
+        <div style="background:#090d16; padding:12px; border-radius:8px; border:1px solid #1e293b;">
+          <div style="font-size:11px; color:#94a3b8;">% ACH</div>
+          <div id="modal-ach" style="font-size:16px; font-weight:700; color:#10b981;">-</div>
+        </div>
+        <div style="background:#090d16; padding:12px; border-radius:8px; border:1px solid #1e293b;">
+          <div style="font-size:11px; color:#94a3b8;">ATV</div>
+          <div id="modal-atv" style="font-size:16px; font-weight:700; color:#38bdf8;">-</div>
+        </div>
+        <div style="background:#090d16; padding:12px; border-radius:8px; border:1px solid #1e293b;">
+          <div style="font-size:11px; color:#94a3b8;">UPT</div>
+          <div id="modal-upt" style="font-size:16px; font-weight:700; color:#f8fafc;">-</div>
+        </div>
+        <div style="background:#090d16; padding:12px; border-radius:8px; border:1px solid #1e293b;">
+          <div style="font-size:11px; color:#94a3b8;">ASP</div>
+          <div id="modal-asp" style="font-size:16px; font-weight:700; color:#f59e0b;">-</div>
+        </div>
+      </div>
+      <div style="margin-bottom:12px; font-size:13px; font-weight:700; text-transform:uppercase; color:#94a3b8;">Store Category Breakdown</div>
+      <div style="border:1px solid #1e293b; border-radius:8px; overflow:hidden;">
+        <table>
+          <thead>
+            <tr>
+              <th>#</th>
+              <th>Category</th>
+              <th>Sales (SAR)</th>
+              <th>Units Sold</th>
+              <th>Contribution in Store</th>
+              <th>ASP (SAR)</th>
+            </tr>
+          </thead>
+          <tbody id="modal-cats-body"></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Modal 2: تفاصيل الصنف حسب المتاجر (Category Store Breakdown Modal) -->
+<div id="cat-modal" class="app-modal">
+  <div class="modal-content">
+    <div class="modal-header">
+      <div>
+        <h2 id="modal-cat-name" style="margin:0; font-size:18px; color:#38bdf8;">Category Breakdown Across Stores</h2>
+        <span style="color:#94a3b8; font-size:12px;">Store-by-Store Sales Volume & Contribution</span>
+      </div>
+      <button class="close-btn" onclick="closeModal('cat-modal')">&times;</button>
+    </div>
+    <div class="modal-body">
+      <div style="border:1px solid #1e293b; border-radius:8px; overflow:hidden;">
+        <table>
+          <thead>
+            <tr>
+              <th>#</th>
+              <th>Store Code</th>
+              <th>Store Name</th>
+              <th>Sales (SAR)</th>
+              <th>Units Sold</th>
+              <th>Store Share in Category</th>
+              <th>ASP (SAR)</th>
+            </tr>
+          </thead>
+          <tbody id="modal-cat-stores-body"></tbody>
+        </table>
+      </div>
+    </div>
   </div>
 </div>
 
@@ -496,7 +662,7 @@ def process_and_build():
         <div class="table-header">
             <div>
                 <h3>STORE PERFORMANCE MATRIX</h3>
-                <span style="color:var(--text-muted);font-size:12px;">Ranked by revenue with achievement, leading category and store ASP</span>
+                <span style="color:var(--text-muted);font-size:12px;">Click any store row to open its full category breakdown & operational details</span>
             </div>
             <input type="text" id="storeSearch" class="table-search" placeholder="Search store name or code..." onkeyup="filterStores()">
         </div>
@@ -527,11 +693,11 @@ def process_and_build():
     </div>
 </div>
 
-<!-- 2. Business-Wise View (All Categories) -->
+<!-- 2. Business-Wise View -->
 <div id="view-business" style="display:none;">
     <div class="section-title">
         <span>📦 ALL CATEGORIES CONTRIBUTION MIX ({len(cat_summary)} CATEGORIES)</span>
-        <span style="font-size:12px; color:var(--text-muted); font-weight:400;">Scroll horizontally to inspect all product groups &rarr;</span>
+        <span style="font-size:12px; color:var(--text-muted); font-weight:400;">Click any category to see store-by-store sales details &rarr;</span>
     </div>
     
     <div class="cards-scroll-container">
@@ -541,10 +707,15 @@ def process_and_build():
     <div class="table-wrap">
         <div class="table-header">
             <div>
-                <h3>COMPLETE CATEGORY MATRIX</h3>
-                <span style="color:var(--text-muted);font-size:12px;">All retail categories ranked by revenue with volume, ASP, and primary branch</span>
+                <h3>CATEGORY PERFORMANCE MATRIX</h3>
+                <span style="color:var(--text-muted);font-size:12px;">Click any category row to see all stores' sales, or filter by specific store:</span>
             </div>
-            <input type="text" id="catSearch" class="table-search" placeholder="Search any category..." onkeyup="filterCategories()">
+            <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap;">
+                <select id="storeCategoryFilter" class="table-select" onchange="filterCategoryByStore(this.value)">
+                    {store_options_html}
+                </select>
+                <input type="text" id="catSearch" class="table-search" placeholder="Search any category..." onkeyup="filterCategories()">
+            </div>
         </div>
         <div style="overflow-x:auto;">
             <table id="categoriesTable">
@@ -554,12 +725,12 @@ def process_and_build():
                         <th>Category Name</th>
                         <th>Sales Revenue (SAR)</th>
                         <th>Sales Units</th>
-                        <th>Network Share (%)</th>
+                        <th>Contribution (%)</th>
                         <th>ASP (SAR)</th>
                         <th>Leading Store Benchmark</th>
                     </tr>
                 </thead>
-                <tbody>
+                <tbody id="categoriesTableBody">
                     {cat_table_rows}
                 </tbody>
             </table>
@@ -569,6 +740,103 @@ def process_and_build():
 
 <script>
   const PASS = "MMS2026";
+  const STORE_DETAILS = {json.dumps(store_category_details)};
+  const STORE_META = {json.dumps(store_meta_map)};
+  const CAT_STORE_BREAKDOWN = {json.dumps(cat_store_breakdown)};
+  const DEFAULT_CAT_TABLE_HTML = `{cat_table_rows}`;
+
+  function openStoreDetails(storeCode) {{
+    const meta = STORE_META[storeCode];
+    const cats = STORE_DETAILS[storeCode] || [];
+    if (!meta) return;
+
+    document.getElementById("modal-store-name").innerText = meta.name;
+    document.getElementById("modal-store-code").innerText = "BRANCH CODE: " + storeCode;
+    document.getElementById("modal-sales").innerText = meta.sales;
+    document.getElementById("modal-target").innerText = meta.target;
+    document.getElementById("modal-ach").innerText = meta.ach;
+    document.getElementById("modal-atv").innerText = meta.atv;
+    document.getElementById("modal-upt").innerText = meta.upt;
+    document.getElementById("modal-asp").innerText = meta.asp;
+
+    let rowsHtml = "";
+    cats.forEach((c, idx) => {{
+      rowsHtml += `
+        <tr>
+          <td style="color:#64748b;">${{idx+1}}</td>
+          <td style="font-weight:700; color:#fff;">${{c.category}}</td>
+          <td style="color:#38bdf8; font-weight:600;">${{c.sales}}</td>
+          <td>${{c.units}}</td>
+          <td style="color:#f8fafc; font-weight:600;">${{c.share}}</td>
+          <td style="color:#f59e0b;">${{c.asp}}</td>
+        </tr>
+      `;
+    }});
+
+    document.getElementById("modal-cats-body").innerHTML = rowsHtml || "<tr><td colspan='6' style='text-align:center;'>No category data available</td></tr>";
+    document.getElementById("store-modal").style.display = "flex";
+  }}
+
+  function openCategoryStores(catName) {{
+    const stores = CAT_STORE_BREAKDOWN[catName] || [];
+    document.getElementById("modal-cat-name").innerText = catName + " - Store Breakdown";
+
+    let rowsHtml = "";
+    stores.forEach((s, idx) => {{
+      rowsHtml += `
+        <tr>
+          <td style="color:#64748b;">${{idx+1}}</td>
+          <td style="color:#38bdf8; font-weight:600;">${{s.code}}</td>
+          <td style="font-weight:700; color:#fff;">${{s.store}}</td>
+          <td style="color:#38bdf8; font-weight:700;">${{s.sales}}</td>
+          <td>${{s.units}}</td>
+          <td style="color:#10b981; font-weight:700;">${{s.share}}</td>
+          <td style="color:#f59e0b;">${{s.asp}}</td>
+        </tr>
+      `;
+    }});
+
+    document.getElementById("modal-cat-stores-body").innerHTML = rowsHtml || "<tr><td colspan='7' style='text-align:center;'>No store data available</td></tr>";
+    document.getElementById("cat-modal").style.display = "flex";
+  }}
+
+  function filterCategoryByStore(selectedCode) {{
+    const tbody = document.getElementById("categoriesTableBody");
+    if (selectedCode === "ALL") {{
+      tbody.innerHTML = DEFAULT_CAT_TABLE_HTML;
+      return;
+    }}
+
+    const storeCats = STORE_DETAILS[selectedCode] || [];
+    const storeName = (STORE_META[selectedCode] && STORE_META[selectedCode].name) || selectedCode;
+
+    let rowsHtml = "";
+    storeCats.forEach((c, idx) => {{
+      rowsHtml += `
+        <tr onclick="openCategoryStores('${{c.category}}')" style="cursor:pointer;">
+          <td style="color:#64748b;font-weight:600;">${{idx+1}}</td>
+          <td style="font-weight:700;color:#fff;font-size:14px;">${{c.category}} <span style="font-size:11px;color:#38bdf8;margin-left:4px;">🔍</span></td>
+          <td style="font-weight:700;color:#38bdf8;">${{c.sales}}</td>
+          <td>${{c.units}}</td>
+          <td style="color:#f8fafc;font-weight:700;">${{c.share}}</td>
+          <td style="color:#f59e0b;font-weight:700;">${{c.asp}}</td>
+          <td style="color:#38bdf8;font-weight:500;">${{storeName}} (Filtered)</td>
+        </tr>
+      `;
+    }});
+
+    tbody.innerHTML = rowsHtml || "<tr><td colspan='7' style='text-align:center;'>No categories found for this store.</td></tr>";
+  }}
+
+  function closeModal(modalId) {{
+    document.getElementById(modalId).style.display = "none";
+  }}
+
+  window.onclick = function(event) {{
+    if (event.target.classList.contains('app-modal')) {{
+      event.target.style.display = "none";
+    }}
+  }};
 
   function switchView(viewName) {{
     const storesView = document.getElementById("view-stores");
@@ -618,7 +886,7 @@ def process_and_build():
 
   function filterCategories() {{
       const query = document.getElementById("catSearch").value.toLowerCase();
-      const rows = document.querySelectorAll("#categoriesTable tbody tr");
+      const rows = document.querySelectorAll("#categoriesTableBody tr");
       rows.forEach(r => {{
           const text = r.innerText.toLowerCase();
           r.style.display = text.includes(query) ? "" : "none";
