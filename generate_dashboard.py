@@ -205,7 +205,7 @@ def generate_claude_insights(store_summary, total_sales, total_target, overall_a
     api_key = os.getenv("ANTHROPIC_API_KEY")
     if not api_key:
         return {
-            "critical": f"Central warehouse holds {wh_stock:,} units; monitor category stock health ratios to avoid sectional stock-outs.",
+            "critical": f"Central warehouse holds {wh_stock:,} units; monitor category stock health ratios and UPT velocity.",
             "attention": "Preserve 40,000-80,000 visual merchandise units in regional flagships while rotating out stagnant sub-categories.",
             "opportunity": "Scale high-velocity children's toys and beauty categories across underperforming Western Region branches to beat LY benchmarks."
         }
@@ -385,7 +385,7 @@ def process_and_build():
     total_txns = store_summary['txns'].sum()
     total_units = store_summary['units'].sum()
     network_atv = (total_sales / total_txns) if total_txns > 0 else 0
-    network_upt = (total_units / total_txns) if total_units > 0 else 0
+    network_upt = (total_units / total_txns) if total_txns > 0 else 0
     network_asp = (total_sales / total_units) if total_units > 0 else 0
 
     store_summary['share'] = ((store_summary['sales'] / total_sales) * 100).round(2)
@@ -756,7 +756,6 @@ def process_and_build():
         </div>
         """
 
-    # جدول الأقسام في شاشة Business-Wise (Main Categories) مع عرض Stock Health
     main_cat_table_rows = ""
     for idx, r in main_cat_summary.iterrows():
         c_name = r['main_category']
@@ -825,27 +824,27 @@ def process_and_build():
             <div style="display:grid; grid-template-columns: repeat(3, 1fr); gap:10px; margin-top:14px; background:#090d16; padding:12px; border-radius:8px; border:1px solid #1e293b;">
                 <div>
                     <div style="font-size:11px; color:#94a3b8;">CURRENT SALES</div>
-                    <div style="font-size:15px; font-weight:700; color:#fff;">{r_sales:,.0f} <span style="font-size:10px;">SAR</span></div>
+                    <div style="font-size:14px; font-weight:700; color:#fff;">{r_sales:,.0f} <span style="font-size:9px;">SAR</span></div>
                 </div>
                 <div>
-                    <div style="font-size:11px; color:#94a3b8;">LY GROSS SALES</div>
-                    <div style="font-size:15px; font-weight:700; color:#38bdf8;">{reg_ly_tot:,.0f} <span style="font-size:10px;">SAR</span></div>
+                    <div style="font-size:11px; color:#94a3b8;">QTY SOLD</div>
+                    <div style="font-size:14px; font-weight:700; color:#38bdf8;">{r_units:,.0f}</div>
                 </div>
                 <div>
-                    <div style="font-size:11px; color:#94a3b8;">SOH UNITS</div>
-                    <div style="font-size:15px; font-weight:700; color:#fff;">{r_soh:,.0f}</div>
-                </div>
-                <div>
-                    <div style="font-size:11px; color:#94a3b8;">ATV</div>
-                    <div style="font-size:13px; font-weight:700; color:#fff;">SAR {r_atv:.1f}</div>
+                    <div style="font-size:11px; color:#94a3b8;">TRANSACTIONS</div>
+                    <div style="font-size:14px; font-weight:700; color:#fff;">{r_txns:,.0f}</div>
                 </div>
                 <div>
                     <div style="font-size:11px; color:#94a3b8;">UPT</div>
-                    <div style="font-size:13px; font-weight:700; color:#fff;">{r_upt:.2f}</div>
+                    <div style="font-size:13px; font-weight:700; color:#10b981;">{r_upt:.2f}</div>
+                </div>
+                <div>
+                    <div style="font-size:11px; color:#94a3b8;">ATV</div>
+                    <div style="font-size:13px; font-weight:700; color:#fff;">{r_atv:.1f}</div>
                 </div>
                 <div>
                     <div style="font-size:11px; color:#94a3b8;">ASP</div>
-                    <div style="font-size:13px; font-weight:700; color:#f59e0b;">SAR {r_asp:.1f}</div>
+                    <div style="font-size:13px; font-weight:700; color:#f59e0b;">{r_asp:.1f}</div>
                 </div>
             </div>
         </div>
@@ -1159,9 +1158,6 @@ def process_and_build():
         .logout-btn {{ background: #ef444422; border: 1px solid #ef444455; color: #ef4444; padding: 8px 14px; border-radius: 8px; font-weight: 700; cursor: pointer; transition: 0.2s; font-size: 12px; }}
         .logout-btn:hover {{ background: #ef4444; color: #fff; }}
 
-        .global-date-bar {{ background: var(--card); border: 1px solid var(--border); border-radius: 10px; padding: 14px 20px; margin-bottom: 24px; display: flex; gap: 20px; align-items: center; flex-wrap: wrap; }}
-        .global-date-bar span {{ font-size: 13px; font-weight: 700; color: #38bdf8; }}
-
         .view-toggle-bar {{ display: flex; background: #0c1220; padding: 4px; border-radius: 10px; border: 1px solid var(--border); margin-bottom: 24px; width: fit-content; gap: 4px; flex-wrap: wrap; }}
         .view-btn {{ background: transparent; border: none; color: var(--text-muted); padding: 10px 22px; border-radius: 8px; font-size: 14px; font-weight: 700; cursor: pointer; transition: 0.2s; display: flex; align-items: center; gap: 8px; }}
         .view-btn.active {{ background: #2563eb; color: #fff; box-shadow: 0 4px 12px rgba(37,99,235,0.3); }}
@@ -1179,8 +1175,8 @@ def process_and_build():
         .kpi-grid {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 14px; margin-bottom: 24px; }}
         .kpi-card {{ background: var(--card); border: 1px solid var(--border); border-radius: 10px; padding: 16px; }}
         .kpi-title {{ font-size: 11px; color: var(--text-muted); font-weight: 600; text-transform: uppercase; margin-bottom: 6px; }}
-        .kpi-value {{ font-size: 22px; font-weight: 700; color: #fff; }}
-        .kpi-unit {{ font-size: 12px; color: var(--text-muted); font-weight: 400; }}
+        .kpi-value {{ font-size: 20px; font-weight: 700; color: #fff; }}
+        .kpi-unit {{ font-size: 11px; color: var(--text-muted); font-weight: 400; }}
 
         .chart-container {{ background: var(--card); border: 1px solid var(--border); border-radius: 10px; padding: 22px; margin-bottom: 24px; }}
 
@@ -1189,7 +1185,6 @@ def process_and_build():
         .table-header h3 {{ margin: 0; font-size: 15px; font-weight: 700; }}
         .table-search {{ padding: 8px 14px; background: #090d16; border: 1px solid var(--border); border-radius: 6px; color: #fff; outline: none; width: 220px; font-size: 13px; }}
         .table-select {{ padding: 8px 14px; background: #090d16; border: 1px solid var(--border); border-radius: 6px; color: #38bdf8; outline: none; font-size: 13px; font-weight: 600; }}
-        .date-filter-input {{ padding: 7px 12px; background: #090d16; border: 1px solid var(--border); border-radius: 6px; color: #fff; outline: none; font-size: 12px; }}
         table {{ width: 100%; border-collapse: collapse; text-align: left; font-size: 13px; }}
         th {{ background: #0c1220; color: var(--text-muted); padding: 12px 14px; font-weight: 600; text-transform: uppercase; font-size: 11px; letter-spacing: 0.5px; border-bottom: 1px solid var(--border); }}
         td {{ padding: 12px 14px; border-bottom: 1px solid var(--border); }}
@@ -1430,14 +1425,6 @@ def process_and_build():
     </div>
 </div>
 
-<!-- شريط فلتر التاريخ العالمي البارز في أعلى الصفحة تحت الترويسة مباشرة -->
-<div class="global-date-bar">
-    <span>📅 Global Sales Date Filter:</span>
-    <label style="font-size:12px; color:#94a3b8;">From: <input type="date" id="globalDateFrom" class="date-filter-input" onchange="applyGlobalDateFilter()"></label>
-    <label style="font-size:12px; color:#94a3b8;">To: <input type="date" id="globalDateTo" class="date-filter-input" onchange="applyGlobalDateFilter()"></label>
-    <button onclick="resetGlobalDateFilter()" class="sub--tab-btn" style="padding:6px 12px; font-size:11px; background:#1e293b; color:#fff; border:1px solid #334155; border-radius:6px; cursor:pointer;">Reset Dates</button>
-</div>
-
 <div class="section-title"><span>🤖 AI Merchandising Directives (Powered by Claude)</span></div>
 <div class="insights-grid">
     <div class="insight-card danger">
@@ -1457,15 +1444,19 @@ def process_and_build():
 <div class="kpi-grid">
     <div class="kpi-card">
         <div class="kpi-title">Current Total Sales</div>
-        <div class="kpi-value" id="kpiTotalSales">{total_sales:,.0f} <span class="kpi-unit">SAR</span></div>
+        <div class="kpi-value">{total_sales:,.0f} <span class="kpi-unit">SAR</span></div>
     </div>
     <div class="kpi-card">
-        <div class="kpi-title">LY Gross Sales (MMS)</div>
-        <div class="kpi-value" style="color:#38bdf8;">{total_ly_sales:,.0f} <span class="kpi-unit">SAR</span></div>
+        <div class="kpi-title">Total Qty Sold</div>
+        <div class="kpi-value" style="color:#38bdf8;">{total_units:,.0f} <span class="kpi-unit">Pcs</span></div>
     </div>
     <div class="kpi-card">
-        <div class="kpi-title">Network LFL YoY Growth</div>
-        <div class="kpi-value" style="color:{net_yoy_col};">{network_lfl_growth:+.1f}%</div>
+        <div class="kpi-title">Total Transactions</div>
+        <div class="kpi-value" style="color:#fff;">{total_txns:,.0f}</div>
+    </div>
+    <div class="kpi-card">
+        <div class="kpi-title">Network UPT</div>
+        <div class="kpi-value" style="color:#10b981;">{network_upt:.2f}</div>
     </div>
     <div class="kpi-card">
         <div class="kpi-title">Total Target</div>
@@ -1473,11 +1464,7 @@ def process_and_build():
     </div>
     <div class="kpi-card">
         <div class="kpi-title">Achievement (% Ach)</div>
-        <div class="kpi-value" style="color: {'#10b981' if overall_ach >= 100 else '#f59e0b'};" id="grandAch">{overall_ach:.1f}%</div>
-    </div>
-    <div class="kpi-card">
-        <div class="kpi-title">Network ATV</div>
-        <div class="kpi-value">SAR {network_atv:.2f}</div>
+        <div class="kpi-value" style="color: {'#10b981' if overall_ach >= 100 else '#f59e0b'};">{overall_ach:.1f}%</div>
     </div>
     <div class="kpi-card">
         <div class="kpi-title">Network ASP</div>
@@ -1658,7 +1645,6 @@ def process_and_build():
         <div style="overflow-x:auto;">
             <table id="moversTable">
                 <thead>
-                    forhead
                     <tr>
                         <th>Rank</th>
                         <th>Item Code / Barcode</th>
@@ -1843,6 +1829,7 @@ def process_and_build():
         <tr>
           <td style="color:#64748b;">${{idx+1}}</td>
           <td style="color:#38bdf8; font-weight:600;">${{r.main_category}}</td>
+          <td style="font-weight:700; color:#fff;">${{r.sub_subgroup}}</td>
           <td style="font-weight:700; color:#38bdf8;">${{Number(r.sales).toLocaleString(undefined, {{minimumFractionDigits:2, maximumFractionDigits:2}})}}</td>
           <td>${{Number(r.units).toLocaleString()}}</td>
           <td style="min-width:130px;">
@@ -1859,57 +1846,6 @@ def process_and_build():
     }});
 
     tbody.innerHTML = rowsHtml || "<tr><td colspan='7' style='text-align:center;'>No matching products found for this filter</td></tr>";
-  }}
-
-  // دالة تفاعلية لفلترة قيم المبيعات في الجداول والـ KPIs بناءً على نطاق التاريخ المحدد
-  function applyGlobalDateFilter() {{
-    const fromDate = document.getElementById("globalDateFrom").value;
-    const toDate = document.getElementById("globalDateTo").value;
-    if (!fromDate || !toDate) return;
-
-    // حساب نسبة تخفيض افتراضية بناءً على عدد الأيام (لتوضيح التفاعل الفوري في الأرقام)
-    const d1 = new Date(fromDate);
-    const d2 = new Date(toDate);
-    const diffDays = Math.max(1, Math.ceil((d2 - d1) / (1000 * 60 * 60 * 24)) + 1);
-    const ratio = Math.min(diffDays / 30.0, 1.0); // مقارنة بشهر سبتمبر (30 يوم)
-
-    // تحديث إجمالي المبيعات والـ KPIs في الواجهة ديناميكياً
-    const baseSales = {total_sales};
-    const newSales = baseSales * ratio;
-    const kpiEl = document.getElementById("kpiTotalSales");
-    if (kpiEl) kpiEl.innerHTML = newSales.toLocaleString(undefined, {{maximumFractionDigits: 0}}) + ' <span class="kpi-unit">SAR</span>';
-
-    const grandEl = document.getElementById("grandTotalSales");
-    if (grandEl) grandEl.innerHTML = newSales.toLocaleString(undefined, {{maximumFractionDigits: 0}}) + ' <span style="font-size:13px; font-weight:400; color:#94a3b8;">SAR</span>';
-
-    // تحديث جداول المبيعات في المتاجر
-    document.querySelectorAll("#storesTable tbody tr").forEach(row => {{
-      const salesCell = row.cells[4];
-      if (salesCell && salesCell.getAttribute("data-sales")) {{
-        const origVal = parseFloat(salesCell.getAttribute("data-sales"));
-        const scaledVal = origVal * ratio;
-        salesCell.innerText = scaledVal.toLocaleString(undefined, {{minimumFractionDigits: 2, maximumFractionDigits: 2}});
-      }}
-    }});
-
-    document.querySelectorAll("#hierarchyTableBody tr").forEach(row => {{
-      const salesCell = row.cells[2];
-      const unitsCell = row.cells[3];
-      if (salesCell && salesCell.getAttribute("data-sales")) {{
-        const origSales = parseFloat(salesCell.getAttribute("data-sales"));
-        salesCell.innerText = (origSales * ratio).toLocaleString(undefined, {{minimumFractionDigits: 2, maximumFractionDigits: 2}});
-      }}
-      if (unitsCell && unitsCell.getAttribute("data-units")) {{
-        const origUnits = parseInt(unitsCell.getAttribute("data-units"));
-        unitsCell.innerText = Math.round(origUnits * ratio).toLocaleString();
-      }}
-    }});
-  }}
-
-  function resetGlobalDateFilter() {{
-    document.getElementById("globalDateFrom").value = "";
-    document.getElementById("globalDateTo").value = "";
-    location.reload();
   }}
 
   function switchMoversTab(type) {{
@@ -1988,7 +1924,7 @@ def process_and_build():
     if (modal) modal.style.display = "none";
   }}
 
-  window.onclick = function(event) {{
+  window.onclick = function (event) {{
     if (event.target && event.target.classList.contains('app-modal')) {{
       event.target.style.display = "none";
     }}
