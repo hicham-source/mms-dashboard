@@ -31,7 +31,6 @@ STORE_MAPPING = {
 }
 
 def identify_files():
-    # استهداف الملفات الأربعة بدقة بالأسماء المحددة
     sales_file = os.path.join(REPORTS_DIR, "50100002-20260928.xlsx")
     if not os.path.exists(sales_file): sales_file = "50100002-20260928.xlsx"
 
@@ -44,7 +43,6 @@ def identify_files():
     ly_file = os.path.join(REPORTS_DIR, "LY SEP.xlsx")
     if not os.path.exists(ly_file): ly_file = "LY SEP.xlsx"
 
-    # بحث احتياطي إذا لم يُعثر على أحد الملفات بالاسم الحرفي
     if not os.path.exists(sales_file):
         candidates = glob.glob(os.path.join(REPORTS_DIR, "50100002*.xlsx")) + glob.glob("50100002*.xlsx")
         if candidates: sales_file = candidates[0]
@@ -69,20 +67,16 @@ def load_ly_sales_data(ly_path):
         sheet_to_use = "Sales" if "Sales" in xl.sheet_names else xl.sheet_names[0]
         df_ly = pd.read_excel(ly_path, sheet_name=sheet_to_use)
 
-        # تحديد العمود الذي يحتوي على نوع المبيعات (G-SALE / N-SALE)
         sale_type_col = next((c for c in df_ly.columns if any(str(v).strip().upper() == 'G-SALE' for v in df_ly[c])), None)
         if not sale_type_col:
             sale_type_col = df_ly.columns[2]
 
-        # فلترة صف G-SALE حصرياً لحساب Gross Sales
         df_gsale = df_ly[df_ly[sale_type_col].astype(str).str.strip().str.upper() == 'G-SALE'].copy()
         if df_gsale.empty:
             df_gsale = df_ly.copy()
 
-        # قراءة أعمدة فروع MMS فقط، وتجاهل فروع DZL وتجاهل المجاميع
         for col in df_ly.columns:
             col_str = str(col).strip()
-            # شرط صارم: يحتوي على (MMS) ولا يحتوي على (DZL) ولا يحتوي على TOTAL
             if "(MMS)" in col_str.upper() and "(DZL)" not in col_str.upper() and "TOTAL" not in col_str.upper():
                 m = re.search(r'^\d+', col_str)
                 if m:
@@ -516,7 +510,7 @@ def process_and_build():
         store_cat_summary_dict[c_code] = cats_list
 
     # ==========================================
-    # 5. محرك التوريد الذكي والـ Auto-Replenishment (مع الكميات الدقيقة QTY)
+    # 5. محرك التوريد الذكي والـ Auto-Replenishment (مع WH SOH في ملف الإكسيل)
     # ==========================================
     store_metrics_df = df_clean.groupby('clean_code').agg(
         store_units=('Sales Quantity', 'sum'),
@@ -573,7 +567,7 @@ def process_and_build():
             "asp": float(r['asp']), "wh_soh": wh_soh_item, "stock_days": stock_days
         })
 
-    # بناء خطة التوريد الآلي المفصلة لكل صنف وفرع (Auto-Replenishment Plan)
+    # بناء خطة التوريد الآلي المفصلة لكل صنف وفرع مع إضافة عمود WH SOH
     replenishment_recommendations = []
     excel_export_data = []
 
@@ -603,7 +597,6 @@ def process_and_build():
             cat = row['main_category']
             days_left = int(row['days_to_stockout']) if pd.notna(row['days_to_stockout']) else 0
             
-            # حساب الكمية المقترحة بدقة (تغطية 28 يوم ناقص المخزون الحالي)
             daily_v = row['daily_rate']
             needed_qty = max(10, int((daily_v * 28) - row['store_soh']))
             wh_available = wh_sku_stock_dict.get(sku_code, 0)
@@ -636,11 +629,19 @@ def process_and_build():
                 "urgency": urgency_str
             })
 
+            # هنا تمت إضافة عمود WH SOH (KSWH) للإكسيل بدقة
             excel_export_data.append({
-                "Action Type": action_type, "Store Code": st_code, "Store Name": st_name,
-                "Main Category": cat, "SKU Code": sku_code, "Product Name": sku_name,
-                "Store SOH": row['store_soh'], "Daily Velocity": round(daily_v, 2),
-                "Est Days to Stock-out": days_left, "Suggested QTY (Pcs)": needed_qty,
+                "Action Type": action_type,
+                "Store Code": st_code,
+                "Store Name": st_name,
+                "Main Category": cat,
+                "SKU Code": sku_code,
+                "Product Name": sku_name,
+                "Store SOH": row['store_soh'],
+                "WH SOH (KSWH)": wh_available,
+                "Daily Velocity": round(daily_v, 2),
+                "Est Days to Stock-out": days_left,
+                "Suggested QTY (Pcs)": needed_qty,
                 "Source Route": source_route
             })
 
@@ -649,9 +650,9 @@ def process_and_build():
             df_repl_export = pd.DataFrame(excel_export_data)
             excel_path = os.path.join(REPORTS_DIR, "Auto_Replenishment_Action_Plan.xlsx")
             df_repl_export.to_excel(excel_path, index=False)
-            print(f"[✓] Auto-Replenishment Excel Plan generated: {excel_path}")
-        except Exception:
-            pass
+            print(f"[✓] Auto-Replenishment Excel Plan generated with WH SOH: {excel_path}")
+        except Exception as e:
+            print(f"[!] Warning: Could not write excel file: {e}")
 
     top_main_cats = set(main_cat_summary.head(3)['main_category'])
     def mumuso_commercial_engine(row):
@@ -1066,34 +1067,6 @@ def process_and_build():
             <td>{row['str_pct']}%</td>
             <td>{diag_badge}</td>
             <td style="color:#38bdf8;font-weight:600;">{row['asp']:,.2f}</td>
-        </tr>
-        """
-
-    main_cat_table_rows = ""
-    for idx, r in main_cat_summary.iterrows():
-        c_name = r['main_category']
-        bar_w = min(r['contribution'], 100)
-        h_col = r['health_color']
-        safe_c_name = html.escape(c_name).replace("'", "\\'")
-        main_cat_table_rows += f"""
-        <tr onclick="filterByMainCategory('{safe_c_name}')" style="cursor:pointer; background:rgba(56,189,248,0.03);" title="Click to view sub-subgroups">
-            <td style="color:#64748b;font-weight:600;">{idx+1}</td>
-            <td style="font-weight:800;color:#fff;font-size:14px;">
-                🏷️ {c_name} <span style="font-size:11px;color:#38bdf8;margin-left:4px;">(Click to view items)</span>
-            </td>
-            <td style="font-weight:700;color:#38bdf8;" data-sales="{r['sales']}">{r['sales']:,.2f}</td>
-            <td data-units="{r['units']}">{int(r['units']):,}</td>
-            <td style="min-width:140px;">
-                <div style="display:flex;align-items:center;gap:8px;">
-                    <span style="color:#f8fafc;font-weight:700;min-width:45px;">{r['contribution']:.1f}%</span>
-                    <div style="flex:1;background:#1e293b;border-radius:4px;height:6px;overflow:hidden;">
-                        <div style="width:{bar_w}%;background:#38bdf8;height:100%;"></div>
-                    </div>
-                </div>
-            </td>
-            <td><span class="badge" style="background:{h_col}22; color:{h_col}; border:1px solid {h_col}55;">{r['health_status']}</span></td>
-            <td style="color:#f59e0b;font-weight:700;">{r['asp']:,.2f}</td>
-            <td style="color:#cbd5e1;font-weight:500;">{r['leading_store']}</td>
         </tr>
         """
 
