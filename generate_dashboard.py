@@ -32,47 +32,36 @@ STORE_MAPPING = {
 
 def identify_files():
     files = glob.glob(os.path.join(REPORTS_DIR, "*.xlsx")) + glob.glob("*.xlsx")
-    files = list(set([f for f in files if not os.path.basename(f).startswith("~$") and not os.path.basename(f).startswith("Summary_")]))
+    files = list(set([f for f in files if not os.path.basename(f).startswith("~$") and not os.path.basename(f).startswith("Summary_") and "Auto_Replenishment" not in f]))
     
     sales_file = None
     soh_file = None
     target_file = None
     ly_file = None
 
-    for f in sorted(files, key=os.path.getctime, reverse=True):
+    for f in files:
         fname = os.path.basename(f).lower()
         if "target" in fname:
-            if not target_file: target_file = f
+            target_file = f
         elif "soh" in fname or "stock" in fname:
-            if not soh_file: soh_file = f
-        elif "sales (2)" in fname or "ly" in fname or "last_year" in fname or "sales_ly" in fname:
-            if not ly_file: ly_file = f
+            soh_file = f
+        elif "ly" in fname or "last_year" in fname or "sales_ly" in fname:
+            ly_file = f
 
-    for f in sorted(files, key=os.path.getctime, reverse=True):
-        if f in [target_file, soh_file]:
-            continue
-        try:
-            xl = pd.ExcelFile(f)
-            for s in xl.sheet_names:
-                sample_df = pd.read_excel(f, sheet_name=s, nrows=4)
-                vals_str = " ".join([str(v).lower() for v in sample_df.values.flatten()])
-                if "g-sale" in vals_str or "n-sale" in vals_str:
-                    if not ly_file: ly_file = f
-                    break
-                sample_df2 = pd.read_excel(f, sheet_name=s, skiprows=1, nrows=3)
-                cols_str2 = " ".join([str(c).lower() for c in sample_df2.columns])
-                if "receipt number" in cols_str2 or "actual sales amount" in cols_str2:
-                    if not sales_file: sales_file = f
-                    break
-        except Exception:
-            continue
+    # تحديد ملف المبيعات الحالي (الملف الذي يبدأ بأرقام أو يحتوي على تاريخ ولا يعتبر SOH أو Target أو LY)
+    sales_candidates = [f for f in files if f not in [target_file, soh_file, ly_file]]
+    if sales_candidates:
+        # اختيار أحدث ملف مبيعات فعلي
+        sales_file = max(sales_candidates, key=os.path.getctime)
+
+    # إذا لم يجد ملف LY بشكل صريح، يبحث عن ملف يحتوي على كلمة sales (وليس ملف المبيعات الحالي نفسه)
+    if not ly_file:
+        ly_candidates = [f for f in files if "sales" in os.path.basename(f).lower() and f != sales_file and f not in [target_file, soh_file]]
+        if ly_candidates:
+            ly_file = ly_candidates[0]
 
     if not sales_file:
-        candidates = [f for f in files if f not in [target_file, soh_file, ly_file]]
-        if candidates:
-            sales_file = max(candidates, key=os.path.getctime)
-        else:
-            raise FileNotFoundError("Sales report file not found in ./reports")
+        raise FileNotFoundError("Sales report file not found in ./reports")
 
     return sales_file, soh_file, target_file, ly_file
 
@@ -391,7 +380,7 @@ def process_and_build():
     store_summary['share'] = ((store_summary['sales'] / total_sales) * 100).round(2)
     store_summary = store_summary.sort_values(by='sales', ascending=False).reset_index(drop=True)
 
-    # مبيعات العام الماضي ونمو LFL (تم تصحيح yoy_val هنا)
+    # مبيعات العام الماضي ونمو LFL
     store_summary['ly_sales'] = store_summary['clean_code'].map(ly_sales_map)
     store_summary['yoy_growth'] = store_summary.apply(
         lambda r: ((r['sales'] - r['ly_sales']) / r['ly_sales'] * 100) if pd.notna(r['ly_sales']) and r['ly_sales'] > 0 else None,
@@ -529,7 +518,7 @@ def process_and_build():
         store_cat_summary_dict[c_code] = cats_list
 
     # ==========================================
-    # 5. محرك التوريد الذكي والـ Auto-Replenishment (مع الكميات الدقيقة QTY)
+    # 5. محرك التوريد الذكي والـ Auto-Replenishment
     # ==========================================
     store_metrics_df = df_clean.groupby('clean_code').agg(
         store_units=('Sales Quantity', 'sum'),
@@ -586,7 +575,6 @@ def process_and_build():
             "asp": float(r['asp']), "wh_soh": wh_soh_item, "stock_days": stock_days
         })
 
-    # بناء خطة التوريد الآلي المفصلة لكل صنف وفرع (Auto-Replenishment Plan)
     replenishment_recommendations = []
     excel_export_data = []
 
@@ -616,7 +604,6 @@ def process_and_build():
             cat = row['main_category']
             days_left = int(row['days_to_stockout']) if pd.notna(row['days_to_stockout']) else 0
             
-            # حساب الكمية المقترحة بدقة (تغطية 28 يوم ناقص المخزون الحالي)
             daily_v = row['daily_rate']
             needed_qty = max(10, int((daily_v * 28) - row['store_soh']))
             wh_available = wh_sku_stock_dict.get(sku_code, 0)
@@ -657,7 +644,6 @@ def process_and_build():
                 "Source Route": source_route
             })
 
-    # حفظ ملف Excel الخاص بخطة التوريد تلقائياً في مجلد Reports ليكون جاهزاً لفريق الميرشندايزينج
     if excel_export_data:
         df_repl_export = pd.DataFrame(excel_export_data)
         excel_path = os.path.join(REPORTS_DIR, "Auto_Replenishment_Action_Plan.xlsx")
@@ -806,8 +792,6 @@ def process_and_build():
         reg_lfl = grp[grp['ly_sales'].notna()]
         reg_cur_lfl = reg_lfl['sales'].sum()
         reg_ly_tot = reg_lfl['ly_sales'].sum()
-        
-        # تم تصحيح yoy_val هنا لكي يعمل دون أي خطأ
         reg_yoy = ((reg_cur_lfl - reg_ly_tot) / reg_ly_tot * 100) if reg_ly_tot > 0 else None
 
         ach_col = "#10b981" if r_ach >= 100 else ("#f59e0b" if r_ach >= 80 else "#ef4444")
@@ -1968,13 +1952,14 @@ def process_and_build():
     }} else if (actionView) {{
         actionView.style.display = "block";
         if (btnAction) btnAction.classList.add("active");
-        renderMoversTable();
+        renderMoversType();
     }}
   }}
 
   function filterStores() {{
       const query = document.getElementById("storeSearch").value.toLowerCase();
       const rows = document.querySelectorAll("#storesTable tbody tr");
+      rows.targets_map = ...; // dummy
       rows.forEach(r => {{
           const text = r.innerText.toLowerCase();
           r.style.display = text.includes(query) ? "" : "none";
@@ -1987,7 +1972,7 @@ def process_and_build():
     """
 
     out_file = os.path.join(REPORTS_DIR, "MMS_Executive_KPI_Dashboard.html")
-    with open(out_file, "w", encoding="utf-8") as f:
+    with open(out_file, "w", encoding="utf-8`") as f:
         f.write(html_content)
 
     print(f"[✓] Dashboard generated successfully: {out_file}")
