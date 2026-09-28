@@ -4,94 +4,141 @@
     <meta charset="UTF-8">
     <title>MMS Executive Commercial & SOH Intelligence Dashboard</title>
     <style>
-        :root { --bg: #090d16; --card: #131b2e; --border: #1e293b; --text: #f8fafc; }
+        :root { --bg: #090d16; --card: #131b2e; --card-hover: #19233c; --border: #1e293b; --text: #f8fafc; --muted: #94a3b8; }
         body { background: var(--bg); color: var(--text); margin: 0; padding: 24px; font-family: sans-serif; }
-        .header { display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid var(--border); padding-bottom: 20px; margin-bottom: 24px; }
+        .header { display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid var(--border); padding-bottom: 20px; margin-bottom: 24px; flex-wrap: wrap; gap: 16px; }
+        .view-toggle-bar { display: flex; background: #0c1220; padding: 4px; border-radius: 10px; border: 1px solid var(--border); margin-bottom: 24px; width: fit-content; gap: 4px; }
+        .view-btn { background: transparent; border: none; color: var(--muted); padding: 10px 22px; border-radius: 8px; font-size: 14px; font-weight: 700; cursor: pointer; }
+        .view-btn.active { background: #2563eb; color: #fff; }
         .kpi-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 14px; margin-bottom: 24px; }
         .kpi-card { background: var(--card); border: 1px solid var(--border); border-radius: 10px; padding: 16px; }
         .table-wrap { background: var(--card); border: 1px solid var(--border); border-radius: 10px; overflow: hidden; margin-bottom: 24px; }
         table { width: 100%; border-collapse: collapse; text-align: left; font-size: 13px; }
-        th { background: #0c1220; color: #94a3b8; padding: 12px; font-size: 11px; }
+        th { background: #0c1220; color: var(--muted); padding: 12px; font-size: 11px; }
         td { padding: 12px; border-bottom: 1px solid var(--border); }
         .badge { padding: 4px 8px; border-radius: 4px; font-size: 11px; font-weight: 600; }
         .export-btn { background: #10b981; border: none; color: #fff; padding: 8px 16px; border-radius: 6px; font-weight: 700; cursor: pointer; }
+        .clickable-row { cursor: pointer; }
+        .clickable-row:hover td { background: var(--card-hover) !important; }
     </style>
 </head>
 <body>
 <div class="header">
-    <div><h1>MMS Executive Commercial & SOH Intelligence Dashboard</h1><p style="color:#94a3b8; margin:0;">Automated Replenishment & SOH Engine</p></div>
+    <div><h1>MMS Executive Commercial & SOH Intelligence Dashboard</h1><p style="color:var(--muted); margin:0;">Automated Replenishment & SOH Engine</p></div>
     <div><a href="./reports/MMS_Replenishment_Plan.xlsx" download class="export-btn" style="text-decoration:none;">📥 Download Replenishment Plan</a></div>
 </div>
 
 <div class="kpi-grid">
-    <div class="kpi-card"><div style="font-size:10px; color:#94a3b8;">CURRENT SALES</div><div style="font-size:20px; font-weight:700;">2,758,574 SAR</div></div>
-    <div class="kpi-card"><div style="font-size:10px; color:#94a3b8;">LY GROSS SALES</div><div style="font-size:20px; font-weight:700; color:#38bdf8;">93,785,044 SAR</div></div>
-    <div class="kpi-card"><div style="font-size:10px; color:#94a3b8;">YoY GROWTH</div><div style="font-size:20px; font-weight:700; color:#ef4444;">-97.4%</div></div>
-    <div class="kpi-card"><div style="font-size:10px; color:#94a3b8;">TOTAL TARGET</div><div style="font-size:20px; font-weight:700;">3,463,071 SAR</div></div>
-    <div class="kpi-card"><div style="font-size:10px; color:#94a3b8;">ACHIEVEMENT</div><div style="font-size:20px; font-weight:700; color:#10b981;">79.7%</div></div>
+    <div class="kpi-card"><div style="font-size:10px; color:var(--muted);">CURRENT SALES</div><div style="font-size:20px; font-weight:700;">2,758,574 SAR</div></div>
+    <div class="kpi-card"><div style="font-size:10px; color:var(--muted);">LY GROSS SALES</div><div style="font-size:20px; font-weight:700; color:#38bdf8;">33,317,590 SAR</div></div>
+    <div class="kpi-card"><div style="font-size:10px; color:var(--muted);">YoY GROWTH</div><div style="font-size:20px; font-weight:700; color:#ef4444;">-92.7%</div></div>
+    <div class="kpi-card"><div style="font-size:10px; color:var(--muted);">TOTAL TARGET</div><div style="font-size:20px; font-weight:700;">3,463,071 SAR</div></div>
+    <div class="kpi-card"><div style="font-size:10px; color:var(--muted);">ACHIEVEMENT</div><div style="font-size:20px; font-weight:700; color:#10b981;">79.7%</div></div>
 </div>
 
-<div class="table-wrap">
-    <table>
-        <thead>
-            <tr><th>#</th><th>Code</th><th>Store Name</th><th>Region</th><th>Sales</th><th>LY Sales</th><th>YoY</th><th>Target</th><th>% Ach</th><th>QTY</th><th>Txns</th><th>UPT</th><th>STR%</th><th>Diagnostic</th><th>ASP</th></tr>
-        </thead>
-        <tbody>
-        <tr>
+<div class="view-toggle-bar">
+    <button class="view-btn active" id="btn-stores" onclick="switchView('stores')">🏢 Store Commercial Matrix</button>
+    <button class="view-btn" id="btn-regions" onclick="switchView('regions')">🌍 Region-Wise Performance</button>
+    <button class="view-btn" id="btn-business" onclick="switchView('business')">📦 Business-Wise Performance</button>
+    <button class="view-btn" id="btn-action" onclick="switchView('action')">⚡ Commercial Action Hub</button>
+</div>
+
+<!-- 1. Stores View -->
+<div id="view-stores">
+    <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(320px, 1fr)); gap:14px; margin-bottom:24px;">
+            <div class="decision-card-item" data-region="Riyadh Central Region" style="background:var(--card); border:1px solid var(--border); border-left:4px solid #10b981; border-radius:10px; padding:18px;">
+                <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
+                    <span style="font-weight:700; color:#fff;">MMS Mall of Dhahran (K301)</span>
+                    <span class="badge" style="background:#10b98122; color:#10b981;">Powerhouse Performer</span>
+                </div>
+                <div style="font-size:12px; color:#38bdf8;">Maintain 100% shelf availability on leading sub-categories.</div>
+            </div>
+            
+            <div class="decision-card-item" data-region="Western Region" style="background:var(--card); border:1px solid var(--border); border-left:4px solid #10b981; border-radius:10px; padding:18px;">
+                <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
+                    <span style="font-weight:700; color:#fff;">MMS Jeddah U-Walk (K205)</span>
+                    <span class="badge" style="background:#10b98122; color:#10b981;">Powerhouse Performer</span>
+                </div>
+                <div style="font-size:12px; color:#38bdf8;">Maintain 100% shelf availability on leading sub-categories.</div>
+            </div>
+            
+            <div class="decision-card-item" data-region="Western Region" style="background:var(--card); border:1px solid var(--border); border-left:4px solid #10b981; border-radius:10px; padding:18px;">
+                <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
+                    <span style="font-weight:700; color:#fff;">MMS Jeddah Yasmin Mall (K202)</span>
+                    <span class="badge" style="background:#10b98122; color:#10b981;">Powerhouse Performer</span>
+                </div>
+                <div style="font-size:12px; color:#38bdf8;">Maintain 100% shelf availability on leading sub-categories.</div>
+            </div>
+            
+            <div class="decision-card-item" data-region="Riyadh Central Region" style="background:var(--card); border:1px solid var(--border); border-left:4px solid #10b981; border-radius:10px; padding:18px;">
+                <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
+                    <span style="font-weight:700; color:#fff;">MMS Riyadh Tala Mall (K102)</span>
+                    <span class="badge" style="background:#10b98122; color:#10b981;">Powerhouse Performer</span>
+                </div>
+                <div style="font-size:12px; color:#38bdf8;">Maintain 100% shelf availability on leading sub-categories.</div>
+            </div>
+            </div>
+    <div class="table-wrap">
+        <table>
+            <thead>
+                <tr><th>#</th><th>Code</th><th>Store Name</th><th>Region</th><th>Sales</th><th>LY Sales</th><th>YoY</th><th>Target</th><th>% Ach</th><th>QTY</th><th>Txns</th><th>UPT</th><th>STR%</th><th>Diagnostic</th><th>ASP</th></tr>
+            </thead>
+            <tbody>
+        <tr onclick="openStoreDetails('K108')" class="clickable-row">
             <td>1</td>
             <td style="color:#38bdf8;font-weight:600;">K108</td>
             <td style="font-weight:600;color:#fff;">MMS Riyadh Solitaire</td>
             <td>Riyadh Central Region</td>
             <td style="font-weight:700;color:#f8fafc;">471,993.25</td>
-            <td style="color:#38bdf8;">17,956,249.98</td>
-            <td><span style="color:#ef4444; font-weight:700;">-97.4%</span></td>
+            <td style="color:#38bdf8;">6,408,375.70</td>
+            <td><span style="color:#ef4444; font-weight:700;">-92.6%</span></td>
             <td>544,945</td>
             <td><span style="color:#f59e0b; font-weight:700;">86.6%</span></td>
             <td style="color:#38bdf8;">20,359</td>
             <td>5,408</td>
             <td style="color:#10b981;">3.76</td>
             <td>100.0%</td>
-            <td><span class="badge" style="background:#38bdf822; color:#38bdf8;">Active</span></td>
+            <td><span class="badge" style="background:#38bdf822; color:#38bdf8;">Steady Flow</span></td>
             <td style="color:#38bdf8;">23.18</td>
         </tr>
         
-        <tr>
+        <tr onclick="openStoreDetails('K301')" class="clickable-row">
             <td>2</td>
             <td style="color:#38bdf8;font-weight:600;">K301</td>
             <td style="font-weight:600;color:#fff;">MMS Mall of Dhahran</td>
             <td>Riyadh Central Region</td>
             <td style="font-weight:700;color:#f8fafc;">407,709.65</td>
-            <td style="color:#38bdf8;">14,411,724.30</td>
-            <td><span style="color:#ef4444; font-weight:700;">-97.2%</span></td>
+            <td style="color:#38bdf8;">5,121,009.95</td>
+            <td><span style="color:#ef4444; font-weight:700;">-92.0%</span></td>
             <td>389,032</td>
             <td><span style="color:#10b981; font-weight:700;">104.8%</span></td>
             <td style="color:#38bdf8;">19,036</td>
             <td>7,409</td>
             <td style="color:#10b981;">2.57</td>
             <td>100.0%</td>
-            <td><span class="badge" style="background:#38bdf822; color:#38bdf8;">Active</span></td>
+            <td><span class="badge" style="background:#10b98122; color:#10b981;">Powerhouse Performer</span></td>
             <td style="color:#38bdf8;">21.42</td>
         </tr>
         
-        <tr>
+        <tr onclick="openStoreDetails('K205')" class="clickable-row">
             <td>3</td>
             <td style="color:#38bdf8;font-weight:600;">K205</td>
             <td style="font-weight:600;color:#fff;">MMS Jeddah U-Walk</td>
             <td>Western Region</td>
             <td style="font-weight:700;color:#f8fafc;">220,934.00</td>
-            <td style="color:#38bdf8;">9,125,073.07</td>
-            <td><span style="color:#ef4444; font-weight:700;">-97.6%</span></td>
+            <td style="color:#38bdf8;">3,243,832.21</td>
+            <td><span style="color:#ef4444; font-weight:700;">-93.2%</span></td>
             <td>204,143</td>
             <td><span style="color:#10b981; font-weight:700;">108.2%</span></td>
             <td style="color:#38bdf8;">10,621</td>
             <td>4,056</td>
             <td style="color:#10b981;">2.62</td>
             <td>100.0%</td>
-            <td><span class="badge" style="background:#38bdf822; color:#38bdf8;">Active</span></td>
+            <td><span class="badge" style="background:#10b98122; color:#10b981;">Powerhouse Performer</span></td>
             <td style="color:#38bdf8;">20.80</td>
         </tr>
         
-        <tr>
+        <tr onclick="openStoreDetails('K211')" class="clickable-row">
             <td>4</td>
             <td style="color:#38bdf8;font-weight:600;">K211</td>
             <td style="font-weight:600;color:#fff;">MMS Madinah</td>
@@ -105,119 +152,119 @@
             <td>3,717</td>
             <td style="color:#10b981;">2.85</td>
             <td>100.0%</td>
-            <td><span class="badge" style="background:#38bdf822; color:#38bdf8;">Active</span></td>
+            <td><span class="badge" style="background:#38bdf822; color:#38bdf8;">Steady Flow</span></td>
             <td style="color:#38bdf8;">18.66</td>
         </tr>
         
-        <tr>
+        <tr onclick="openStoreDetails('K101')" class="clickable-row">
             <td>5</td>
             <td style="color:#38bdf8;font-weight:600;">K101</td>
             <td style="font-weight:600;color:#fff;">MMS Riyadh The View Mall</td>
             <td>Riyadh Central Region</td>
             <td style="font-weight:700;color:#f8fafc;">192,767.45</td>
-            <td style="color:#38bdf8;">8,179,584.22</td>
-            <td><span style="color:#ef4444; font-weight:700;">-97.6%</span></td>
+            <td style="color:#38bdf8;">2,901,276.07</td>
+            <td><span style="color:#ef4444; font-weight:700;">-93.4%</span></td>
             <td>232,002</td>
             <td><span style="color:#f59e0b; font-weight:700;">83.1%</span></td>
             <td style="color:#38bdf8;">10,218</td>
             <td>3,915</td>
             <td style="color:#10b981;">2.61</td>
             <td>100.0%</td>
-            <td><span class="badge" style="background:#38bdf822; color:#38bdf8;">Active</span></td>
+            <td><span class="badge" style="background:#38bdf822; color:#38bdf8;">Steady Flow</span></td>
             <td style="color:#38bdf8;">18.87</td>
         </tr>
         
-        <tr>
+        <tr onclick="openStoreDetails('K110')" class="clickable-row">
             <td>6</td>
             <td style="color:#38bdf8;font-weight:600;">K110</td>
             <td style="font-weight:600;color:#fff;">MMS Riyadh U-Walk</td>
             <td>Riyadh Central Region</td>
             <td style="font-weight:700;color:#f8fafc;">181,108.00</td>
-            <td style="color:#38bdf8;">8,951,454.87</td>
-            <td><span style="color:#ef4444; font-weight:700;">-98.0%</span></td>
+            <td style="color:#38bdf8;">3,186,707.15</td>
+            <td><span style="color:#ef4444; font-weight:700;">-94.3%</span></td>
             <td>266,219</td>
             <td><span style="color:#f59e0b; font-weight:700;">68.0%</span></td>
             <td style="color:#38bdf8;">8,632</td>
             <td>2,297</td>
             <td style="color:#10b981;">3.76</td>
             <td>100.0%</td>
-            <td><span class="badge" style="background:#38bdf822; color:#38bdf8;">Active</span></td>
+            <td><span class="badge" style="background:#38bdf822; color:#38bdf8;">Steady Flow</span></td>
             <td style="color:#38bdf8;">20.98</td>
         </tr>
         
-        <tr>
+        <tr onclick="openStoreDetails('K201')" class="clickable-row">
             <td>7</td>
             <td style="color:#38bdf8;font-weight:600;">K201</td>
             <td style="font-weight:600;color:#fff;">MMS Jeddah Park</td>
             <td>Western Region</td>
             <td style="font-weight:700;color:#f8fafc;">169,754.00</td>
-            <td style="color:#38bdf8;">7,369,880.68</td>
-            <td><span style="color:#ef4444; font-weight:700;">-97.7%</span></td>
+            <td style="color:#38bdf8;">2,609,291.65</td>
+            <td><span style="color:#ef4444; font-weight:700;">-93.5%</span></td>
             <td>187,017</td>
             <td><span style="color:#f59e0b; font-weight:700;">90.8%</span></td>
             <td style="color:#38bdf8;">10,969</td>
             <td>3,553</td>
             <td style="color:#10b981;">3.09</td>
             <td>100.0%</td>
-            <td><span class="badge" style="background:#38bdf822; color:#38bdf8;">Active</span></td>
+            <td><span class="badge" style="background:#38bdf822; color:#38bdf8;">Steady Flow</span></td>
             <td style="color:#38bdf8;">15.48</td>
         </tr>
         
-        <tr>
+        <tr onclick="openStoreDetails('K202')" class="clickable-row">
             <td>8</td>
             <td style="color:#38bdf8;font-weight:600;">K202</td>
             <td style="font-weight:600;color:#fff;">MMS Jeddah Yasmin Mall</td>
             <td>Western Region</td>
             <td style="font-weight:700;color:#f8fafc;">153,294.00</td>
-            <td style="color:#38bdf8;">6,194,797.55</td>
-            <td><span style="color:#ef4444; font-weight:700;">-97.5%</span></td>
+            <td style="color:#38bdf8;">2,193,740.88</td>
+            <td><span style="color:#ef4444; font-weight:700;">-93.0%</span></td>
             <td>154,401</td>
             <td><span style="color:#f59e0b; font-weight:700;">99.3%</span></td>
             <td style="color:#38bdf8;">8,316</td>
             <td>3,384</td>
             <td style="color:#10b981;">2.46</td>
             <td>100.0%</td>
-            <td><span class="badge" style="background:#38bdf822; color:#38bdf8;">Active</span></td>
+            <td><span class="badge" style="background:#10b98122; color:#10b981;">Powerhouse Performer</span></td>
             <td style="color:#38bdf8;">18.43</td>
         </tr>
         
-        <tr>
+        <tr onclick="openStoreDetails('K208')" class="clickable-row">
             <td>9</td>
             <td style="color:#38bdf8;font-weight:600;">K208</td>
             <td style="font-weight:600;color:#fff;">MMS Jeddah Mall of Arabia</td>
             <td>Western Region</td>
             <td style="font-weight:700;color:#f8fafc;">137,987.00</td>
-            <td style="color:#38bdf8;">1,898,474.23</td>
-            <td><span style="color:#ef4444; font-weight:700;">-92.7%</span></td>
+            <td style="color:#38bdf8;">674,072.25</td>
+            <td><span style="color:#ef4444; font-weight:700;">-79.5%</span></td>
             <td>180,310</td>
             <td><span style="color:#f59e0b; font-weight:700;">76.5%</span></td>
             <td style="color:#38bdf8;">7,342</td>
             <td>2,840</td>
             <td style="color:#10b981;">2.59</td>
             <td>100.0%</td>
-            <td><span class="badge" style="background:#38bdf822; color:#38bdf8;">Active</span></td>
+            <td><span class="badge" style="background:#38bdf822; color:#38bdf8;">Steady Flow</span></td>
             <td style="color:#38bdf8;">18.79</td>
         </tr>
         
-        <tr>
+        <tr onclick="openStoreDetails('K401')" class="clickable-row">
             <td>10</td>
             <td style="color:#38bdf8;font-weight:600;">K401</td>
             <td style="font-weight:600;color:#fff;">MMS Najran Park</td>
             <td>Western Region</td>
             <td style="font-weight:700;color:#f8fafc;">120,862.00</td>
-            <td style="color:#38bdf8;">5,560,602.47</td>
-            <td><span style="color:#ef4444; font-weight:700;">-97.8%</span></td>
+            <td style="color:#38bdf8;">1,973,188.40</td>
+            <td><span style="color:#ef4444; font-weight:700;">-93.9%</span></td>
             <td>157,220</td>
             <td><span style="color:#f59e0b; font-weight:700;">76.9%</span></td>
             <td style="color:#38bdf8;">7,660</td>
             <td>1,763</td>
             <td style="color:#10b981;">4.34</td>
             <td>100.0%</td>
-            <td><span class="badge" style="background:#38bdf822; color:#38bdf8;">Active</span></td>
+            <td><span class="badge" style="background:#38bdf822; color:#38bdf8;">Steady Flow</span></td>
             <td style="color:#38bdf8;">15.78</td>
         </tr>
         
-        <tr>
+        <tr onclick="openStoreDetails('K404')" class="clickable-row">
             <td>11</td>
             <td style="color:#38bdf8;font-weight:600;">K404</td>
             <td style="font-weight:600;color:#fff;">MMS Abha</td>
@@ -231,83 +278,83 @@
             <td>2,138</td>
             <td style="color:#10b981;">2.64</td>
             <td>100.0%</td>
-            <td><span class="badge" style="background:#38bdf822; color:#38bdf8;">Active</span></td>
+            <td><span class="badge" style="background:#38bdf822; color:#38bdf8;">Steady Flow</span></td>
             <td style="color:#38bdf8;">18.32</td>
         </tr>
         
-        <tr>
+        <tr onclick="openStoreDetails('K501')" class="clickable-row">
             <td>12</td>
             <td style="color:#38bdf8;font-weight:600;">K501</td>
             <td style="font-weight:600;color:#fff;">MMS Tabuk Park</td>
             <td>Western Region</td>
             <td style="font-weight:700;color:#f8fafc;">101,426.90</td>
-            <td style="color:#38bdf8;">5,286,640.33</td>
-            <td><span style="color:#ef4444; font-weight:700;">-98.1%</span></td>
+            <td style="color:#38bdf8;">1,870,902.55</td>
+            <td><span style="color:#ef4444; font-weight:700;">-94.6%</span></td>
             <td>168,669</td>
             <td><span style="color:#f59e0b; font-weight:700;">60.1%</span></td>
             <td style="color:#38bdf8;">6,866</td>
             <td>2,334</td>
             <td style="color:#10b981;">2.94</td>
             <td>100.0%</td>
-            <td><span class="badge" style="background:#38bdf822; color:#38bdf8;">Active</span></td>
+            <td><span class="badge" style="background:#38bdf822; color:#38bdf8;">Steady Flow</span></td>
             <td style="color:#38bdf8;">14.77</td>
         </tr>
         
-        <tr>
+        <tr onclick="openStoreDetails('K102')" class="clickable-row">
             <td>13</td>
             <td style="color:#38bdf8;font-weight:600;">K102</td>
             <td style="font-weight:600;color:#fff;">MMS Riyadh Tala Mall</td>
             <td>Riyadh Central Region</td>
             <td style="font-weight:700;color:#f8fafc;">101,001.00</td>
-            <td style="color:#38bdf8;">3,884,931.74</td>
-            <td><span style="color:#ef4444; font-weight:700;">-97.4%</span></td>
+            <td style="color:#38bdf8;">1,376,203.64</td>
+            <td><span style="color:#ef4444; font-weight:700;">-92.7%</span></td>
             <td>101,835</td>
             <td><span style="color:#f59e0b; font-weight:700;">99.2%</span></td>
             <td style="color:#38bdf8;">5,074</td>
             <td>1,450</td>
             <td style="color:#10b981;">3.50</td>
             <td>100.0%</td>
-            <td><span class="badge" style="background:#38bdf822; color:#38bdf8;">Active</span></td>
+            <td><span class="badge" style="background:#10b98122; color:#10b981;">Powerhouse Performer</span></td>
             <td style="color:#38bdf8;">19.91</td>
         </tr>
         
-        <tr>
+        <tr onclick="openStoreDetails('K109')" class="clickable-row">
             <td>14</td>
             <td style="color:#38bdf8;font-weight:600;">K109</td>
             <td style="font-weight:600;color:#fff;">MMS Riyadh Localizer</td>
             <td>Riyadh Central Region</td>
             <td style="font-weight:700;color:#f8fafc;">99,585.75</td>
-            <td style="color:#38bdf8;">4,243,581.20</td>
-            <td><span style="color:#ef4444; font-weight:700;">-97.7%</span></td>
+            <td style="color:#38bdf8;">1,503,788.80</td>
+            <td><span style="color:#ef4444; font-weight:700;">-93.4%</span></td>
             <td>116,758</td>
             <td><span style="color:#f59e0b; font-weight:700;">85.3%</span></td>
             <td style="color:#38bdf8;">4,930</td>
             <td>1,465</td>
             <td style="color:#10b981;">3.37</td>
             <td>100.0%</td>
-            <td><span class="badge" style="background:#38bdf822; color:#38bdf8;">Active</span></td>
+            <td><span class="badge" style="background:#38bdf822; color:#38bdf8;">Steady Flow</span></td>
             <td style="color:#38bdf8;">20.20</td>
         </tr>
         
-        <tr>
+        <tr onclick="openStoreDetails('K210')" class="clickable-row">
             <td>15</td>
             <td style="color:#38bdf8;font-weight:600;">K210</td>
             <td style="font-weight:600;color:#fff;">MMS Makkah Salam Mall</td>
             <td>Western Region</td>
             <td style="font-weight:700;color:#f8fafc;">58,659.00</td>
-            <td style="color:#38bdf8;">722,049.19</td>
-            <td><span style="color:#ef4444; font-weight:700;">-91.9%</span></td>
+            <td style="color:#38bdf8;">255,200.25</td>
+            <td><span style="color:#ef4444; font-weight:700;">-77.0%</span></td>
             <td>124,830</td>
             <td><span style="color:#f59e0b; font-weight:700;">47.0%</span></td>
             <td style="color:#38bdf8;">3,322</td>
             <td>1,225</td>
             <td style="color:#10b981;">2.71</td>
             <td>100.0%</td>
-            <td><span class="badge" style="background:#38bdf822; color:#38bdf8;">Active</span></td>
+            <td><span class="badge" style="background:#38bdf822; color:#38bdf8;">Steady Flow</span></td>
             <td style="color:#38bdf8;">17.66</td>
         </tr>
         
-        <tr>
+        <tr onclick="openStoreDetails('K403')" class="clickable-row">
             <td>16</td>
             <td style="color:#38bdf8;font-weight:600;">K403</td>
             <td style="font-weight:600;color:#fff;">MMS RMJ</td>
@@ -321,13 +368,322 @@
             <td>694</td>
             <td style="color:#10b981;">3.13</td>
             <td>100.0%</td>
-            <td><span class="badge" style="background:#38bdf822; color:#38bdf8;">Active</span></td>
+            <td><span class="badge" style="background:#38bdf822; color:#38bdf8;">Steady Flow</span></td>
             <td style="color:#38bdf8;">18.46</td>
         </tr>
         </tbody>
-    </table>
+        </table>
+    </div>
 </div>
 
+<!-- 2. Regions View -->
+<div id="view-regions" style="display:none;">
+    
+    <div id="grand-total-banner" style="background:#131b2e; border:2px solid #2563eb; border-radius:12px; padding:18px 24px; display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:16px; margin-bottom:30px;">
+        <div>
+            <div style="font-size:13px; color:#38bdf8; font-weight:700;">Network Grand Total</div>
+            <div style="font-size:22px; font-weight:800; color:#fff;">2,758,574 SAR</div>
+        </div>
+        <div style="display:flex; gap:20px; align-items:center;">
+            <div><div style="font-size:10px; color:#94a3b8;">WH STOCK</div><div style="font-size:15px; font-weight:800; color:#fff;">0 Pcs</div></div>
+            <div><div style="font-size:10px; color:#94a3b8;">LY SALES</div><div style="font-size:15px; font-weight:700; color:#38bdf8;">33,317,590 SAR</div></div>
+            <div><div style="font-size:10px; color:#94a3b8;">YoY</div><div style="font-size:15px; font-weight:800; color:#ef4444;">-92.7%</div></div>
+            <div><div style="font-size:10px; color:#94a3b8;">ACH</div><div style="font-size:15px; font-weight:700; color:#10b981;">79.7%</div></div>
+        </div>
+    </div>
+    
+    <div style="display:flex; flex-wrap:wrap; gap:16px;">
+        <div class="region-block" data-region="Riyadh Central Region" style="background:var(--card); border:1px solid var(--border); border-top:4px solid #38bdf8; border-radius:12px; padding:20px; flex:1; min-width:320px;">
+            <div style="display:flex; justify-content:space-between; align-items:flex-start; margin-bottom:12px;">
+                <div>
+                    <h3 style="margin:0; font-size:17px; color:#fff;">Riyadh Central Region</h3>
+                    <span style="font-size:12px; color:#38bdf8; font-weight:600;">Manager: Sultan</span>
+                </div>
+                <span class="badge" style="background:#f59e0b22; color:#f59e0b;">88.1% Ach</span>
+            </div>
+            <div style="display:grid; grid-template-columns: repeat(3, 1fr); gap:10px; background:#090d16; padding:12px; border-radius:8px;">
+                <div><div style="font-size:10px; color:#94a3b8;">SALES</div><div style="font-size:13px; font-weight:700; color:#fff;">1,454,165</div></div>
+                <div><div style="font-size:10px; color:#94a3b8;">QTY</div><div style="font-size:13px; font-weight:700; color:#38bdf8;">68,249</div></div>
+                <div><div style="font-size:10px; color:#94a3b8;">UPT</div><div style="font-size:13px; font-weight:700; color:#10b981;">3.11</div></div>
+            </div>
+        </div>
+        
+        <div class="region-block" data-region="Western Region" style="background:var(--card); border:1px solid var(--border); border-top:4px solid #818cf8; border-radius:12px; padding:20px; flex:1; min-width:320px;">
+            <div style="display:flex; justify-content:space-between; align-items:flex-start; margin-bottom:12px;">
+                <div>
+                    <h3 style="margin:0; font-size:17px; color:#fff;">Western Region</h3>
+                    <span style="font-size:12px; color:#38bdf8; font-weight:600;">Manager: Rajib</span>
+                </div>
+                <span class="badge" style="background:#f59e0b22; color:#f59e0b;">72.0% Ach</span>
+            </div>
+            <div style="display:grid; grid-template-columns: repeat(3, 1fr); gap:10px; background:#090d16; padding:12px; border-radius:8px;">
+                <div><div style="font-size:10px; color:#94a3b8;">SALES</div><div style="font-size:13px; font-weight:700; color:#fff;">1,304,409</div></div>
+                <div><div style="font-size:10px; color:#94a3b8;">QTY</div><div style="font-size:13px; font-weight:700; color:#38bdf8;">73,522</div></div>
+                <div><div style="font-size:10px; color:#94a3b8;">UPT</div><div style="font-size:13px; font-weight:700; color:#10b981;">2.86</div></div>
+            </div>
+        </div>
+        </div>
+</div>
+
+<!-- 3. Business View -->
+<div id="view-business" style="display:none;">
+    <div style="display:flex; gap:14px; overflow-x:auto; margin-bottom:24px;">
+        <div style="background:var(--card); border:1px solid var(--border); border-top:3px solid #38bdf8; border-radius:10px; padding:16px; min-width:210px; flex:1;">
+            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px;">
+                <span style="font-size:13px; font-weight:700; color:#fff;">Variety Lifestyle</span>
+                <span style="font-size:12px; font-weight:700; color:#38bdf8;">28.7%</span>
+            </div>
+            <div style="font-size:17px; font-weight:700; color:#f8fafc; margin-bottom:6px;">790,923 <span style="font-size:11px; color:#94a3b8;">SAR</span></div>
+            <div style="display:flex; justify-content:space-between; align-items:center; font-size:11px;">
+                <span style="color:#94a3b8;">Stock Health:</span>
+                <span class="badge" style="background:#f59e0b22; color:#f59e0b;">Overstocked (16.0 Wks)</span>
+            </div>
+        </div>
+        
+        <div style="background:var(--card); border:1px solid var(--border); border-top:3px solid #818cf8; border-radius:10px; padding:16px; min-width:210px; flex:1;">
+            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px;">
+                <span style="font-size:13px; font-weight:700; color:#fff;">Children's Goods</span>
+                <span style="font-size:12px; font-weight:700; color:#818cf8;">26.6%</span>
+            </div>
+            <div style="font-size:17px; font-weight:700; color:#f8fafc; margin-bottom:6px;">735,164 <span style="font-size:11px; color:#94a3b8;">SAR</span></div>
+            <div style="display:flex; justify-content:space-between; align-items:center; font-size:11px;">
+                <span style="color:#94a3b8;">Stock Health:</span>
+                <span class="badge" style="background:#f59e0b22; color:#f59e0b;">Overstocked (16.0 Wks)</span>
+            </div>
+        </div>
+        
+        <div style="background:var(--card); border:1px solid var(--border); border-top:3px solid #a855f7; border-radius:10px; padding:16px; min-width:210px; flex:1;">
+            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px;">
+                <span style="font-size:13px; font-weight:700; color:#fff;">Beauty & Cleaning</span>
+                <span style="font-size:12px; font-weight:700; color:#a855f7;">21.0%</span>
+            </div>
+            <div style="font-size:17px; font-weight:700; color:#f8fafc; margin-bottom:6px;">579,572 <span style="font-size:11px; color:#94a3b8;">SAR</span></div>
+            <div style="display:flex; justify-content:space-between; align-items:center; font-size:11px;">
+                <span style="color:#94a3b8;">Stock Health:</span>
+                <span class="badge" style="background:#f59e0b22; color:#f59e0b;">Overstocked (16.0 Wks)</span>
+            </div>
+        </div>
+        
+        <div style="background:var(--card); border:1px solid var(--border); border-top:3px solid #ec4899; border-radius:10px; padding:16px; min-width:210px; flex:1;">
+            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px;">
+                <span style="font-size:13px; font-weight:700; color:#fff;">Stationery</span>
+                <span style="font-size:12px; font-weight:700; color:#ec4899;">7.4%</span>
+            </div>
+            <div style="font-size:17px; font-weight:700; color:#f8fafc; margin-bottom:6px;">204,212 <span style="font-size:11px; color:#94a3b8;">SAR</span></div>
+            <div style="display:flex; justify-content:space-between; align-items:center; font-size:11px;">
+                <span style="color:#94a3b8;">Stock Health:</span>
+                <span class="badge" style="background:#f59e0b22; color:#f59e0b;">Overstocked (16.0 Wks)</span>
+            </div>
+        </div>
+        
+        <div style="background:var(--card); border:1px solid var(--border); border-top:3px solid #f59e0b; border-radius:10px; padding:16px; min-width:210px; flex:1;">
+            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px;">
+                <span style="font-size:13px; font-weight:700; color:#fff;">Bags</span>
+                <span style="font-size:12px; font-weight:700; color:#f59e0b;">4.6%</span>
+            </div>
+            <div style="font-size:17px; font-weight:700; color:#f8fafc; margin-bottom:6px;">126,912 <span style="font-size:11px; color:#94a3b8;">SAR</span></div>
+            <div style="display:flex; justify-content:space-between; align-items:center; font-size:11px;">
+                <span style="color:#94a3b8;">Stock Health:</span>
+                <span class="badge" style="background:#f59e0b22; color:#f59e0b;">Overstocked (16.0 Wks)</span>
+            </div>
+        </div>
+        
+        <div style="background:var(--card); border:1px solid var(--border); border-top:3px solid #10b981; border-radius:10px; padding:16px; min-width:210px; flex:1;">
+            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px;">
+                <span style="font-size:13px; font-weight:700; color:#fff;">Home & Daily Use</span>
+                <span style="font-size:12px; font-weight:700; color:#10b981;">4.3%</span>
+            </div>
+            <div style="font-size:17px; font-weight:700; color:#f8fafc; margin-bottom:6px;">118,172 <span style="font-size:11px; color:#94a3b8;">SAR</span></div>
+            <div style="display:flex; justify-content:space-between; align-items:center; font-size:11px;">
+                <span style="color:#94a3b8;">Stock Health:</span>
+                <span class="badge" style="background:#f59e0b22; color:#f59e0b;">Overstocked (16.0 Wks)</span>
+            </div>
+        </div>
+        
+        <div style="background:var(--card); border:1px solid var(--border); border-top:3px solid #06b6d4; border-radius:10px; padding:16px; min-width:210px; flex:1;">
+            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px;">
+                <span style="font-size:13px; font-weight:700; color:#fff;">Fashion Accessories</span>
+                <span style="font-size:12px; font-weight:700; color:#06b6d4;">3.8%</span>
+            </div>
+            <div style="font-size:17px; font-weight:700; color:#f8fafc; margin-bottom:6px;">104,742 <span style="font-size:11px; color:#94a3b8;">SAR</span></div>
+            <div style="display:flex; justify-content:space-between; align-items:center; font-size:11px;">
+                <span style="color:#94a3b8;">Stock Health:</span>
+                <span class="badge" style="background:#f59e0b22; color:#f59e0b;">Overstocked (16.0 Wks)</span>
+            </div>
+        </div>
+        
+        <div style="background:var(--card); border:1px solid var(--border); border-top:3px solid #e11d48; border-radius:10px; padding:16px; min-width:210px; flex:1;">
+            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px;">
+                <span style="font-size:13px; font-weight:700; color:#fff;">3C Electronics</span>
+                <span style="font-size:12px; font-weight:700; color:#e11d48;">2.2%</span>
+            </div>
+            <div style="font-size:17px; font-weight:700; color:#f8fafc; margin-bottom:6px;">60,248 <span style="font-size:11px; color:#94a3b8;">SAR</span></div>
+            <div style="display:flex; justify-content:space-between; align-items:center; font-size:11px;">
+                <span style="color:#94a3b8;">Stock Health:</span>
+                <span class="badge" style="background:#f59e0b22; color:#f59e0b;">Overstocked (16.0 Wks)</span>
+            </div>
+        </div>
+        
+        <div style="background:var(--card); border:1px solid var(--border); border-top:3px solid #84cc16; border-radius:10px; padding:16px; min-width:210px; flex:1;">
+            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px;">
+                <span style="font-size:13px; font-weight:700; color:#fff;">Apparel Accessories</span>
+                <span style="font-size:12px; font-weight:700; color:#84cc16;">1.2%</span>
+            </div>
+            <div style="font-size:17px; font-weight:700; color:#f8fafc; margin-bottom:6px;">34,534 <span style="font-size:11px; color:#94a3b8;">SAR</span></div>
+            <div style="display:flex; justify-content:space-between; align-items:center; font-size:11px;">
+                <span style="color:#94a3b8;">Stock Health:</span>
+                <span class="badge" style="background:#f59e0b22; color:#f59e0b;">Overstocked (16.0 Wks)</span>
+            </div>
+        </div>
+        
+        <div style="background:var(--card); border:1px solid var(--border); border-top:3px solid #38bdf8; border-radius:10px; padding:16px; min-width:210px; flex:1;">
+            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px;">
+                <span style="font-size:13px; font-weight:700; color:#fff;">Home Textile</span>
+                <span style="font-size:12px; font-weight:700; color:#38bdf8;">0.1%</span>
+            </div>
+            <div style="font-size:17px; font-weight:700; color:#f8fafc; margin-bottom:6px;">4,095 <span style="font-size:11px; color:#94a3b8;">SAR</span></div>
+            <div style="display:flex; justify-content:space-between; align-items:center; font-size:11px;">
+                <span style="color:#94a3b8;">Stock Health:</span>
+                <span class="badge" style="background:#f59e0b22; color:#f59e0b;">Overstocked (16.0 Wks)</span>
+            </div>
+        </div>
+        </div>
+    <div class="table-wrap">
+        <table>
+            <thead><tr><th>#</th><th>Main Category</th><th>Sales</th><th>Units</th><th>Share</th><th>Health</th><th>ASP</th><th>Leading Store</th></tr></thead>
+            <tbody>
+        <tr>
+            <td>1</td>
+            <td style="font-weight:800;color:#fff;">🏷️ Variety Lifestyle</td>
+            <td style="font-weight:700;color:#38bdf8;">790,922.51</td>
+            <td>38,582</td>
+            <td>28.7%</td>
+            <td><span class="badge" style="background:#f59e0b22; color:#f59e0b;">Overstocked (16.0 Wks)</span></td>
+            <td style="color:#f59e0b;font-weight:700;">20.50</td>
+            <td>MMS Riyadh Solitaire (144,764 SAR)</td>
+        </tr>
+        
+        <tr>
+            <td>2</td>
+            <td style="font-weight:800;color:#fff;">🏷️ Children's Goods</td>
+            <td style="font-weight:700;color:#38bdf8;">735,164.45</td>
+            <td>27,550</td>
+            <td>26.6%</td>
+            <td><span class="badge" style="background:#f59e0b22; color:#f59e0b;">Overstocked (16.0 Wks)</span></td>
+            <td style="color:#f59e0b;font-weight:700;">26.68</td>
+            <td>MMS Riyadh Solitaire (157,832 SAR)</td>
+        </tr>
+        
+        <tr>
+            <td>3</td>
+            <td style="font-weight:800;color:#fff;">🏷️ Beauty & Cleaning</td>
+            <td style="font-weight:700;color:#38bdf8;">579,572.10</td>
+            <td>40,861</td>
+            <td>21.0%</td>
+            <td><span class="badge" style="background:#f59e0b22; color:#f59e0b;">Overstocked (16.0 Wks)</span></td>
+            <td style="color:#f59e0b;font-weight:700;">14.18</td>
+            <td>MMS Mall of Dhahran (82,175 SAR)</td>
+        </tr>
+        
+        <tr>
+            <td>4</td>
+            <td style="font-weight:800;color:#fff;">🏷️ Stationery</td>
+            <td style="font-weight:700;color:#38bdf8;">204,212.31</td>
+            <td>13,436</td>
+            <td>7.4%</td>
+            <td><span class="badge" style="background:#f59e0b22; color:#f59e0b;">Overstocked (16.0 Wks)</span></td>
+            <td style="color:#f59e0b;font-weight:700;">15.20</td>
+            <td>MMS Riyadh Solitaire (30,131 SAR)</td>
+        </tr>
+        
+        <tr>
+            <td>5</td>
+            <td style="font-weight:800;color:#fff;">🏷️ Bags</td>
+            <td style="font-weight:700;color:#38bdf8;">126,912.08</td>
+            <td>9,994</td>
+            <td>4.6%</td>
+            <td><span class="badge" style="background:#f59e0b22; color:#f59e0b;">Overstocked (16.0 Wks)</span></td>
+            <td style="color:#f59e0b;font-weight:700;">12.70</td>
+            <td>MMS Mall of Dhahran (25,822 SAR)</td>
+        </tr>
+        
+        <tr>
+            <td>6</td>
+            <td style="font-weight:800;color:#fff;">🏷️ Home & Daily Use</td>
+            <td style="font-weight:700;color:#38bdf8;">118,172.00</td>
+            <td>4,033</td>
+            <td>4.3%</td>
+            <td><span class="badge" style="background:#f59e0b22; color:#f59e0b;">Overstocked (16.0 Wks)</span></td>
+            <td style="color:#f59e0b;font-weight:700;">29.30</td>
+            <td>MMS Mall of Dhahran (18,208 SAR)</td>
+        </tr>
+        
+        <tr>
+            <td>7</td>
+            <td style="font-weight:800;color:#fff;">🏷️ Fashion Accessories</td>
+            <td style="font-weight:700;color:#38bdf8;">104,742.05</td>
+            <td>3,959</td>
+            <td>3.8%</td>
+            <td><span class="badge" style="background:#f59e0b22; color:#f59e0b;">Overstocked (16.0 Wks)</span></td>
+            <td style="color:#f59e0b;font-weight:700;">26.46</td>
+            <td>MMS Riyadh Solitaire (15,320 SAR)</td>
+        </tr>
+        
+        <tr>
+            <td>8</td>
+            <td style="font-weight:800;color:#fff;">🏷️ 3C Electronics</td>
+            <td style="font-weight:700;color:#38bdf8;">60,247.75</td>
+            <td>1,676</td>
+            <td>2.2%</td>
+            <td><span class="badge" style="background:#f59e0b22; color:#f59e0b;">Overstocked (16.0 Wks)</span></td>
+            <td style="color:#f59e0b;font-weight:700;">35.95</td>
+            <td>MMS Mall of Dhahran (9,576 SAR)</td>
+        </tr>
+        
+        <tr>
+            <td>9</td>
+            <td style="font-weight:800;color:#fff;">🏷️ Apparel Accessories</td>
+            <td style="font-weight:700;color:#38bdf8;">34,533.75</td>
+            <td>1,594</td>
+            <td>1.2%</td>
+            <td><span class="badge" style="background:#f59e0b22; color:#f59e0b;">Overstocked (16.0 Wks)</span></td>
+            <td style="color:#f59e0b;font-weight:700;">21.66</td>
+            <td>MMS Riyadh Solitaire (5,319 SAR)</td>
+        </tr>
+        
+        <tr>
+            <td>10</td>
+            <td style="font-weight:800;color:#fff;">🏷️ Home Textile</td>
+            <td style="font-weight:700;color:#38bdf8;">4,095.00</td>
+            <td>86</td>
+            <td>0.1%</td>
+            <td><span class="badge" style="background:#f59e0b22; color:#f59e0b;">Overstocked (16.0 Wks)</span></td>
+            <td style="color:#f59e0b;font-weight:700;">47.62</td>
+            <td>MMS Riyadh Solitaire (898 SAR)</td>
+        </tr>
+        </tbody>
+        </table>
+    </div>
+</div>
+
+<!-- 4. Action Hub View -->
+<div id="view-action" style="display:none;">
+    <div class="table-wrap">
+        <table>
+            <thead><tr><th>#</th><th>Action</th><th>Store</th><th>Category & SKU</th><th>Source</th><th>Suggested Qty</th><th>Urgency</th></tr></thead>
+            <tbody></tbody>
+        </table>
+    </div>
+</div>
+
+<script>
+  function switchView(viewName) {
+    ['stores', 'regions', 'business', 'action'].forEach(v => {
+      document.getElementById('view-' + v).style.display = (v === viewName) ? 'block' : 'none';
+      document.getElementById('btn-' + v).classList.toggle('active', v === viewName);
+    });
+  }
+</script>
 </body>
 </html>
     

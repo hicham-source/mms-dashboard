@@ -51,13 +51,21 @@ def load_ly_sales_data(ly_path):
     ly_totals = {}
     try:
         df_ly = pd.read_excel(ly_path)
+        # تصحيح قراءة ملف LY SEP لتجنب التضخم بأخذ صف G-SALE حصرياً لكل فرع
+        sale_type_col = next((c for c in df_ly.columns if any(str(df_ly[c]).upper().strip() == 'G-SALE' for v in df_ly[c])), None)
+        if not sale_type_col and df_ly.shape[1] > 2:
+            sale_type_col = df_ly.columns[2]
+            
+        df_gsale = df_ly[df_ly[sale_type_col].astype(str).str.strip().str.upper() == 'G-SALE'].copy() if sale_type_col else df_ly.copy()
+        if df_gsale.empty: df_gsale = df_ly.copy()
+
         for col in df_ly.columns:
             col_str = str(col).strip()
             if "(MMS)" in col_str.upper() and "(DZL)" not in col_str.upper():
                 m = re.search(r'^\d+', col_str)
                 if m:
                     code = f"K{m.group(0)}"
-                    tot_val = pd.to_numeric(df_ly[col], errors='coerce').sum()
+                    tot_val = pd.to_numeric(df_gsale[col], errors='coerce').sum()
                     if tot_val > 0:
                         ly_totals[code] = round(float(tot_val), 2)
         return ly_totals
@@ -154,8 +162,8 @@ def generate_claude_insights(store_summary, total_sales, total_target, overall_a
     api_key = os.getenv("ANTHROPIC_API_KEY")
     if not api_key:
         return {
-            "critical": f"Central warehouse holds {wh_stock:,} units; monitor category stock health ratios and UPT velocity.",
-            "attention": "Preserve 40,000-80,000 visual merchandise units in regional flagships while rotating out stagnant sub-categories.",
+            "critical": f"Central warehouse (KSWH) holds {wh_stock:,} units ready for category stock health optimization.",
+            "attention": "Ensure balanced 40k-80k display capacity without clogging gondolas with slow-moving sub-subgroups.",
             "opportunity": "Scale high-velocity children's toys and beauty categories across underperforming Western Region branches to beat LY benchmarks."
         }
     return {
@@ -297,7 +305,7 @@ def process_and_build():
     total_txns = store_summary['txns'].sum()
     total_units = store_summary['units'].sum()
     network_atv = (total_sales / total_txns) if total_txns > 0 else 0
-    network_upt = (total_units / total_txns) if total_txns > 0 else 0
+    network_upt = (total_units / total_txns) if total_units > 0 else 0
     network_asp = (total_sales / total_units) if total_units > 0 else 0
 
     store_summary['share'] = ((store_summary['sales'] / total_sales) * 100).round(2)
@@ -534,13 +542,149 @@ def process_and_build():
         except Exception:
             pass
 
-    insights = generate_claude_insights(store_summary, total_sales, total_target, overall_ach, total_soh_units, network_lfl_growth, wh_total_stock)
+    top_main_cats = set(main_cat_summary.head(3)['main_category'])
+    def mumuso_commercial_engine(row):
+        st_code = row['clean_code']
+        soh = row['soh_units']
+        ach = row['ach_pct'] if pd.notna(row['ach_pct']) else 0
+        woc = row['woc']
+        st_items = store_cat_summary_dict.get(st_code, [])
+        st_top_cats = list(dict.fromkeys([c['main_category'] for c in st_items[:5]]))
+        missing_cats = [c for c in top_main_cats if c not in st_top_cats]
+        st_top_cats_str = ", ".join(st_top_cats[:3]) if st_top_cats else "General"
 
-    top500_json = json.dumps(top500_list)
-    low500_json = json.dumps(low500_list)
+        if woc < 4.0 and woc > 0: woc_badge, woc_col = f"OOS Risk ({woc} Wks)", "#ef4444"
+        elif 4.0 <= woc <= 9.0: woc_badge, woc_col = f"Healthy Buffer ({woc} Wks)", "#10b981"
+        else: woc_badge, woc_col = f"Overstocked ({woc} Wks)", "#f59e0b"
+
+        if ach >= 95:
+            diag_title, diag_col = "Powerhouse Performer", "#10b981"
+            prob = f"High commercial conversion ({ach:.1f}% Ach). Strong momentum in {st_top_cats_str}."
+            action = f"Maintain 100% shelf availability on leading sub-categories."
+            needs = f"Priority replenishment for core volume drivers."
+        elif ach < 70 and soh >= 40000:
+            diag_title, diag_col = "Assortment Mismatch", "#f59e0b"
+            prob = f"Store holds solid display depth ({soh:,.0f} Pcs) but turnover is slow ({ach:.1f}% Ach)."
+            action = f"⚡ ACTION: Execute Category Assortment Swap to {missing_cats[0] if missing_cats else 'Children Toys'}."
+            needs = "Inject high-velocity categories."
+        else:
+            diag_title, diag_col = "Steady Flow", "#38bdf8"
+            prob = f"Balanced run-rate ({ach:.1f}% Ach) with healthy display volume ({soh:,.0f} Pcs)."
+            action = f"Focus cashier upselling to lift ATV (Current: {row['atv']:.1f} SAR)."
+            needs = "Routine weekly assortment replenishment."
+
+        return {
+            "capacity_badge": "Standard Full Display", "capacity_color": "#10b981",
+            "woc_badge": woc_badge, "woc_color": woc_col,
+            "diag_title": diag_title, "diag_color": diag_col,
+            "problem": prob, "action": action, "needs": needs,
+            "top_categories_str": st_top_cats_str
+        }
+
+    engine_res = store_summary.apply(mumuso_commercial_engine, axis=1)
+    store_summary['display_status'] = [e['capacity_badge'] for e in engine_res]
+    store_summary['display_color'] = [e['capacity_color'] for e in engine_res]
+    store_summary['woc_status'] = [e['woc_badge'] for e in engine_res]
+    store_summary['woc_color'] = [e['woc_color'] for e in engine_res]
+    store_summary['diag_title'] = [e['diag_title'] for e in engine_res]
+    store_summary['diag_color'] = [e['diag_color'] for e in engine_res]
+    store_summary['problem'] = [e['problem'] for e in engine_res]
+    store_summary['action'] = [e['action'] for e in engine_res]
+    store_summary['needs'] = [e['needs'] for e in engine_res]
+    store_summary['top_cats_str'] = [e['top_categories_str'] for e in engine_res]
+
+    insights = generate_claude_insights(store_summary, total_sales, total_target, overall_ach, total_soh_units, network_lfl_growth, wh_total_stock)
+    chart_svg_markup = build_svg_bar_chart(store_summary.head(8))
+
+    colors = ['#38bdf8', '#818cf8', '#a855f7', '#ec4899', '#f59e0b', '#10b981', '#06b6d4', '#e11d48', '#84cc16']
+    main_cat_cards_html = ""
+    for idx, r in main_cat_summary.iterrows():
+        c_color = colors[idx % len(colors)]
+        h_color = r['health_color']
+        main_cat_cards_html += f"""
+        <div style="background:var(--card); border:1px solid var(--border); border-top:3px solid {c_color}; border-radius:10px; padding:16px; min-width:210px; flex:1;">
+            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px;">
+                <span style="font-size:13px; font-weight:700; color:#fff;">{r['main_category']}</span>
+                <span style="font-size:12px; font-weight:700; color:{c_color};">{r['contribution']:.1f}%</span>
+            </div>
+            <div style="font-size:17px; font-weight:700; color:#f8fafc; margin-bottom:6px;">{r['sales']:,.0f} <span style="font-size:11px; color:#94a3b8;">SAR</span></div>
+            <div style="display:flex; justify-content:space-between; align-items:center; font-size:11px;">
+                <span style="color:#94a3b8;">Stock Health:</span>
+                <span class="badge" style="background:{h_color}22; color:{h_color};">{r['health_status']}</span>
+            </div>
+        </div>
+        """
+
+    main_cat_table_rows = ""
+    for idx, r in main_cat_summary.iterrows():
+        main_cat_table_rows += f"""
+        <tr>
+            <td>{idx+1}</td>
+            <td style="font-weight:800;color:#fff;">🏷️ {r['main_category']}</td>
+            <td style="font-weight:700;color:#38bdf8;">{r['sales']:,.2f}</td>
+            <td>{int(r['units']):,}</td>
+            <td>{r['contribution']:.1f}%</td>
+            <td><span class="badge" style="background:{r['health_color']}22; color:{r['health_color']};">{r['health_status']}</span></td>
+            <td style="color:#f59e0b;font-weight:700;">{r['asp']:,.2f}</td>
+            <td>{r['leading_store']}</td>
+        </tr>
+        """
+
+    region_kpi_cards = ""
+    region_tables_html = ""
+    for reg_name, grp in [("Riyadh Central Region", store_summary[store_summary['region'] == "Riyadh Central Region"]),
+                          ("Western Region", store_summary[store_summary['region'] == "Western Region"])]:
+        reg_mgr = "Sultan" if "Riyadh" in reg_name else "Rajib"
+        r_sales = grp['sales'].sum()
+        r_target = grp['target'].fillna(0).sum()
+        r_ach = (r_sales / r_target * 100) if r_target > 0 else 0
+        r_units = grp['units'].sum()
+        r_txns = grp['txns'].sum()
+        r_upt = (r_units / r_txns) if r_txns > 0 else 0
+        r_atv = (r_sales / r_txns) if r_txns > 0 else 0
+        r_asp = (r_sales / r_units) if r_units > 0 else 0
+
+        reg_lfl = grp[grp['ly_sales'].notna()]
+        reg_yoy = ((reg_lfl['sales'].sum() - reg_lfl['ly_sales'].sum()) / reg_lfl['ly_sales'].sum() * 100) if reg_lfl['ly_sales'].sum() > 0 else None
+        ach_col = "#10b981" if r_ach >= 100 else "#f59e0b"
+
+        region_kpi_cards += f"""
+        <div class="region-block" data-region="{reg_name}" style="background:var(--card); border:1px solid var(--border); border-top:4px solid {'#38bdf8' if 'Riyadh' in reg_name else '#818cf8'}; border-radius:12px; padding:20px; flex:1; min-width:320px;">
+            <div style="display:flex; justify-content:space-between; align-items:flex-start; margin-bottom:12px;">
+                <div>
+                    <h3 style="margin:0; font-size:17px; color:#fff;">{reg_name}</h3>
+                    <span style="font-size:12px; color:#38bdf8; font-weight:600;">Manager: {reg_mgr}</span>
+                </div>
+                <span class="badge" style="background:{ach_col}22; color:{ach_col};">{r_ach:.1f}% Ach</span>
+            </div>
+            <div style="display:grid; grid-template-columns: repeat(3, 1fr); gap:10px; background:#090d16; padding:12px; border-radius:8px;">
+                <div><div style="font-size:10px; color:#94a3b8;">SALES</div><div style="font-size:13px; font-weight:700; color:#fff;">{r_sales:,.0f}</div></div>
+                <div><div style="font-size:10px; color:#94a3b8;">QTY</div><div style="font-size:13px; font-weight:700; color:#38bdf8;">{r_units:,.0f}</div></div>
+                <div><div style="font-size:10px; color:#94a3b8;">UPT</div><div style="font-size:13px; font-weight:700; color:#10b981;">{r_upt:.2f}</div></div>
+            </div>
+        </div>
+        """
+
+    net_yoy_col = "#10b981" if network_lfl_growth >= 0 else "#ef4444"
+    grand_total_html = f"""
+    <div id="grand-total-banner" style="background:#131b2e; border:2px solid #2563eb; border-radius:12px; padding:18px 24px; display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:16px; margin-bottom:30px;">
+        <div>
+            <div style="font-size:13px; color:#38bdf8; font-weight:700;">Network Grand Total</div>
+            <div style="font-size:22px; font-weight:800; color:#fff;">{total_sales:,.0f} SAR</div>
+        </div>
+        <div style="display:flex; gap:20px; align-items:center;">
+            <div><div style="font-size:10px; color:#94a3b8;">WH STOCK</div><div style="font-size:15px; font-weight:800; color:#fff;">{wh_total_stock:,} Pcs</div></div>
+            <div><div style="font-size:10px; color:#94a3b8;">LY SALES</div><div style="font-size:15px; font-weight:700; color:#38bdf8;">{total_ly_sales:,.0f} SAR</div></div>
+            <div><div style="font-size:10px; color:#94a3b8;">YoY</div><div style="font-size:15px; font-weight:800; color:{net_yoy_col};">{network_lfl_growth:+.1f}%</div></div>
+            <div><div style="font-size:10px; color:#94a3b8;">ACH</div><div style="font-size:15px; font-weight:700; color:#10b981;">{overall_ach:.1f}%</div></div>
+        </div>
+    </div>
+    """
 
     store_table_rows = ""
     store_meta_map = {}
+    decision_cards_html = ""
+
     for idx, row in store_summary.iterrows():
         st_code = row['clean_code']
         st_name = row['full_name']
@@ -550,9 +694,33 @@ def process_and_build():
         target_str = f"{row['target']:,.0f}" if pd.notna(row['target']) else "-"
         ach_val = row['ach_pct'] if pd.notna(row['ach_pct']) else 0
         ach_str = f'<span style="color:{"#10b981" if ach_val>=100 else "#f59e0b"}; font-weight:700;">{ach_val:.1f}%</span>' if pd.notna(row['target']) else "-"
+        diag_badge = f'<span class="badge" style="background:{row["diag_color"]}22; color:{row["diag_color"]};">{row["diag_title"]}</span>'
+
+        store_meta_map[st_code] = {
+            "name": st_name, "region": row['region'], "manager": row['manager'],
+            "sales": f"{row['sales']:,.2f} SAR", "ly_sales": ly_str, "target": target_str,
+            "ach": f"{ach_val:.1f}%", "soh_units": f"{int(row['soh_units']):,} Pcs",
+            "woc": f"{row['woc']} Weeks", "str": f"{row['str_pct']}%",
+            "problem": row['problem'], "action": row['action'], "needs": row['needs']
+        }
+
+        if "Mismatch" in row['diag_title'] or "Deficit" in row['diag_title'] or "Performer" in row['diag_title']:
+            decision_cards_html += f"""
+            <div class="decision-card-item" data-region="{row['region']}" style="background:var(--card); border:1px solid var(--border); border-left:4px solid {row['diag_color']}; border-radius:10px; padding:18px;">
+                <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
+                    <span style="font-weight:700; color:#fff;">{st_name} ({st_code})</span>
+                    {diag_badge}
+                </div>
+                <div style="font-size:12px; color:#38bdf8;">{row['action']}</div>
+            </div>
+            """
+
+        st_units_val = int(row['units'])
+        st_txns_val = int(row['txns'])
+        st_upt_val = (st_units_val / st_txns_val) if st_txns_val > 0 else 0
 
         store_table_rows += f"""
-        <tr>
+        <tr onclick="openStoreDetails('{st_code}')" class="clickable-row">
             <td>{idx+1}</td>
             <td style="color:#38bdf8;font-weight:600;">{st_code}</td>
             <td style="font-weight:600;color:#fff;">{st_name}</td>
@@ -562,11 +730,11 @@ def process_and_build():
             <td>{yoy_cell}</td>
             <td>{target_str}</td>
             <td>{ach_str}</td>
-            <td style="color:#38bdf8;">{int(row['units']):,}</td>
-            <td>{int(row['txns']):,}</td>
-            <td style="color:#10b981;">{row['upt']:.2f}</td>
+            <td style="color:#38bdf8;">{st_units_val:,}</td>
+            <td>{st_txns_val:,}</td>
+            <td style="color:#10b981;">{st_upt_val:.2f}</td>
             <td>{row['str_pct']}%</td>
-            <td><span class="badge" style="background:#38bdf822; color:#38bdf8;">Active</span></td>
+            <td>{diag_badge}</td>
             <td style="color:#38bdf8;">{row['asp']:,.2f}</td>
         </tr>
         """
@@ -583,48 +751,103 @@ def process_and_build():
         </tr>
     """ for idx, rep in enumerate(replenishment_recommendations)])
 
+    subsub_json_data = subsub_summary.to_dict(orient='records')
+    main_cat_options = '<option value="ALL">-- All Main Categories --</option>' + "".join([f'<option value="{c}">{c}</option>' for c in main_cat_summary['main_category']])
+    store_options_html = '<option value="ALL">-- All Stores --</option>' + "".join([f'<option value="{s["clean_code"]}">{s["full_name"]} ({s["clean_code"]})</option>' for _, s in store_summary.iterrows()])
+
     html_content = f"""<!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
     <title>MMS Executive Commercial & SOH Intelligence Dashboard</title>
     <style>
-        :root {{ --bg: #090d16; --card: #131b2e; --border: #1e293b; --text: #f8fafc; }}
+        :root {{ --bg: #090d16; --card: #131b2e; --card-hover: #19233c; --border: #1e293b; --text: #f8fafc; --muted: #94a3b8; }}
         body {{ background: var(--bg); color: var(--text); margin: 0; padding: 24px; font-family: sans-serif; }}
-        .header {{ display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid var(--border); padding-bottom: 20px; margin-bottom: 24px; }}
+        .header {{ display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid var(--border); padding-bottom: 20px; margin-bottom: 24px; flex-wrap: wrap; gap: 16px; }}
+        .view-toggle-bar {{ display: flex; background: #0c1220; padding: 4px; border-radius: 10px; border: 1px solid var(--border); margin-bottom: 24px; width: fit-content; gap: 4px; }}
+        .view-btn {{ background: transparent; border: none; color: var(--muted); padding: 10px 22px; border-radius: 8px; font-size: 14px; font-weight: 700; cursor: pointer; }}
+        .view-btn.active {{ background: #2563eb; color: #fff; }}
         .kpi-grid {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 14px; margin-bottom: 24px; }}
         .kpi-card {{ background: var(--card); border: 1px solid var(--border); border-radius: 10px; padding: 16px; }}
         .table-wrap {{ background: var(--card); border: 1px solid var(--border); border-radius: 10px; overflow: hidden; margin-bottom: 24px; }}
         table {{ width: 100%; border-collapse: collapse; text-align: left; font-size: 13px; }}
-        th {{ background: #0c1220; color: #94a3b8; padding: 12px; font-size: 11px; }}
+        th {{ background: #0c1220; color: var(--muted); padding: 12px; font-size: 11px; }}
         td {{ padding: 12px; border-bottom: 1px solid var(--border); }}
         .badge {{ padding: 4px 8px; border-radius: 4px; font-size: 11px; font-weight: 600; }}
         .export-btn {{ background: #10b981; border: none; color: #fff; padding: 8px 16px; border-radius: 6px; font-weight: 700; cursor: pointer; }}
+        .clickable-row {{ cursor: pointer; }}
+        .clickable-row:hover td {{ background: var(--card-hover) !important; }}
     </style>
 </head>
 <body>
 <div class="header">
-    <div><h1>MMS Executive Commercial & SOH Intelligence Dashboard</h1><p style="color:#94a3b8; margin:0;">Automated Replenishment & SOH Engine</p></div>
+    <div><h1>MMS Executive Commercial & SOH Intelligence Dashboard</h1><p style="color:var(--muted); margin:0;">Automated Replenishment & SOH Engine</p></div>
     <div><a href="./reports/MMS_Replenishment_Plan.xlsx" download class="export-btn" style="text-decoration:none;">📥 Download Replenishment Plan</a></div>
 </div>
 
 <div class="kpi-grid">
-    <div class="kpi-card"><div style="font-size:10px; color:#94a3b8;">CURRENT SALES</div><div style="font-size:20px; font-weight:700;">{total_sales:,.0f} SAR</div></div>
-    <div class="kpi-card"><div style="font-size:10px; color:#94a3b8;">LY GROSS SALES</div><div style="font-size:20px; font-weight:700; color:#38bdf8;">{total_ly_sales:,.0f} SAR</div></div>
-    <div class="kpi-card"><div style="font-size:10px; color:#94a3b8;">YoY GROWTH</div><div style="font-size:20px; font-weight:700; color:{"#10b981" if network_lfl_growth>=0 else "#ef4444"};">{network_lfl_growth:+.1f}%</div></div>
-    <div class="kpi-card"><div style="font-size:10px; color:#94a3b8;">TOTAL TARGET</div><div style="font-size:20px; font-weight:700;">{total_target:,.0f} SAR</div></div>
-    <div class="kpi-card"><div style="font-size:10px; color:#94a3b8;">ACHIEVEMENT</div><div style="font-size:20px; font-weight:700; color:#10b981;">{overall_ach:.1f}%</div></div>
+    <div class="kpi-card"><div style="font-size:10px; color:var(--muted);">CURRENT SALES</div><div style="font-size:20px; font-weight:700;">{total_sales:,.0f} SAR</div></div>
+    <div class="kpi-card"><div style="font-size:10px; color:var(--muted);">LY GROSS SALES</div><div style="font-size:20px; font-weight:700; color:#38bdf8;">{total_ly_sales:,.0f} SAR</div></div>
+    <div class="kpi-card"><div style="font-size:10px; color:var(--muted);">YoY GROWTH</div><div style="font-size:20px; font-weight:700; color:{"#10b981" if network_lfl_growth>=0 else "#ef4444"};">{network_lfl_growth:+.1f}%</div></div>
+    <div class="kpi-card"><div style="font-size:10px; color:var(--muted);">TOTAL TARGET</div><div style="font-size:20px; font-weight:700;">{total_target:,.0f} SAR</div></div>
+    <div class="kpi-card"><div style="font-size:10px; color:var(--muted);">ACHIEVEMENT</div><div style="font-size:20px; font-weight:700; color:#10b981;">{overall_ach:.1f}%</div></div>
 </div>
 
-<div class="table-wrap">
-    <table>
-        <thead>
-            <tr><th>#</th><th>Code</th><th>Store Name</th><th>Region</th><th>Sales</th><th>LY Sales</th><th>YoY</th><th>Target</th><th>% Ach</th><th>QTY</th><th>Txns</th><th>UPT</th><th>STR%</th><th>Diagnostic</th><th>ASP</th></tr>
-        </thead>
-        <tbody>{store_table_rows}</tbody>
-    </table>
+<div class="view-toggle-bar">
+    <button class="view-btn active" id="btn-stores" onclick="switchView('stores')">🏢 Store Commercial Matrix</button>
+    <button class="view-btn" id="btn-regions" onclick="switchView('regions')">🌍 Region-Wise Performance</button>
+    <button class="view-btn" id="btn-business" onclick="switchView('business')">📦 Business-Wise Performance</button>
+    <button class="view-btn" id="btn-action" onclick="switchView('action')">⚡ Commercial Action Hub</button>
 </div>
 
+<!-- 1. Stores View -->
+<div id="view-stores">
+    <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(320px, 1fr)); gap:14px; margin-bottom:24px;">{decision_cards_html}</div>
+    <div class="table-wrap">
+        <table>
+            <thead>
+                <tr><th>#</th><th>Code</th><th>Store Name</th><th>Region</th><th>Sales</th><th>LY Sales</th><th>YoY</th><th>Target</th><th>% Ach</th><th>QTY</th><th>Txns</th><th>UPT</th><th>STR%</th><th>Diagnostic</th><th>ASP</th></tr>
+            </thead>
+            <tbody>{store_table_rows}</tbody>
+        </table>
+    </div>
+</div>
+
+<!-- 2. Regions View -->
+<div id="view-regions" style="display:none;">
+    {grand_total_html}
+    <div style="display:flex; flex-wrap:wrap; gap:16px;">{region_kpi_cards}</div>
+</div>
+
+<!-- 3. Business View -->
+<div id="view-business" style="display:none;">
+    <div style="display:flex; gap:14px; overflow-x:auto; margin-bottom:24px;">{main_cat_cards_html}</div>
+    <div class="table-wrap">
+        <table>
+            <thead><tr><th>#</th><th>Main Category</th><th>Sales</th><th>Units</th><th>Share</th><th>Health</th><th>ASP</th><th>Leading Store</th></tr></thead>
+            <tbody>{main_cat_table_rows}</tbody>
+        </table>
+    </div>
+</div>
+
+<!-- 4. Action Hub View -->
+<div id="view-action" style="display:none;">
+    <div class="table-wrap">
+        <table>
+            <thead><tr><th>#</th><th>Action</th><th>Store</th><th>Category & SKU</th><th>Source</th><th>Suggested Qty</th><th>Urgency</th></tr></thead>
+            <tbody>{repl_rows_html}</tbody>
+        </table>
+    </div>
+</div>
+
+<script>
+  function switchView(viewName) {{
+    ['stores', 'regions', 'business', 'action'].forEach(v => {{
+      document.getElementById('view-' + v).style.display = (v === viewName) ? 'block' : 'none';
+      document.getElementById('btn-' + v).classList.toggle('active', v === viewName);
+    }});
+  }}
+</script>
 </body>
 </html>
     """
