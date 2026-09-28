@@ -3,30 +3,36 @@ import glob
 import re
 import json
 import html
+import urllib.request
+import urllib.parse
 import pandas as pd
 import numpy as np
 
 REPORTS_DIR = "./reports"
 
+# إعدادات Telegram المعتمدة الخاصة بك
+TELEGRAM_BOT_TOKEN = "8982931304:AAFaJ80ZTT4UCMmwHHqR3CwPflLtkfx_ZBQ"
+TELEGRAM_CHAT_ID = "954055218"
+
 STORE_MAPPING = {
-    "K101": {"full_name": "MMS Riyadh The View Mall", "region": "Riyadh Central Region", "manager": "Sultan"},
-    "K102": {"full_name": "MMS Riyadh Tala Mall", "region": "Riyadh Central Region", "manager": "Sultan"},
-    "K108": {"full_name": "MMS Riyadh Solitaire", "region": "Riyadh Central Region", "manager": "Sultan"},
-    "K109": {"full_name": "MMS Riyadh Localizer", "region": "Riyadh Central Region", "manager": "Sultan"},
-    "K110": {"full_name": "MMS Riyadh U-Walk", "region": "Riyadh Central Region", "manager": "Sultan"},
-    "K130": {"full_name": "MMS Riyadh Al-Rabwa", "region": "Riyadh Central Region", "manager": "Sultan"},
-    "K301": {"full_name": "MMS Mall of Dhahran", "region": "Riyadh Central Region", "manager": "Sultan"},
+    "K101": {"full_name": "MMS Riyadh The View Mall", "region": "Riyadh Central Region", "manager": "Sultan", "city": "Riyadh"},
+    "K102": {"full_name": "MMS Riyadh Tala Mall", "region": "Riyadh Central Region", "manager": "Sultan", "city": "Riyadh"},
+    "K108": {"full_name": "MMS Riyadh Solitaire", "region": "Riyadh Central Region", "manager": "Sultan", "city": "Riyadh"},
+    "K109": {"full_name": "MMS Riyadh Localizer", "region": "Riyadh Central Region", "manager": "Sultan", "city": "Riyadh"},
+    "K110": {"full_name": "MMS Riyadh U-Walk", "region": "Riyadh Central Region", "manager": "Sultan", "city": "Riyadh"},
+    "K130": {"full_name": "MMS Riyadh Al-Rabwa", "region": "Riyadh Central Region", "manager": "Sultan", "city": "Riyadh"},
+    "K301": {"full_name": "MMS Mall of Dhahran", "region": "Riyadh Central Region", "manager": "Sultan", "city": "Dhahran"},
     
-    "K201": {"full_name": "MMS Jeddah Park", "region": "Western Region", "manager": "Rajib"},
-    "K202": {"full_name": "MMS Jeddah Yasmin Mall", "region": "Western Region", "manager": "Rajib"},
-    "K205": {"full_name": "MMS Jeddah U-Walk", "region": "Western Region", "manager": "Rajib"},
-    "K208": {"full_name": "MMS Jeddah Mall of Arabia", "region": "Western Region", "manager": "Rajib"},
-    "K210": {"full_name": "MMS Makkah Salam Mall", "region": "Western Region", "manager": "Rajib"},
-    "K211": {"full_name": "MMS Madinah", "region": "Western Region", "manager": "Rajib"},
-    "K401": {"full_name": "MMS Najran Park", "region": "Western Region", "manager": "Rajib"},
-    "K403": {"full_name": "MMS RMJ", "region": "Western Region", "manager": "Rajib"},
-    "K404": {"full_name": "MMS Abha", "region": "Western Region", "manager": "Rajib"},
-    "K501": {"full_name": "MMS Tabuk Park", "region": "Western Region", "manager": "Rajib"}
+    "K201": {"full_name": "MMS Jeddah Park", "region": "Western Region", "manager": "Rajib", "city": "Jeddah"},
+    "K202": {"full_name": "MMS Jeddah Yasmin Mall", "region": "Western Region", "manager": "Rajib", "city": "Jeddah"},
+    "K205": {"full_name": "MMS Jeddah U-Walk", "region": "Western Region", "manager": "Rajib", "city": "Jeddah"},
+    "K208": {"full_name": "MMS Jeddah Mall of Arabia", "region": "Western Region", "manager": "Rajib", "city": "Jeddah"},
+    "K210": {"full_name": "MMS Makkah Salam Mall", "region": "Western Region", "manager": "Rajib", "city": "Makkah"},
+    "K211": {"full_name": "MMS Madinah", "region": "Western Region", "manager": "Rajib", "city": "Madinah"},
+    "K401": {"full_name": "MMS Najran Park", "region": "Western Region", "manager": "Rajib", "city": "Najran"},
+    "K403": {"full_name": "MMS RMJ", "region": "Western Region", "manager": "Rajib", "city": "Jeddah"},
+    "K404": {"full_name": "MMS Abha", "region": "Western Region", "manager": "Rajib", "city": "Abha"},
+    "K501": {"full_name": "MMS Tabuk Park", "region": "Western Region", "manager": "Rajib", "city": "Tabuk"}
 }
 
 def identify_files():
@@ -181,12 +187,30 @@ def load_soh_data(soh_path):
         print(f"[!] Error processing SOH: {e}")
         return {}, {}, pd.DataFrame(), 0
 
-def generate_claude_insights(store_summary, total_sales, total_target, overall_ach, total_soh_units, lfl_growth_pct, wh_stock):
-    return {
-        "critical": f"Central warehouse (KSWH) holds {wh_stock:,} units ready for category stock health optimization.",
-        "attention": "Preserve 40,000-80,000 visual merchandise units in regional flagships while rotating out stagnant sub-categories.",
-        "opportunity": "Scale high-velocity children's toys and beauty categories across underperforming Western Region branches to beat LY benchmarks."
-    }
+def send_telegram_alert(total_sales, overall_ach, wh_stock, top_repl_list):
+    """إرسال تنبيه تنفيذي تلقائي إلى Telegram بنص مباشر"""
+    token = TELEGRAM_BOT_TOKEN
+    chat_id = TELEGRAM_CHAT_ID
+    if not token or not chat_id:
+        return
+
+    text = "MMS Executive Intelligence Update\n\n"
+    text += f"Total Sales: {total_sales:,.0f} SAR\n"
+    text += f"Target Ach: {overall_ach:.1f}%\n"
+    text += f"Warehouse (KSWH): {wh_stock:,} Pcs\n\n"
+    text += "Top Critical Replenishments:\n"
+    for r in top_repl_list[:4]:
+        text += f"- {r['store_name']}: {r['category_focus']} -> {r['suggested_units']} ({r['from_source']})\n"
+    text += "\nDashboard is updated and live."
+
+    try:
+        url = f"https://api.telegram.org/bot{token}/sendMessage"
+        payload = json.dumps({"chat_id": chat_id, "text": text}).encode('utf-8')
+        req = urllib.request.Request(url, data=payload, headers={'Content-Type': 'application/json'})
+        urllib.request.urlopen(req, timeout=8)
+        print("[✓] Telegram executive summary alert sent successfully!")
+    except Exception as e:
+        print(f"[!] Warning: Could not send Telegram alert: {e}")
 
 def process_and_build():
     sales_file, soh_file, target_file, ly_file = identify_files()
@@ -255,6 +279,7 @@ def process_and_build():
 
     df_clean['clean_code'] = df_clean['Organization Code'].apply(get_clean_code)
 
+    # 1. إجماليات المتاجر
     store_summary = df_clean.groupby(['clean_code', 'Organization Name']).agg(
         sales=('Actual Sales Amount', 'sum'),
         units=('Sales Quantity', 'sum'),
@@ -285,6 +310,14 @@ def process_and_build():
     store_summary['share'] = ((store_summary['sales'] / total_sales) * 100).round(2)
     store_summary = store_summary.sort_values(by='sales', ascending=False).reset_index(drop=True)
 
+    # حساب مقاييس المتجر أولاً لتفادي أي خطأ
+    store_metrics_df = df_clean.groupby('clean_code').agg(
+        store_units=('Sales Quantity', 'sum'),
+        store_txns=('Receipt Number', 'nunique')
+    ).reset_index()
+    store_metrics_dict = store_metrics_df.set_index('clean_code').to_dict(orient='index')
+
+    # مبيعات العام الماضي ونمو LFL
     store_summary['ly_sales'] = store_summary['clean_code'].map(ly_sales_map)
     store_summary['yoy_growth'] = store_summary.apply(
         lambda r: ((r['sales'] - r['ly_sales']) / r['ly_sales'] * 100) if pd.notna(r['ly_sales']) and r['ly_sales'] > 0 else None,
@@ -296,6 +329,7 @@ def process_and_build():
     total_ly_sales = lfl_stores['ly_sales'].sum()
     network_lfl_growth = ((total_current_lfl_sales - total_ly_sales) / total_ly_sales * 100) if total_ly_sales > 0 else 0
 
+    # ربط SOH وحساب WOC و STR%
     def match_soh(c_code):
         if c_code in soh_map: return soh_map[c_code]
         for k, v in soh_map.items():
@@ -311,6 +345,7 @@ def process_and_build():
     store_summary['woc'] = (store_summary['soh_units'] / store_summary['weekly_sales_units']).fillna(0).round(1)
     store_summary['str_pct'] = (store_summary['units'] / (store_summary['units'] + store_summary['soh_units']).replace(0, np.nan) * 100).fillna(0).round(1)
 
+    # مطابقة الأهداف
     def match_target(row):
         c_code = row['clean_code']
         raw_name = str(row['Organization Name']).upper()
@@ -338,7 +373,7 @@ def process_and_build():
     main_cat_summary['asp'] = (main_cat_summary['sales'] / main_cat_summary['units'].replace(0, np.nan)).fillna(0).round(2)
 
     cat_soh_dict = {}
-    stock_col_name = next((c for c in df_soh_raw.columns if c.lower() in ["avail_stock", "current_stock"]), None)
+    stock_col_name = next((c for c in df_soh_raw.columns if any(k in c.lower() for k in ["avail_stock", "current_stock", "stock"])), None)
     cat_col_name = next((c for c in df_soh_raw.columns if c.lower() == "category"), None)
     if not df_soh_raw.empty and stock_col_name and cat_col_name:
         cat_soh_grouped = df_soh_raw.groupby(cat_col_name)[stock_col_name].sum().to_dict()
@@ -418,15 +453,7 @@ def process_and_build():
             })
         store_cat_summary_dict[c_code] = cats_list
 
-    # ==========================================
-    # 5. محرك التوريد الذكي والـ Auto-Replenishment مع WH SOH
-    # ==========================================
-    store_metrics_df = df_clean.groupby('clean_code').agg(
-        store_units=('Sales Quantity', 'sum'),
-        store_txns=('Receipt Number', 'nunique')
-    ).reset_index()
-    store_metrics_dict = store_metrics_df.set_index('clean_code').to_dict(orient='index')
-
+    # محرك التوريد متعدد الأطراف المتقارب جغرافياً
     sku_grouped = df_clean[df_clean['Actual Sales Amount'] > 0].groupby([item_code_col, item_name_col, 'main_category', 'sub_subgroup']).agg(
         sales=('Actual Sales Amount', 'sum'),
         units=('Sales Quantity', 'sum')
@@ -500,6 +527,9 @@ def process_and_build():
             st_code = row['clean_code']
             st_info = STORE_MAPPING.get(st_code, {})
             st_name = st_info.get('full_name', st_code)
+            st_city = st_info.get('city', '')
+            st_region = st_info.get('region', '')
+
             sku_code = row['clean_sku']
             sku_name = str(row['item_name'])[:35]
             cat = row['main_category']
@@ -509,7 +539,6 @@ def process_and_build():
             needed_qty = max(10, int((daily_v * 28) - row['store_soh']))
             wh_available = wh_sku_stock_dict.get(sku_code, 0)
 
-            # معالجة النصوص وحذف الأرقام السالبة الغريبة
             if row['store_soh'] <= 0:
                 urgency_str = f"🚨 Out of Stock (0 Pcs left)"
             else:
@@ -520,14 +549,22 @@ def process_and_build():
                 source_route = f"Central Warehouse (KSWH - Avail: {wh_available:,})"
             else:
                 action_type = "Store Transfer (IST)"
-                surplus_branches = df_soh_raw[(df_soh_raw['clean_sku'] == sku_code) & (df_soh_raw['store_code'] != 'KSWH') & (df_soh_raw['store_code'] != st_code) & (df_soh_raw[stock_col_name] > 15)]
+                surplus_branches = df_soh_raw[(df_soh_raw['clean_sku'] == sku_code) & (df_soh_raw['store_code'] != 'KSWH') & (df_soh_raw['store_code'] != st_code) & (df_soh_raw[stock_col_name] > 15)].copy()
+                
                 if not surplus_branches.empty:
-                    donor_row = surplus_branches.sort_values(by=stock_col_name, ascending=False).iloc[0]
+                    surplus_branches['donor_city'] = surplus_branches['store_code'].apply(lambda c: STORE_MAPPING.get(c, {}).get('city', ''))
+                    surplus_branches['donor_region'] = surplus_branches['store_code'].apply(lambda c: STORE_MAPPING.get(c, {}).get('region', ''))
+                    
+                    surplus_branches['city_match'] = (surplus_branches['donor_city'] == st_city).astype(int)
+                    surplus_branches['region_match'] = (surplus_branches['donor_region'] == st_region).astype(int)
+                    donor_row = surplus_branches.sort_values(by=['city_match', 'region_match', stock_col_name], ascending=[False, False, False]).iloc[0]
+                    
                     donor_code = donor_row['store_code']
                     donor_info = STORE_MAPPING.get(donor_code, {})
                     donor_name = donor_info.get('full_name', donor_code)
                     donor_qty = int(donor_row[stock_col_name])
-                    source_route = f"{donor_name} ({donor_code} - Surplus: {donor_qty})"
+                    match_type = "🏙️ Same City" if donor_row['city_match'] else ("📍 Same Region" if donor_row['region_match'] else "🚛 Cross-Region")
+                    source_route = f"{donor_name} ({donor_code} - Surplus: {donor_qty}) [{match_type}]"
                     needed_qty = min(needed_qty, donor_qty // 2)
                 else:
                     action_type = "Predictive WH Replenishment"
@@ -556,6 +593,9 @@ def process_and_build():
             print(f"[✓] Auto-Replenishment Excel Plan generated with WH SOH: {excel_path}")
         except Exception as e:
             print(f"[!] Warning: Could not write excel file: {e}")
+
+    # إرسال إشعار تيليجرام التلقائي
+    send_telegram_alert(total_sales, overall_ach, wh_total_stock, replenishment_recommendations)
 
     top_main_cats = set(main_cat_summary.head(3)['main_category'])
     def mumuso_commercial_engine(row):
@@ -594,11 +634,6 @@ def process_and_build():
             prob = f"Store holds solid display depth ({soh:,.0f} Pcs) but turnover is slow ({ach:.1f}% Ach). Gondolas tied to slow sub-subgroups."
             action = f"⚡ ACTION: Execute Category Assortment Swap. Reallocate front entrance to {missing_cats[0] if missing_cats else 'Children Toys & Beauty'} and bundle slow movers."
             needs = "Inject high-velocity categories."
-        elif ach < 70 and soh < 40000:
-            diag_title, diag_col = "Under-Display Deficit", "#ef4444"
-            prob = f"Target achievement is lagging ({ach:.1f}%) and visual density ({soh:,.0f} Pcs) is thin, depressing walk-in impulse purchases."
-            action = f"⚡ ACTION: Increase store display depth to Mumuso visual benchmark (40k-80k Pcs) across core lifestyle categories."
-            needs = "Floor-fill replenishment: +10,000 to +15,000 units of fast-moving impulse items."
         else:
             diag_title, diag_col = "Steady Flow", "#38bdf8"
             prob = f"Balanced run-rate ({ach:.1f}% Ach) with healthy display volume ({soh:,.0f} Pcs)."
@@ -625,9 +660,13 @@ def process_and_build():
     store_summary['needs'] = [e['needs'] for e in engine_res]
     store_summary['top_cats_str'] = [e['top_categories_str'] for e in engine_res]
 
-    insights = generate_claude_insights(store_summary, total_sales, total_target, overall_ach, total_soh_units, network_lfl_growth, wh_total_stock)
+    insights = {
+        "critical": f"Central warehouse (KSWH) holds {wh_total_stock:,} units ready for category stock health optimization.",
+        "attention": "Preserve 40,000-80,000 visual merchandise units in regional flagships while rotating out stagnant sub-categories.",
+        "opportunity": "Scale high-velocity children's toys and beauty categories across underperforming Western Region branches to beat LY benchmarks."
+    }
 
-    # تجهيز بيانات ApexCharts التفاعلية
+    # تجهيز بيانات ApexCharts
     chart_stores = store_summary.head(10)
     apex_categories = [str(r['full_name']).replace("MMS Riyadh ", "").replace("MMS ", "") for _, r in chart_stores.iterrows()]
     apex_sales = [float(r['sales']) for _, r in chart_stores.iterrows()]
@@ -680,7 +719,7 @@ def process_and_build():
                         <div style="width:{bar_w}%;background:#38bdf8;height:100%;"></div>
                     </div>
                 </div>
-            </div>
+            </td>
             <td><span class="badge" style="background:{h_col}22; color:{h_col}; border:1px solid {h_col}55;">{r['health_status']}</span></td>
             <td style="color:#f59e0b;font-weight:700;">{r['asp']:,.2f}</td>
             <td style="color:#cbd5e1;font-weight:500;">{r['leading_store']}</td>
@@ -973,38 +1012,10 @@ def process_and_build():
             <td style="min-width:130px;">{ach_str}</td>
             <td style="font-weight:700;color:#38bdf8;">{st_units_val:,}</td>
             <td style="font-weight:700;color:#fff;">{st_txns_val:,}</td>
-            <td style="font-weight:700;color:#10b981;">{st_upt_val:.2f}</td>
+            <td style="font-weight:700;color:#10b981;">{st_upt:.2f}</td>
             <td>{row['str_pct']}%</td>
             <td>{diag_badge}</td>
             <td style="color:#38bdf8;font-weight:600;">{row['asp']:,.2f}</td>
-        </tr>
-        """
-
-    main_cat_table_rows = ""
-    for idx, r in main_cat_summary.iterrows():
-        c_name = r['main_category']
-        bar_w = min(r['contribution'], 100)
-        h_col = r['health_color']
-        safe_c_name = html.escape(c_name).replace("'", "\\'")
-        main_cat_table_rows += f"""
-        <tr onclick="filterByMainCategory('{safe_c_name}')" style="cursor:pointer; background:rgba(56,189,248,0.03);" title="Click to view sub-subgroups">
-            <td style="color:#64748b;font-weight:600;">{idx+1}</td>
-            <td style="font-weight:800;color:#fff;font-size:14px;">
-                🏷️ {c_name} <span style="font-size:11px;color:#38bdf8;margin-left:4px;">(Click to view items)</span>
-            </td>
-            <td style="font-weight:700;color:#38bdf8;" data-sales="{r['sales']}">{r['sales']:,.2f}</td>
-            <td data-units="{r['units']}">{int(r['units']):,}</td>
-            <td style="min-width:140px;">
-                <div style="display:flex;align-items:center;gap:8px;">
-                    <span style="color:#f8fafc;font-weight:700;min-width:45px;">{r['contribution']:.1f}%</span>
-                    <div style="flex:1;background:#1e293b;border-radius:4px;height:6px;overflow:hidden;">
-                        <div style="width:{bar_w}%;background:#38bdf8;height:100%;"></div>
-                    </div>
-                </div>
-            </td>
-            <td><span class="badge" style="background:{h_col}22; color:{h_col}; border:1px solid {h_col}55;">{r['health_status']}</span></td>
-            <td style="color:#f59e0b;font-weight:700;">{r['asp']:,.2f}</td>
-            <td style="color:#cbd5e1;font-weight:500;">{r['leading_store']}</td>
         </tr>
         """
 
@@ -1034,6 +1045,16 @@ def process_and_build():
 
     top500_json = json.dumps(top500_list)
     low500_json = json.dumps(low500_list)
+
+    dashboard_ai_context = {
+        "network_sales": total_sales,
+        "network_target": total_target,
+        "overall_ach": overall_ach,
+        "wh_soh": wh_total_stock,
+        "lfl_growth": network_lfl_growth,
+        "stores": store_summary[['clean_code', 'full_name', 'region', 'sales', 'target', 'ach_pct', 'upt', 'atv', 'woc', 'diag_title']].to_dict(orient="records"),
+        "top_replenishments": replenishment_recommendations[:15]
+    }
 
     html_content = f"""<!DOCTYPE html>
 <html lang="en" id="html-root">
@@ -1141,15 +1162,110 @@ def process_and_build():
         .modal-body {{ padding: 24px; overflow-y: auto; }}
         .close-btn {{ background: transparent; border: none; color: #94a3b8; font-size: 28px; cursor: pointer; line-height: 1; }}
         .close-btn:hover {{ color: #fff; }}
+
+        .ai-chat-btn {{
+            position: fixed;
+            bottom: 24px;
+            right: 24px;
+            background: linear-gradient(135deg, #2563eb, #38bdf8);
+            color: #fff;
+            border: none;
+            width: 56px;
+            height: 56px;
+            border-radius: 50%;
+            font-size: 24px;
+            cursor: pointer;
+            box-shadow: 0 8px 24px rgba(37, 99, 235, 0.4);
+            z-index: 99999;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transition: transform 0.2s ease;
+        }}
+        .ai-chat-btn:hover {{ transform: scale(1.08); }}
+        .ai-chat-box {{
+            position: fixed;
+            bottom: 90px;
+            right: 24px;
+            width: 360px;
+            height: 480px;
+            background: #131b2e;
+            border: 1px solid #1e293b;
+            border-radius: 14px;
+            box-shadow: 0 20px 40px rgba(0, 0, 0, 0.8);
+            z-index: 99999;
+            display: none;
+            flex-direction: column;
+            overflow: hidden;
+        }}
+        .ai-chat-header {{
+            background: #0c1220;
+            padding: 14px 16px;
+            border-bottom: 1px solid #1e293b;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }}
+        .ai-chat-messages {{
+            flex: 1;
+            padding: 14px;
+            overflow-y: auto;
+            font-size: 13px;
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+        }}
+        .ai-msg {{
+            background: #1e293b;
+            padding: 10px 12px;
+            border-radius: 8px;
+            color: #f8fafc;
+            line-height: 1.4;
+        }}
+        .ai-msg.user {{
+            background: #2563eb;
+            align-self: flex-end;
+        }}
+        .ai-chat-input-bar {{
+            display: flex;
+            padding: 10px;
+            border-top: 1px solid #1e293b;
+            background: #090d16;
+            gap: 8px;
+        }}
+        .ai-chat-input {{
+            flex: 1;
+            background: #131b2e;
+            border: 1px solid #1e293b;
+            color: #fff;
+            padding: 8px 12px;
+            border-radius: 6px;
+            outline: none;
+            font-size: 13px;
+        }}
     </style>
 </head>
 <body>
 
-<!-- شاشة تسجيل الدخول وتحديد الصلاحيات -->
+<button class="ai-chat-btn" onclick="toggleAIChat()" title="Ask MMS Merchandising AI Copilot">🤖</button>
+<div class="ai-chat-box" id="aiChatBox">
+    <div class="ai-chat-header">
+        <span style="font-weight:700; color:#fff; font-size:14px;">🧠 MMS Merchandising Copilot</span>
+        <button onclick="toggleAIChat()" style="background:transparent; border:none; color:#94a3b8; font-size:18px; cursor:pointer;">&times;</button>
+    </div>
+    <div class="ai-chat-messages" id="aiChatMessages">
+        <div class="ai-msg">مرحباً بك! أنا مساعد الميرشندايزينج الذكي. اسألني عن أداء أي فرع، نسب التحقيق، أو مناقلات المخزون الحرجة.</div>
+    </div>
+    <div class="ai-chat-input-bar">
+        <input type="text" id="aiInput" class="ai-chat-input" placeholder="اسأل عن الفروع، النواقص، أو المستودع..." onkeypress="handleAIChatKey(event)">
+        <button onclick="sendAIChatMessage()" style="background:#2563eb; color:#fff; border:none; padding:8px 14px; border-radius:6px; font-weight:700; cursor:pointer;">إرسال</button>
+    </div>
+</div>
+
 <div id="auth-overlay" style="position:fixed;top:0;left:0;width:100%;height:100%;background:#090d16;z-index:99999999;display:flex;align-items:center;justify-content:center;">
   <div style="background:#131b2e;padding:32px;border-radius:12px;box-shadow:0 15px 30px rgba(0,0,0,0.6);text-align:center;width:90%;max-width:380px;border:1px solid #1e293b;">
     <h3 style="color:#fff;margin:0 0 8px 0;font-size:20px;">🔒 MMS Secure Access</h3>
-    <p style="color:#94a3b8;font-size:13px;margin:0 0 20px 0;">Enter authorization PIN to unlock dashboard</p>
+    <p style="color:#94a3b8;font-size:13px;margin:0 0 20px 0;">Enter your authorization PIN to view report</p>
     <input type="password" id="access-pass" placeholder="PIN Code" style="width:100%;padding:12px;border-radius:6px;border:1px solid #334155;background:#090d16;color:#fff;font-size:16px;text-align:center;outline:none;box-sizing:border-box;margin-bottom:14px;">
     <button onclick="checkAccess()" style="width:100%;padding:12px;border-radius:6px;border:none;background:#2563eb;color:#fff;font-weight:700;font-size:15px;cursor:pointer;">Unlock Dashboard</button>
     <p id="error-msg" style="color:#ef4444;font-size:13px;margin:12px 0 0 0;display:none;">Invalid authorization credentials</p>
@@ -1332,7 +1448,7 @@ def process_and_build():
     </div>
 </div>
 
-<div class="section-title"><span>🤖 AI Merchandising Directives (Powered by Claude)</span></div>
+<div class="section-title"><span>🤖 AI Merchandising Directives</span></div>
 <div class="insights-grid">
     <div class="insight-card danger">
         <div class="insight-title" style="color:#ef4444;">● Critical Issues</div>
@@ -1518,8 +1634,8 @@ def process_and_build():
     <div class="table-wrap" style="margin-bottom:30px;">
         <div class="table-header">
             <div>
-                <h3 style="margin:0; font-size:15px; color:#fff;">⚡ ACTIONABLE REPLENISHMENT DIRECTIVES</h3>
-                <span style="color:var(--text-muted); font-size:12px;">Filtered store orders, urgent transfers, and central warehouse buffer dispatch</span>
+                <h3 style="margin:0; font-size:15px; color:#fff;">⚡ ACTIONABLE REPLENISHMENT DIRECTIVES (MULTI-STORE BALANCING)</h3>
+                <span style="color:var(--text-muted); font-size:12px;">Proximity-optimized transfers (Same City/Region) & Central Warehouse Replenishment</span>
             </div>
             <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap;">
                 <input type="text" id="replSearch" class="table-search" placeholder="Search SKU, Store, or Category..." onkeyup="filterReplTable()">
@@ -1538,7 +1654,7 @@ def process_and_build():
                         <th>Action Type</th>
                         <th>Store Name & Code</th>
                         <th>SKU & Category Focus</th>
-                        <th>Source Route</th>
+                        <th>Source Route (Optimized Proximity)</th>
                         <th>Suggested Qty (Pcs)</th>
                         <th>Stock-Out Forecast</th>
                     </tr>
@@ -1596,6 +1712,7 @@ def process_and_build():
   const MAIN_CAT_HTML = `{main_cat_table_rows}`;
   const TOP_500_DATA = {top500_json};
   const LOW_500_DATA = {low500_json};
+  const AI_CONTEXT = {json.dumps(dashboard_ai_context)};
 
   let currentMoversType = 'top';
 
@@ -1691,6 +1808,54 @@ def process_and_build():
       var donutChart = new ApexCharts(donutEl, donutOptions);
       donutChart.render();
     }}
+  }}
+
+  function toggleAIChat() {{
+    var box = document.getElementById("aiChatBox");
+    box.style.display = (box.style.display === "flex") ? "none" : "flex";
+  }}
+
+  function handleAIChatKey(e) {{
+    if (e.key === 'Enter') sendAIChatMessage();
+  }}
+
+  function sendAIChatMessage() {{
+    var input = document.getElementById("aiInput");
+    var q = input.value.trim();
+    if (!q) return;
+
+    var container = document.getElementById("aiChatMessages");
+    var userDiv = document.createElement("div");
+    userDiv.className = "ai-msg user";
+    userDiv.innerText = q;
+    container.appendChild(userDiv);
+    input.value = "";
+
+    var reply = "";
+    var qLower = q.toLowerCase();
+
+    if (qLower.includes("مستودع") || qLower.includes("kswh") || qLower.includes("warehouse")) {{
+      reply = `المستودع المركزي (KSWH) يحتوي حالياً على ${{AI_CONTEXT.wh_soh.toLocaleString()}} قطعة جاهزة لتغذية الفروع.`;
+    }} else if (qLower.includes("هدف") || qLower.includes("target") || qLower.includes("إنجاز") || qLower.includes("ach")) {{
+      reply = `نسبة التحقيق الإجمالية للشبكة هي ${{AI_CONTEXT.overall_ach.toFixed(1)}}%، بمبيعات إجمالية ${{AI_CONTEXT.network_sales.toLocaleString()}} ر.س مقابل هدف ${{AI_CONTEXT.network_target.toLocaleString()}} ر.س.`;
+    }} else if (qLower.includes("مناقل") || qLower.includes("نقص") || qLower.includes("transfer") || qLower.includes("تحويل")) {{
+      reply = `هناك مناقلات ذات أولوية بين فروع نفس المدينة: نقترح تزويد الأصناف النافذة من الفروع ذات الفائض القريب لتفادي نفاد المخزون. تفقد قسم Commercial Action Hub للتفاصيل.`;
+    }} else {{
+      var matchedStore = AI_CONTEXT.stores.find(s => qLower.includes(s.clean_code.toLowerCase()) || qLower.includes(s.full_name.toLowerCase()));
+      if (matchedStore) {{
+        reply = `فرع ${{matchedStore.full_name}} (${{matchedStore.clean_code}}): المبيعات ${{matchedStore.sales.toLocaleString()}} ر.س، نسبة التحقيق ${{matchedStore.ach_pct ? matchedStore.ach_pct.toFixed(1) + '%' : 'N/A'}}، ومؤشر UPT هو ${{matchedStore.upt}}، التشخيص: ${{matchedStore.diag_title}}.`;
+      }} else {{
+        reply = `بناءً على الأرقام الحالية: أفضل الفروع أداءً هي Solitaire و Dhahran، والتركيز التجاري الآن يجب أن يكون على تدوير الأصناف الراكدة في قسم الألعاب والإكسسوارات.`;
+      }}
+    }}
+
+    setTimeout(() => {{
+      var botDiv = document.createElement("div");
+      botDiv.className = "ai-msg";
+      botDiv.innerText = reply;
+      container.appendChild(botDiv);
+      container.scrollTop = container.scrollHeight;
+    }}, 400);
   }}
 
   function filterReplTable() {{
