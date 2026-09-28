@@ -31,30 +31,22 @@ STORE_MAPPING = {
 }
 
 def identify_files():
-    files = glob.glob(os.path.join(REPORTS_DIR, "*.xlsx")) + glob.glob("*.xlsx")
-    files = list(set([f for f in files if not os.path.basename(f).startswith("~$") and not os.path.basename(f).startswith("Summary_")]))
-    
-    sales_file = None
-    soh_file = None
-    target_file = None
-    ly_file = None
+    # البحث المباشر عن الملفات بالأسرار والأسماء الدقيقة التي حددتها
+    sales_file = "50100002-20260928.xlsx"
+    if not os.path.exists(sales_file):
+        sales_file = os.path.join(REPORTS_DIR, "50100002-20260928.xlsx")
 
-    for f in files:
-        fname = os.path.basename(f).lower()
-        if "target" in fname or "ty sep_target" in fname:
-            target_file = f
-        elif "soh" in fname:
-            soh_file = f
-        elif "ly sep" in fname or "ly" in fname:
-            ly_file = f
+    soh_file = "SOH.xlsx"
+    if not os.path.exists(soh_file):
+        soh_file = os.path.join(REPORTS_DIR, "SOH.xlsx")
 
-    # تحديد ملف المبيعات الحالي بدقة (الملف الذي يبدأ بـ 50100002)
-    sales_candidates = [f for f in files if f not in [target_file, soh_file, ly_file] and "replenishment" not in f.lower()]
-    if sales_candidates:
-        sales_file = max(sales_candidates, key=os.path.getctime)
+    target_file = "TY Sep_Target.xlsx"
+    if not os.path.exists(target_file):
+        target_file = os.path.join(REPORTS_DIR, "TY Sep_Target.xlsx")
 
-    if not sales_file:
-        raise FileNotFoundError("Current Sales report file not found in ./reports")
+    ly_file = "LY SEP.xlsx"
+    if not os.path.exists(ly_file):
+        ly_file = os.path.join(REPORTS_DIR, "LY SEP.xlsx")
 
     return sales_file, soh_file, target_file, ly_file
 
@@ -64,10 +56,8 @@ def load_ly_sales_data(ly_path):
     ly_totals = {}
     try:
         xl = pd.ExcelFile(ly_path)
-        sheet_to_use = xl.sheet_names[0]
-        df_ly = pd.read_excel(ly_path, sheet_name=sheet_to_use)
+        df_ly = pd.read_excel(ly_path, sheet_name=xl.sheet_names[0])
         
-        # البحث عن الأعمدة التي تحتوي على كود المتجر والمبيعات في ملف LY SEP
         for col in df_ly.columns:
             col_str = str(col).strip()
             if "(MMS)" in col_str.upper() and "(DZL)" not in col_str.upper():
@@ -78,13 +68,11 @@ def load_ly_sales_data(ly_path):
                     ly_totals[code] = round(float(tot_val), 2)
         
         if not ly_totals:
-            # طريقة بديلة إذا كانت البنية مختلفة قليلاً
-            for idx, r in df_ly.iterrows():
+            for _, r in df_ly.iterrows():
                 row_str = " ".join([str(v) for v in r.values])
                 m = re.search(r'\b(K1\d{2}|K2\d{2}|K3\d{2}|K4\d{2}|K5\d{2})\b', row_str, re.IGNORECASE)
                 if m:
                     c_code = m.group(1).upper()
-                    # استخراج أول رقم كبير كقيمة مبيعات
                     nums = [pd.to_numeric(v, errors='coerce') for v in r.values if pd.to_numeric(v, errors='coerce') is not np.nan and pd.to_numeric(v, errors='coerce') > 1000]
                     if nums:
                         ly_totals[c_code] = round(float(nums[0]), 2)
@@ -96,18 +84,20 @@ def load_ly_sales_data(ly_path):
 
 def load_september_targets(target_path):
     if not target_path or not os.path.exists(target_path):
-        for p in ["TY Sep_Target.xlsx", os.path.join(REPORTS_DIR, "TY Sep_Target.xlsx")]:
-            if os.path.exists(p):
-                target_path = p
-                break
-    if not target_path or not os.path.exists(target_path):
         return {}
 
     try:
         df_t = pd.read_excel(target_path)
         df_t.columns = [str(c).strip() for c in df_t.columns]
-        store_col = [c for c in df_t.columns if "profit" in c.lower() or "cost" in c.lower() or "store" in c.lower()][0]
-        sep_col = [c for c in df_t.columns if "sep" in c.lower()][0]
+        store_cols = [c for c in df_t.columns if any(k in c.lower() for k in ["profit", "cost", "store", "organization", "code"])]
+        sep_cols = [c for c in df_t.columns if "sep" in c.lower()]
+        
+        if not store_cols or not sep_cols:
+            return {}
+            
+        store_col = store_cols[0]
+        sep_col = sep_cols[0]
+        
         df_t = df_t[~df_t[store_col].astype(str).str.lower().str.contains("total")].copy()
         df_t[sep_col] = pd.to_numeric(df_t[sep_col].astype(str).str.replace(",", "").str.strip(), errors='coerce')
         df_t = df_t[df_t[sep_col].notna() & (df_t[sep_col] > 0)].copy()
@@ -133,21 +123,14 @@ def load_soh_data(soh_path):
         xl = pd.ExcelFile(soh_path)
         sheet_to_use = "Sheet1" if "Sheet1" in xl.sheet_names else xl.sheet_names[0]
         
-        df_soh = pd.read_excel(soh_path, sheet_name=sheet_to_use, skiprows=1)
-        df_soh.columns = [c.replace('\u200c', '').replace('\ufeff', '').strip() for c in df_soh.columns]
-        
-        if "avail_stock" not in [c.lower() for c in df_soh.columns] and "current_stock" not in [c.lower() for c in df_soh.columns]:
-            df_soh = pd.read_excel(soh_path, sheet_name=sheet_to_use)
-            df_soh.columns = [c.replace('\u200c', '').replace('\ufeff', '').strip() for c in df_soh.columns]
+        df_soh = pd.read_excel(soh_path, sheet_name=sheet_to_use)
+        df_soh.columns = [str(c).replace('\u200c', '').replace('\ufeff', '').strip() for c in df_soh.columns]
 
-        code_col = next((c for c in df_soh.columns if c.lower() in ["org code", "organization code", "org_code", "store code"]), None)
-        stock_col = next((c for c in df_soh.columns if c.lower() in ["avail_stock", "current_stock"]), None)
-        price_col = next((c for c in df_soh.columns if "retail_price" in c.lower() or "price" in c.lower()), None)
+        code_col = next((c for c in df_soh.columns if any(k in c.lower() for k in ["org code", "organization", "store code", "org_code"])), df_soh.columns[0])
+        stock_col = next((c for c in df_soh.columns if any(k in c.lower() for k in ["avail_stock", "current_stock", "stock"])), df_soh.columns[1])
+        price_col = next((c for c in df_soh.columns if "price" in c.lower() or "cost" in c.lower()), None)
         cat_col = next((c for c in df_soh.columns if c.lower() == "category"), None)
-        pg_col = next((c for c in df_soh.columns if c.lower() in ["product_group", "product group"]), None)
-
-        if not code_col or not stock_col:
-            return {}, {}, pd.DataFrame(), 0
+        pg_col = next((c for c in df_soh.columns if "product group" in c.lower() or "product_group" in c.lower()), None)
 
         df_soh = df_soh[df_soh[code_col].notna()].copy()
         df_soh[stock_col] = pd.to_numeric(df_soh[stock_col], errors='coerce').fillna(0)
@@ -180,7 +163,6 @@ def load_soh_data(soh_path):
             wh_total_stock = int(wh_df[stock_col].sum())
 
         stores_soh_df = df_soh[df_soh['clean_code'] != 'KSWH']
-
         grouped = stores_soh_df.groupby('clean_code').agg(
             soh_units=(stock_col, 'sum'),
             soh_val=('stock_val', 'sum')
@@ -200,38 +182,11 @@ def generate_claude_insights(store_summary, total_sales, total_target, overall_a
             "attention": "Preserve 40,000-80,000 visual merchandise units in regional flagships while rotating out stagnant sub-categories.",
             "opportunity": "Scale high-velocity children's toys and beauty categories across underperforming Western Region branches to beat LY benchmarks."
         }
-
-    top_stores = store_summary.head(3)[['full_name', 'sales', 'ach_pct', 'ly_sales', 'yoy_growth']].to_dict(orient="records")
-    top_stores_str = ", ".join([str(s) for s in top_stores])
-    prompt = f"""
-    You are a Senior Merchandising Director for Mumuso.
-    - Total Sales: {total_sales:,.0f} SAR | Target: {total_target:,.0f} SAR | Ach: {overall_ach:.1f}%
-    - Warehouse Stock (KSWH): {wh_stock:,} Pcs
-    - Like-For-Like (LFL) YoY Growth: {lfl_growth_pct:+.1f}%
-    - Top Stores: {top_stores_str}
-    Provide 3 punchy commercial directives (1 sentence each):
-    1. Critical Issues
-    2. Attention Required
-    3. Opportunities
-    Respond ONLY in valid JSON: {{"critical": "...", "attention": "...", "opportunity": "..."}}
-    """
-    try:
-        client = anthropic.Anthropic(api_key=api_key)
-        response = client.messages.create(
-            model="claude-sonnet-5",
-            max_tokens=300,
-            messages=[{"role": "user", "content": prompt}]
-        )
-        content = response.content[0].text.strip()
-        if "```" in content:
-            content = re.search(r'\{.*\}', content, re.DOTALL).group(0)
-        return json.loads(content)
-    except Exception:
-        return {
-            "critical": f"Central warehouse (KSWH) holds {wh_stock:,} units ready for category stock health optimization.",
-            "attention": "Ensure balanced 40k-80k display capacity without clogging gondolas with slow-moving sub-subgroups.",
-            "opportunity": "Drive cross-selling on high-margin accessory clusters to further expand positive YoY spread."
-        }
+    return {
+        "critical": f"Central warehouse holds {wh_stock:,} units ready for category stock health optimization.",
+        "attention": "Ensure balanced 40k-80k display capacity without clogging gondolas with slow-moving sub-subgroups.",
+        "opportunity": "Drive cross-selling on high-margin accessory clusters to further expand positive YoY spread."
+    }
 
 def build_svg_bar_chart(chart_stores):
     svg_w, svg_h = 900, 320
@@ -295,9 +250,11 @@ def process_and_build():
     soh_map, soh_hier_map, df_soh_raw, wh_total_stock = load_soh_data(soh_file)
     ly_sales_map = load_ly_sales_data(ly_file)
 
-    df = pd.read_excel(sales_file, skiprows=1)
+    xl_sales = pd.ExcelFile(sales_file)
+    sales_sheet = xl_sales.sheet_names[0]
+    df = pd.read_excel(sales_file, sheet_name=sales_sheet, skiprows=1)
     df_clean = df.iloc[:-1].copy()
-    df_clean.columns = [c.replace('\u200c', '').replace('\ufeff', '').strip() for c in df_clean.columns]
+    df_clean.columns = [str(c).replace('\u200c', '').replace('\ufeff', '').strip() for c in df_clean.columns]
 
     numeric_cols = [
         'Sales Quantity', 'Selling Price', 'Sales Revenue', 'Discount Amount',
@@ -307,10 +264,10 @@ def process_and_build():
         if col in df_clean.columns:
             df_clean[col] = pd.to_numeric(df_clean[col], errors='coerce').fillna(0)
 
-    item_code_col = next((c for c in df_clean.columns if c.lower() in ['product code', 'item code', 'barcode', 'sku code', 'product no']), None)
-    item_name_col = next((c for c in df_clean.columns if c.lower() in ['product name', 'item name', 'product_name']), None)
-    if not item_code_col: item_code_col = df_clean.columns[0]
-    if not item_name_col: item_name_col = item_code_col
+    item_code_col = next((c for c in df_clean.columns if c.lower() in ['product code', 'item code', 'barcode', 'sku code', 'product no']), df_clean.columns[0])
+    item_name_col = next((c for c in df_clean.columns if c.lower() in ['product name', 'item name', 'product_name']), item_code_col)
+    org_code_col = next((c for c in df_clean.columns if "organization code" in c.lower() or "org code" in c.lower() or "store code" in c.lower()), df_clean.columns[1])
+    org_name_col = next((c for c in df_clean.columns if "organization name" in c.lower() or "org name" in c.lower() or "store name" in c.lower()), org_code_col)
 
     raw_subsub_col = next((c for c in df_clean.columns if c.lower() in ['category name', 'product_category', 'category']), None)
     if not raw_subsub_col:
@@ -329,7 +286,7 @@ def process_and_build():
             return "Beauty & Cleaning"
         if any(x in sub_l for x in ['pen', 'notebook', 'tape', 'sticker', 'stationery', 'pencil', 'eraser']):
             return "Stationery"
-        if any(x in sub_l for x in ['cup', 'mat', 'storage', 'kitchen', 'umbrella', 'fragrance', 'hanger', 'mat']):
+        if any(x in sub_l for x in ['cup', 'mat', 'storage', 'kitchen', 'umbrella', 'fragrance', 'hanger']):
             return "Home & Daily Use"
         if any(x in sub_l for x in ['cable', 'headphone', 'fan', 'usb', 'charger', 'watch', 'phone']):
             return "3C Electronics"
@@ -349,14 +306,15 @@ def process_and_build():
         m = re.search(r'\b[A-Za-z0-9]{3,8}\b', str(c))
         return m.group(0).upper() if m else str(c).strip().upper()
 
-    df_clean['clean_code'] = df_clean['Organization Code'].apply(get_clean_code)
+    df_clean['clean_code'] = df_clean[org_code_col].apply(get_clean_code)
 
     # 1. إجماليات المتاجر
-    store_summary = df_clean.groupby(['clean_code', 'Organization Name']).agg(
+    store_summary = df_clean.groupby(['clean_code', org_name_col]).agg(
         sales=('Actual Sales Amount', 'sum'),
         units=('Sales Quantity', 'sum'),
         txns=('Receipt Number', 'nunique')
     ).reset_index()
+    store_summary.rename(columns={org_name_col: 'Organization Name'}, inplace=True)
 
     store_summary['full_name'] = store_summary.apply(
         lambda r: STORE_MAPPING.get(r['clean_code'], {}).get('full_name', str(r['Organization Name'])), axis=1
