@@ -5,7 +5,6 @@ import json
 import html
 import pandas as pd
 import numpy as np
-import anthropic
 
 REPORTS_DIR = "./reports"
 
@@ -183,96 +182,11 @@ def load_soh_data(soh_path):
         return {}, {}, pd.DataFrame(), 0
 
 def generate_claude_insights(store_summary, total_sales, total_target, overall_ach, total_soh_units, lfl_growth_pct, wh_stock):
-    api_key = os.getenv("ANTHROPIC_API_KEY")
-    if not api_key:
-        return {
-            "critical": f"Central warehouse holds {wh_stock:,} units; monitor category stock health ratios and UPT velocity.",
-            "attention": "Preserve 40,000-80,000 visual merchandise units in regional flagships while rotating out stagnant sub-categories.",
-            "opportunity": "Scale high-velocity children's toys and beauty categories across underperforming Western Region branches to beat LY benchmarks."
-        }
-
-    top_stores = store_summary.head(3)[['full_name', 'sales', 'ach_pct', 'ly_sales', 'yoy_growth']].to_dict(orient="records")
-    top_stores_str = ", ".join([str(s) for s in top_stores])
-    prompt = f"""
-    You are a Senior Merchandising Director for Mumuso.
-    - Total Sales: {total_sales:,.0f} SAR | Target: {total_target:,.0f} SAR | Ach: {overall_ach:.1f}%
-    - Warehouse Stock (KSWH): {wh_stock:,} Pcs
-    - Like-For-Like (LFL) YoY Growth: {lfl_growth_pct:+.1f}%
-    - Top Stores: {top_stores_str}
-    Provide 3 punchy commercial directives (1 sentence each):
-    1. Critical Issues
-    2. Attention Required
-    3. Opportunities
-    Respond ONLY in valid JSON: {{"critical": "...", "attention": "...", "opportunity": "..."}}
-    """
-    try:
-        client = anthropic.Anthropic(api_key=api_key)
-        response = client.messages.create(
-            model="claude-sonnet-5",
-            max_tokens=300,
-            messages=[{"role": "user", "content": prompt}]
-        )
-        content = response.content[0].text.strip()
-        if "```" in content:
-            content = re.search(r'\{.*\}', content, re.DOTALL).group(0)
-        return json.loads(content)
-    except Exception:
-        return {
-            "critical": f"Central warehouse (KSWH) holds {wh_stock:,} units ready for category stock health optimization.",
-            "attention": "Ensure balanced 40k-80k display capacity without clogging gondolas with slow-moving sub-subgroups.",
-            "opportunity": "Drive cross-selling on high-margin accessory clusters to further expand positive YoY spread."
-        }
-
-def build_svg_bar_chart(chart_stores):
-    svg_w, svg_h = 900, 320
-    pad_left, pad_right, pad_top, pad_bottom = 60, 20, 30, 60
-    plot_w = svg_w - pad_left - pad_right
-    plot_h = svg_h - pad_top - pad_bottom
-
-    max_val = max(chart_stores['sales'].max(), chart_stores['target'].fillna(0).max()) * 1.15
-    if max_val == 0: max_val = 1
-
-    n_stores = len(chart_stores)
-    slot_w = plot_w / max(n_stores, 1)
-    bar_w = min(slot_w * 0.35, 28)
-
-    grid_lines = ""
-    for i in range(5):
-        val = (max_val / 4) * i
-        y_pos = pad_top + plot_h - (i * (plot_h / 4))
-        grid_lines += f"""
-        <line x1="{pad_left}" y1="{y_pos}" x2="{svg_w - pad_right}" y2="{y_pos}" stroke="#1e293b" stroke-width="1" />
-        <text x="{pad_left - 10}" y="{y_pos + 4}" fill="#94a3b8" font-size="11" text-anchor="end">{int(val):,}</text>
-        """
-
-    bars_svg = ""
-    for idx, (_, r) in enumerate(chart_stores.iterrows()):
-        slot_center = pad_left + (idx + 0.5) * slot_w
-        s_val = r['sales']
-        t_val = r['target'] if pd.notna(r['target']) else 0
-
-        s_h = (s_val / max_val) * plot_h
-        t_h = (t_val / max_val) * plot_h
-
-        s_x = slot_center - bar_w - 2
-        s_y = pad_top + plot_h - s_h
-        t_x = slot_center + 2
-        t_y = pad_top + plot_h - t_h
-
-        name = str(r['full_name']).replace("MMS Riyadh ", "").replace("MMS ", "")
-        if len(name) > 12: name = name[:11] + ".."
-
-        bars_svg += f"""
-        <rect x="{s_x:.1f}" y="{s_y:.1f}" width="{bar_w:.1f}" height="{s_h:.1f}" rx="3" fill="#38bdf8">
-            <title>{r['full_name']} Sales: {s_val:,.2f} SAR</title>
-        </rect>
-        <rect x="{t_x:.1f}" y="{t_y:.1f}" width="{bar_w:.1f}" height="{t_h:.1f}" rx="3" fill="#334155">
-            <title>{r['full_name']} Target: {t_val:,.2f} SAR</title>
-        </rect>
-        <text x="{slot_center:.1f}" y="{svg_h - 25}" fill="#cbd5e1" font-size="10" font-weight="600" text-anchor="middle">{name}</text>
-        """
-
-    return f"""<svg viewBox="0 0 {svg_w} {svg_h}" style="width:100%; height:auto; display:block;">{grid_lines}{bars_svg}</svg>"""
+    return {
+        "critical": f"Central warehouse (KSWH) holds {wh_stock:,} units ready for category stock health optimization.",
+        "attention": "Preserve 40,000-80,000 visual merchandise units in regional flagships while rotating out stagnant sub-categories.",
+        "opportunity": "Scale high-velocity children's toys and beauty categories across underperforming Western Region branches to beat LY benchmarks."
+    }
 
 def process_and_build():
     sales_file, soh_file, target_file, ly_file = identify_files()
@@ -341,7 +255,6 @@ def process_and_build():
 
     df_clean['clean_code'] = df_clean['Organization Code'].apply(get_clean_code)
 
-    # 1. إجماليات المتاجر
     store_summary = df_clean.groupby(['clean_code', 'Organization Name']).agg(
         sales=('Actual Sales Amount', 'sum'),
         units=('Sales Quantity', 'sum'),
@@ -372,7 +285,6 @@ def process_and_build():
     store_summary['share'] = ((store_summary['sales'] / total_sales) * 100).round(2)
     store_summary = store_summary.sort_values(by='sales', ascending=False).reset_index(drop=True)
 
-    # مبيعات العام الماضي ونمو LFL
     store_summary['ly_sales'] = store_summary['clean_code'].map(ly_sales_map)
     store_summary['yoy_growth'] = store_summary.apply(
         lambda r: ((r['sales'] - r['ly_sales']) / r['ly_sales'] * 100) if pd.notna(r['ly_sales']) and r['ly_sales'] > 0 else None,
@@ -384,7 +296,6 @@ def process_and_build():
     total_ly_sales = lfl_stores['ly_sales'].sum()
     network_lfl_growth = ((total_current_lfl_sales - total_ly_sales) / total_ly_sales * 100) if total_ly_sales > 0 else 0
 
-    # ربط SOH وحساب WOC و STR%
     def match_soh(c_code):
         if c_code in soh_map: return soh_map[c_code]
         for k, v in soh_map.items():
@@ -400,7 +311,6 @@ def process_and_build():
     store_summary['woc'] = (store_summary['soh_units'] / store_summary['weekly_sales_units']).fillna(0).round(1)
     store_summary['str_pct'] = (store_summary['units'] / (store_summary['units'] + store_summary['soh_units']).replace(0, np.nan) * 100).fillna(0).round(1)
 
-    # مطابقة الأهداف
     def match_target(row):
         c_code = row['clean_code']
         raw_name = str(row['Organization Name']).upper()
@@ -420,7 +330,6 @@ def process_and_build():
     sales_with_target = valid_targets['sales'].sum()
     overall_ach = (sales_with_target / total_target * 100) if total_target > 0 else 0
 
-    # 2. الهيكل السلعي للمبيعات
     main_cat_summary = df_clean.groupby('main_category').agg(
         sales=('Actual Sales Amount', 'sum'),
         units=('Sales Quantity', 'sum')
@@ -510,7 +419,7 @@ def process_and_build():
         store_cat_summary_dict[c_code] = cats_list
 
     # ==========================================
-    # 5. محرك التوريد الذكي والـ Auto-Replenishment (مع WH SOH في ملف الإكسيل)
+    # 5. محرك التوريد الذكي والـ Auto-Replenishment مع WH SOH
     # ==========================================
     store_metrics_df = df_clean.groupby('clean_code').agg(
         store_units=('Sales Quantity', 'sum'),
@@ -531,8 +440,8 @@ def process_and_build():
         return s
 
     wh_sku_stock_dict = {}
-    item_soh_col = next((c for c in df_soh_raw.columns if c.lower() in ["product code", "item code", "barcode", "sku code"]), None)
-    code_col_name = next((c for c in df_soh_raw.columns if c.lower() in ["org code", "organization code", "org_code", "store code"]), None)
+    item_soh_col = next((c for c in df_soh_raw.columns if any(k in c.lower() for k in ["product code", "item code", "barcode", "sku code"])), None)
+    code_col_name = next((c for c in df_soh_raw.columns if any(k in c.lower() for k in ["org code", "organization code", "org_code", "store code"])), None)
 
     if not df_soh_raw.empty and stock_col_name and item_soh_col and code_col_name:
         df_soh_raw['clean_sku'] = df_soh_raw[item_soh_col].apply(clean_sku_code)
@@ -567,7 +476,6 @@ def process_and_build():
             "asp": float(r['asp']), "wh_soh": wh_soh_item, "stock_days": stock_days
         })
 
-    # بناء خطة التوريد الآلي المفصلة لكل صنف وفرع مع إضافة عمود WH SOH
     replenishment_recommendations = []
     excel_export_data = []
 
@@ -601,10 +509,15 @@ def process_and_build():
             needed_qty = max(10, int((daily_v * 28) - row['store_soh']))
             wh_available = wh_sku_stock_dict.get(sku_code, 0)
 
+            # معالجة النصوص وحذف الأرقام السالبة الغريبة
+            if row['store_soh'] <= 0:
+                urgency_str = f"🚨 Out of Stock (0 Pcs left)"
+            else:
+                urgency_str = f"⚠️ Stock-Out in {days_left}d (Vel: {daily_v:.1f}/d)"
+
             if wh_available >= needed_qty:
                 action_type = "Predictive WH Replenishment"
                 source_route = f"Central Warehouse (KSWH - Avail: {wh_available:,})"
-                urgency_str = f"⚠️ Stock-Out in {days_left} Days (Velocity: {daily_v:.1f}/d)"
             else:
                 action_type = "Store Transfer (IST)"
                 surplus_branches = df_soh_raw[(df_soh_raw['clean_sku'] == sku_code) & (df_soh_raw['store_code'] != 'KSWH') & (df_soh_raw['store_code'] != st_code) & (df_soh_raw[stock_col_name] > 15)]
@@ -615,12 +528,10 @@ def process_and_build():
                     donor_name = donor_info.get('full_name', donor_code)
                     donor_qty = int(donor_row[stock_col_name])
                     source_route = f"{donor_name} ({donor_code} - Surplus: {donor_qty})"
-                    urgency_str = f"🚨 Store Transfer (WH Empty, Stock-out in {days_left}d)"
                     needed_qty = min(needed_qty, donor_qty // 2)
                 else:
                     action_type = "Predictive WH Replenishment"
                     source_route = f"Central Warehouse (KSWH - Limited)"
-                    urgency_str = f"⚠️ Critical Stock-out in {days_left}d"
 
             replenishment_recommendations.append({
                 "type": action_type, "store_name": f"{st_name} ({st_code})",
@@ -629,19 +540,11 @@ def process_and_build():
                 "urgency": urgency_str
             })
 
-            # هنا تمت إضافة عمود WH SOH (KSWH) للإكسيل بدقة
             excel_export_data.append({
-                "Action Type": action_type,
-                "Store Code": st_code,
-                "Store Name": st_name,
-                "Main Category": cat,
-                "SKU Code": sku_code,
-                "Product Name": sku_name,
-                "Store SOH": row['store_soh'],
-                "WH SOH (KSWH)": wh_available,
-                "Daily Velocity": round(daily_v, 2),
-                "Est Days to Stock-out": days_left,
-                "Suggested QTY (Pcs)": needed_qty,
+                "Action Type": action_type, "Store Code": st_code, "Store Name": st_name,
+                "Main Category": cat, "SKU Code": sku_code, "Product Name": sku_name,
+                "Store SOH": row['store_soh'], "WH SOH (KSWH)": wh_available, "Daily Velocity": round(daily_v, 2),
+                "Est Days to Stock-out": days_left if row['store_soh'] > 0 else 0, "Suggested QTY (Pcs)": needed_qty,
                 "Source Route": source_route
             })
 
@@ -723,8 +626,15 @@ def process_and_build():
     store_summary['top_cats_str'] = [e['top_categories_str'] for e in engine_res]
 
     insights = generate_claude_insights(store_summary, total_sales, total_target, overall_ach, total_soh_units, network_lfl_growth, wh_total_stock)
-    chart_stores = store_summary.head(8)
-    chart_svg_markup = build_svg_bar_chart(chart_stores)
+
+    # تجهيز بيانات ApexCharts التفاعلية
+    chart_stores = store_summary.head(10)
+    apex_categories = [str(r['full_name']).replace("MMS Riyadh ", "").replace("MMS ", "") for _, r in chart_stores.iterrows()]
+    apex_sales = [float(r['sales']) for _, r in chart_stores.iterrows()]
+    apex_targets = [float(r['target']) if pd.notna(r['target']) else 0 for _, r in chart_stores.iterrows()]
+
+    apex_cat_names = [str(r['main_category']) for _, r in main_cat_summary.iterrows()]
+    apex_cat_shares = [float(r['contribution']) for _, r in main_cat_summary.iterrows()]
 
     colors = ['#38bdf8', '#818cf8', '#a855f7', '#ec4899', '#f59e0b', '#10b981', '#06b6d4', '#e11d48', '#84cc16']
     main_cat_cards_html = ""
@@ -770,7 +680,7 @@ def process_and_build():
                         <div style="width:{bar_w}%;background:#38bdf8;height:100%;"></div>
                     </div>
                 </div>
-            </td>
+            </div>
             <td><span class="badge" style="background:{h_col}22; color:{h_col}; border:1px solid {h_col}55;">{r['health_status']}</span></td>
             <td style="color:#f59e0b;font-weight:700;">{r['asp']:,.2f}</td>
             <td style="color:#cbd5e1;font-weight:500;">{r['leading_store']}</td>
@@ -1070,6 +980,34 @@ def process_and_build():
         </tr>
         """
 
+    main_cat_table_rows = ""
+    for idx, r in main_cat_summary.iterrows():
+        c_name = r['main_category']
+        bar_w = min(r['contribution'], 100)
+        h_col = r['health_color']
+        safe_c_name = html.escape(c_name).replace("'", "\\'")
+        main_cat_table_rows += f"""
+        <tr onclick="filterByMainCategory('{safe_c_name}')" style="cursor:pointer; background:rgba(56,189,248,0.03);" title="Click to view sub-subgroups">
+            <td style="color:#64748b;font-weight:600;">{idx+1}</td>
+            <td style="font-weight:800;color:#fff;font-size:14px;">
+                🏷️ {c_name} <span style="font-size:11px;color:#38bdf8;margin-left:4px;">(Click to view items)</span>
+            </td>
+            <td style="font-weight:700;color:#38bdf8;" data-sales="{r['sales']}">{r['sales']:,.2f}</td>
+            <td data-units="{r['units']}">{int(r['units']):,}</td>
+            <td style="min-width:140px;">
+                <div style="display:flex;align-items:center;gap:8px;">
+                    <span style="color:#f8fafc;font-weight:700;min-width:45px;">{r['contribution']:.1f}%</span>
+                    <div style="flex:1;background:#1e293b;border-radius:4px;height:6px;overflow:hidden;">
+                        <div style="width:{bar_w}%;background:#38bdf8;height:100%;"></div>
+                    </div>
+                </div>
+            </td>
+            <td><span class="badge" style="background:{h_col}22; color:{h_col}; border:1px solid {h_col}55;">{r['health_status']}</span></td>
+            <td style="color:#f59e0b;font-weight:700;">{r['asp']:,.2f}</td>
+            <td style="color:#cbd5e1;font-weight:500;">{r['leading_store']}</td>
+        </tr>
+        """
+
     repl_rows_html = ""
     for idx, rep in enumerate(replenishment_recommendations):
         badge_col = "#38bdf8" if "WH" in rep['type'] else "#ef4444"
@@ -1103,6 +1041,8 @@ def process_and_build():
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>MMS Executive Commercial & SOH Intelligence Dashboard</title>
+    <!-- ApexCharts Library -->
+    <script src="https://cdn.jsdelivr.net/npm/apexcharts"></script>
     <style>
         :root {{
             --bg: #090d16;
@@ -1209,7 +1149,7 @@ def process_and_build():
 <div id="auth-overlay" style="position:fixed;top:0;left:0;width:100%;height:100%;background:#090d16;z-index:99999999;display:flex;align-items:center;justify-content:center;">
   <div style="background:#131b2e;padding:32px;border-radius:12px;box-shadow:0 15px 30px rgba(0,0,0,0.6);text-align:center;width:90%;max-width:380px;border:1px solid #1e293b;">
     <h3 style="color:#fff;margin:0 0 8px 0;font-size:20px;">🔒 MMS Secure Access</h3>
-    <p style="color:#94a3b8;font-size:13px;margin:0 0 20px 0;">Enter your authorization PIN to view report</p>
+    <p style="color:#94a3b8;font-size:13px;margin:0 0 20px 0;">Enter authorization PIN to unlock dashboard</p>
     <input type="password" id="access-pass" placeholder="PIN Code" style="width:100%;padding:12px;border-radius:6px;border:1px solid #334155;background:#090d16;color:#fff;font-size:16px;text-align:center;outline:none;box-sizing:border-box;margin-bottom:14px;">
     <button onclick="checkAccess()" style="width:100%;padding:12px;border-radius:6px;border:none;background:#2563eb;color:#fff;font-weight:700;font-size:15px;cursor:pointer;">Unlock Dashboard</button>
     <p id="error-msg" style="color:#ef4444;font-size:13px;margin:12px 0 0 0;display:none;">Invalid authorization credentials</p>
@@ -1453,17 +1393,12 @@ def process_and_build():
         {decision_cards_html}
     </div>
 
+    <!-- حاوية المخطط التفاعلي الحديث ApexCharts -->
     <div class="chart-container">
         <div class="section-title">
-            <span>📊 Top Stores: Actual Sales vs Target</span>
-            <div style="font-size:12px; font-weight:500; display:flex; gap:16px;">
-                <span style="display:flex; align-items:center; gap:6px;"><span style="display:inline-block; width:12px; height:12px; background:#38bdf8; border-radius:2px;"></span> Actual Sales (SAR)</span>
-                <span style="display:flex; align-items:center; gap:6px;"><span style="display:inline-block; width:12px; height:12px; background:#334155; border-radius:2px;"></span> Target (SAR)</span>
-            </div>
+            <span>📊 Top Stores Performance vs Target (Interactive ApexCharts)</span>
         </div>
-        <div style="overflow-x:auto; width:100%;">
-            {chart_svg_markup}
-        </div>
+        <div id="apexStoreChart" style="min-height: 350px;"></div>
     </div>
 
     <div class="table-wrap">
@@ -1526,6 +1461,14 @@ def process_and_build():
         {main_cat_cards_html}
     </div>
 
+    <!-- مخطط الحصص السلعية الدائري التفاعلي ApexCharts Donut -->
+    <div class="chart-container" style="margin-bottom:24px;">
+        <div class="section-title">
+            <span>🍩 Category Revenue Contribution Share</span>
+        </div>
+        <div id="apexCategoryDonut" style="min-height: 330px;"></div>
+    </div>
+
     <div class="table-wrap">
         <div class="table-header">
             <div>
@@ -1571,21 +1514,36 @@ def process_and_build():
         <a href="./reports/Auto_Replenishment_Action_Plan.xlsx" download class="export-btn" style="text-decoration:none; display:inline-flex; align-items:center; gap:6px;">📥 Download Auto-Replenishment Excel Plan</a>
     </div>
 
+    <!-- جدول التوريد المدمج مع شريط بحث وفلترة ورأس ثابت ونافذة تمرير أنيقة لمنع تمدد الصفحة -->
     <div class="table-wrap" style="margin-bottom:30px;">
-        <div style="overflow-x:auto;">
-            <table>
-                <thead>
+        <div class="table-header">
+            <div>
+                <h3 style="margin:0; font-size:15px; color:#fff;">⚡ ACTIONABLE REPLENISHMENT DIRECTIVES</h3>
+                <span style="color:var(--text-muted); font-size:12px;">Filtered store orders, urgent transfers, and central warehouse buffer dispatch</span>
+            </div>
+            <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap;">
+                <input type="text" id="replSearch" class="table-search" placeholder="Search SKU, Store, or Category..." onkeyup="filterReplTable()">
+                <select id="replTypeFilter" class="table-select" onchange="filterReplTable()">
+                    <option value="ALL">All Actions</option>
+                    <option value="Predictive WH Replenishment">Central WH (KSWH)</option>
+                    <option value="Store Transfer (IST)">Store Transfers (IST)</option>
+                </select>
+            </div>
+        </div>
+        <div style="max-height: 480px; overflow-y: auto; overflow-x: auto;">
+            <table id="replTable">
+                <thead style="position: sticky; top: 0; z-index: 10;">
                     <tr>
                         <th>#</th>
                         <th>Action Type</th>
                         <th>Store Name & Code</th>
                         <th>SKU & Category Focus</th>
-                        <th>Source Route (WH / Overstock Branch)</th>
+                        <th>Source Route</th>
                         <th>Suggested Qty (Pcs)</th>
-                        <th>Stock-Out Forecast & Urgency</th>
+                        <th>Stock-Out Forecast</th>
                     </tr>
                 </thead>
-                <tbody>
+                <tbody id="replTableBody">
                     {repl_rows_html}
                 </tbody>
             </table>
@@ -1640,7 +1598,113 @@ def process_and_build():
   const LOW_500_DATA = {low500_json};
 
   let currentMoversType = 'top';
-  let currentLang = 'en';
+
+  document.addEventListener("DOMContentLoaded", function() {{
+    initApexCharts();
+  }});
+
+  function initApexCharts() {{
+    var storeOptions = {{
+      series: [
+        {{ name: 'Actual Sales (SAR)', data: {json.dumps(apex_sales)} }},
+        {{ name: 'Target (SAR)', data: {json.dumps(apex_targets)} }}
+      ],
+      chart: {{
+        type: 'bar',
+        height: 340,
+        toolbar: {{ show: false }},
+        background: 'transparent'
+      }},
+      theme: {{ mode: 'dark' }},
+      colors: ['#38bdf8', '#334155'],
+      plotOptions: {{
+        bar: {{
+          horizontal: false,
+          columnWidth: '45%',
+          borderRadius: 4
+        }}
+      }},
+      dataLabels: {{ enabled: false }},
+      stroke: {{ show: true, width: 2, colors: ['transparent'] }},
+      xaxis: {{
+        categories: {json.dumps(apex_categories)},
+        labels: {{ style: {{ colors: '#94a3b8', fontSize: '11px' }} }}
+      }},
+      yaxis: {{
+        labels: {{
+          formatter: function (val) {{ return Number(val).toLocaleString() + ' SAR'; }},
+          style: {{ colors: '#94a3b8', fontSize: '11px' }}
+        }}
+      }},
+      fill: {{ opacity: 1 }},
+      tooltip: {{
+        theme: 'dark',
+        y: {{
+          formatter: function (val) {{ return Number(val).toLocaleString() + ' SAR'; }}
+        }}
+      }},
+      grid: {{ borderColor: '#1e293b' }}
+    }};
+
+    var storeChartEl = document.querySelector("#apexStoreChart");
+    if (storeChartEl) {{
+      var storeChart = new ApexCharts(storeChartEl, storeOptions);
+      storeChart.render();
+    }}
+
+    var donutOptions = {{
+      series: {json.dumps(apex_cat_shares)},
+      labels: {json.dumps(apex_cat_names)},
+      chart: {{
+        type: 'donut',
+        height: 330,
+        background: 'transparent'
+      }},
+      theme: {{ mode: 'dark' }},
+      colors: ['#38bdf8', '#818cf8', '#a855f7', '#ec4899', '#f59e0b', '#10b981', '#06b6d4', '#e11d48', '#84cc16'],
+      plotOptions: {{
+        pie: {{
+          donut: {{
+            size: '65%',
+            labels: {{
+              show: true,
+              total: {{
+                show: true,
+                label: 'Mix Share',
+                formatter: function () {{ return '100%'; }}
+              }}
+            }}
+          }}
+        }}
+      }},
+      legend: {{ position: 'bottom', labels: {{ colors: '#cbd5e1' }} }},
+      tooltip: {{
+        theme: 'dark',
+        y: {{
+          formatter: function(val) {{ return val.toFixed(1) + '% Contribution'; }}
+        }}
+      }}
+    }};
+
+    var donutEl = document.querySelector("#apexCategoryDonut");
+    if (donutEl) {{
+      var donutChart = new ApexCharts(donutEl, donutOptions);
+      donutChart.render();
+    }}
+  }}
+
+  function filterReplTable() {{
+    var searchVal = document.getElementById("replSearch").value.toLowerCase();
+    var typeFilter = document.getElementById("replTypeFilter").value;
+    var rows = document.querySelectorAll("#replTableBody tr");
+
+    rows.forEach(function(row) {{
+      var text = row.innerText.toLowerCase();
+      var matchSearch = text.includes(searchVal);
+      var matchType = (typeFilter === "ALL") || text.includes(typeFilter.toLowerCase());
+      row.style.display = (matchSearch && matchType) ? "" : "none";
+    }});
+  }}
 
   function safeSetText(id, text) {{
     const el = document.getElementById(id);
