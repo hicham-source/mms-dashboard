@@ -1935,7 +1935,7 @@ def process_and_build():
     const regionsView = document.getElementById("view-regions");
     const businessView = document.getElementById("view-business");
     const actionView = document.getElementById("view-action");
-    const btnStores = document.getElementById("btn-stores");
+    colsBtnStores = document.getElementById("btn-stores");
     const btnRegions = document.getElementById("btn-regions");
     const btnBusiness = document.getElementById("btn-business");
     const btnAction = document.getElementById("btn-action");
@@ -1944,14 +1944,15 @@ def process_and_build():
     if (regionsView) regionsView.style.display = "none";
     if (businessView) businessView.style.display = "none";
     if (actionView) actionView.style.display = "none";
-    if (btnStores) btnStores.classList.remove("active");
+    const bStores = document.getElementById("btn-stores");
+    if (bStores) bStores.classList.remove("active");
     if (btnRegions) btnRegions.classList.remove("active");
     if (btnBusiness) btnBusiness.classList.remove("active");
     if (btnAction) btnAction.classList.remove("active");
 
     if (viewName === 'stores' && storesView) {{
         storesView.style.display = "block";
-        if (btnStores) btnStores.classList.add("active");
+        if (bStores) bStores.classList.add("active");
     }} else if (viewName === 'regions' && regionsView) {{
         regionsView.style.display = "block";
         if (btnRegions) btnRegions.classList.add("active");
