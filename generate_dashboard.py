@@ -32,7 +32,7 @@ STORE_MAPPING = {
 
 def identify_files():
     files = glob.glob(os.path.join(REPORTS_DIR, "*.xlsx")) + glob.glob("*.xlsx")
-    files = list(set([f for f in files if not os.path.basename(f).startswith("~$") and not os.path.basename(f).startswith("Summary_") and "Auto_Replenishment" not in f]))
+    files = list(set([f for f in files if not os.path.basename(f).startswith("~$") and not os.path.basename(f).startswith("Summary_")]))
     
     sales_file = None
     soh_file = None
@@ -41,27 +41,20 @@ def identify_files():
 
     for f in files:
         fname = os.path.basename(f).lower()
-        if "target" in fname:
+        if "target" in fname or "ty sep_target" in fname:
             target_file = f
-        elif "soh" in fname or "stock" in fname:
+        elif "soh" in fname:
             soh_file = f
-        elif "ly" in fname or "last_year" in fname or "sales_ly" in fname:
+        elif "ly sep" in fname:
             ly_file = f
 
-    # تحديد ملف المبيعات الحالي (الملف الذي يبدأ بأرقام أو يحتوي على تاريخ ولا يعتبر SOH أو Target أو LY)
-    sales_candidates = [f for f in files if f not in [target_file, soh_file, ly_file]]
+    # الملف الحالي هو الذي يبدأ بـ 50100002 أو أي ملف مبيعات آخر غير المذكورين أعلاه
+    sales_candidates = [f for f in files if f not in [target_file, soh_file, ly_file] and "replenishment" not in f.lower()]
     if sales_candidates:
-        # اختيار أحدث ملف مبيعات فعلي
         sales_file = max(sales_candidates, key=os.path.getctime)
 
-    # إذا لم يجد ملف LY بشكل صريح، يبحث عن ملف يحتوي على كلمة sales (وليس ملف المبيعات الحالي نفسه)
-    if not ly_file:
-        ly_candidates = [f for f in files if "sales" in os.path.basename(f).lower() and f != sales_file and f not in [target_file, soh_file]]
-        if ly_candidates:
-            ly_file = ly_candidates[0]
-
     if not sales_file:
-        raise FileNotFoundError("Sales report file not found in ./reports")
+        raise FileNotFoundError("Current Sales report file not found in ./reports")
 
     return sales_file, soh_file, target_file, ly_file
 
@@ -94,7 +87,7 @@ def load_ly_sales_data(ly_path):
 
 def load_september_targets(target_path):
     if not target_path or not os.path.exists(target_path):
-        for p in ["Sep_Target.xlsx", os.path.join(REPORTS_DIR, "Sep_Target.xlsx")]:
+        for p in ["TY Sep_Target.xlsx", os.path.join(REPORTS_DIR, "TY Sep_Target.xlsx")]:
             if os.path.exists(p):
                 target_path = p
                 break
@@ -646,9 +639,12 @@ def process_and_build():
 
     if excel_export_data:
         df_repl_export = pd.DataFrame(excel_export_data)
-        excel_path = os.path.join(REPORTS_DIR, "Auto_Replenishment_Action_Plan.xlsx")
-        df_repl_export.to_excel(excel_path, index=False)
-        print(f"[✓] Auto-Replenishment Excel Plan generated: {excel_path}")
+        excel_path = os.path.join(REPORTS_DIR, "MMS_Replenishment_Plan.xlsx")
+        try:
+            df_repl_export.to_excel(excel_path, index=False)
+            print(f"[✓] Auto-Replenishment Excel Plan generated: {excel_path}")
+        except Exception as e:
+            print(f"[!] Warning: Could not save replenishment excel (file might be open): {e}")
 
     top_main_cats = set(main_cat_summary.head(3)['main_category'])
     def mumuso_commercial_engine(row):
@@ -1592,7 +1588,7 @@ def process_and_build():
 <div id="view-action" style="display:none;">
     <div class="section-title" style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:10px;">
         <span>⚡ PREDICTIVE AUTO-REPLENISHMENT & STOCK-OUT FORECAST (KSWH & IST)</span>
-        <a href="./reports/Auto_Replenishment_Action_Plan.xlsx" download class="export-btn" style="text-decoration:none; display:inline-flex; align-items:center; gap:6px;">📥 Download Auto-Replenishment Excel Plan</a>
+        <a href="./reports/MMS_Replenishment_Plan.xlsx" download class="export-btn" style="text-decoration:none; display:inline-flex; align-items:center; gap:6px;">📥 Download Auto-Replenishment Excel Plan</a>
     </div>
 
     <div class="table-wrap" style="margin-bottom:30px;">
@@ -1952,14 +1948,13 @@ def process_and_build():
     }} else if (actionView) {{
         actionView.style.display = "block";
         if (btnAction) btnAction.classList.add("active");
-        renderMoversType();
+        renderMoversTable();
     }}
   }}
 
   function filterStores() {{
       const query = document.getElementById("storeSearch").value.toLowerCase();
       const rows = document.querySelectorAll("#storesTable tbody tr");
-      rows.targets_map = ...; // dummy
       rows.forEach(r => {{
           const text = r.innerText.toLowerCase();
           r.style.display = text.includes(query) ? "" : "none";
@@ -1972,7 +1967,7 @@ def process_and_build():
     """
 
     out_file = os.path.join(REPORTS_DIR, "MMS_Executive_KPI_Dashboard.html")
-    with open(out_file, "w", encoding="utf-8`") as f:
+    with open(out_file, "w", encoding="utf-8") as f:
         f.write(html_content)
 
     print(f"[✓] Dashboard generated successfully: {out_file}")
