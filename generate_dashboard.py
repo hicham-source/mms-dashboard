@@ -45,10 +45,10 @@ def identify_files():
             target_file = f
         elif "soh" in fname:
             soh_file = f
-        elif "ly sep" in fname:
+        elif "ly sep" in fname or "ly" in fname:
             ly_file = f
 
-    # الملف الحالي هو الذي يبدأ بـ 50100002 أو أي ملف مبيعات آخر غير المذكورين أعلاه
+    # تحديد ملف المبيعات الحالي بدقة (الملف الذي يبدأ بـ 50100002)
     sales_candidates = [f for f in files if f not in [target_file, soh_file, ly_file] and "replenishment" not in f.lower()]
     if sales_candidates:
         sales_file = max(sales_candidates, key=os.path.getctime)
@@ -63,23 +63,32 @@ def load_ly_sales_data(ly_path):
         return {}
     ly_totals = {}
     try:
-        df_ly = pd.read_excel(ly_path, sheet_name="Sales" if "Sales" in pd.ExcelFile(ly_path).sheet_names else 0)
-        sale_type_col = next((c for c in df_ly.columns if any(df_ly[c].astype(str).str.strip().str.upper() == 'G-SALE')), None)
-        if not sale_type_col:
-            sale_type_col = df_ly.columns[2]
-
-        df_gsale = df_ly[df_ly[sale_type_col].astype(str).str.strip().str.upper() == 'G-SALE'].copy()
-        if df_gsale.empty:
-            df_gsale = df_ly.copy()
-
+        xl = pd.ExcelFile(ly_path)
+        sheet_to_use = xl.sheet_names[0]
+        df_ly = pd.read_excel(ly_path, sheet_name=sheet_to_use)
+        
+        # البحث عن الأعمدة التي تحتوي على كود المتجر والمبيعات في ملف LY SEP
         for col in df_ly.columns:
             col_str = str(col).strip()
             if "(MMS)" in col_str.upper() and "(DZL)" not in col_str.upper():
                 m = re.search(r'^\d+', col_str)
                 if m:
                     code = f"K{m.group(0)}"
-                    tot_val = pd.to_numeric(df_gsale[col], errors='coerce').sum()
+                    tot_val = pd.to_numeric(df_ly[col], errors='coerce').sum()
                     ly_totals[code] = round(float(tot_val), 2)
+        
+        if not ly_totals:
+            # طريقة بديلة إذا كانت البنية مختلفة قليلاً
+            for idx, r in df_ly.iterrows():
+                row_str = " ".join([str(v) for v in r.values])
+                m = re.search(r'\b(K1\d{2}|K2\d{2}|K3\d{2}|K4\d{2}|K5\d{2})\b', row_str, re.IGNORECASE)
+                if m:
+                    c_code = m.group(1).upper()
+                    # استخراج أول رقم كبير كقيمة مبيعات
+                    nums = [pd.to_numeric(v, errors='coerce') for v in r.values if pd.to_numeric(v, errors='coerce') is not np.nan and pd.to_numeric(v, errors='coerce') > 1000]
+                    if nums:
+                        ly_totals[c_code] = round(float(nums[0]), 2)
+                        
         return ly_totals
     except Exception as e:
         print(f"[!] Error reading LY file: {e}")
@@ -97,7 +106,7 @@ def load_september_targets(target_path):
     try:
         df_t = pd.read_excel(target_path)
         df_t.columns = [str(c).strip() for c in df_t.columns]
-        store_col = [c for c in df_t.columns if "profit" in c.lower() or "cost" in c.lower()][0]
+        store_col = [c for c in df_t.columns if "profit" in c.lower() or "cost" in c.lower() or "store" in c.lower()][0]
         sep_col = [c for c in df_t.columns if "sep" in c.lower()][0]
         df_t = df_t[~df_t[store_col].astype(str).str.lower().str.contains("total")].copy()
         df_t[sep_col] = pd.to_numeric(df_t[sep_col].astype(str).str.replace(",", "").str.strip(), errors='coerce')
