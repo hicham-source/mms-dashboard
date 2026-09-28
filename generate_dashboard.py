@@ -391,7 +391,7 @@ def process_and_build():
     store_summary['share'] = ((store_summary['sales'] / total_sales) * 100).round(2)
     store_summary = store_summary.sort_values(by='sales', ascending=False).reset_index(drop=True)
 
-    # مبيعات العام الماضي ونمو LFL
+    # مبيعات العام الماضي ونمو LFL (تم تصحيح yoy_val هنا)
     store_summary['ly_sales'] = store_summary['clean_code'].map(ly_sales_map)
     store_summary['yoy_growth'] = store_summary.apply(
         lambda r: ((r['sales'] - r['ly_sales']) / r['ly_sales'] * 100) if pd.notna(r['ly_sales']) and r['ly_sales'] > 0 else None,
@@ -439,7 +439,7 @@ def process_and_build():
     sales_with_target = valid_targets['sales'].sum()
     overall_ach = (sales_with_target / total_target * 100) if total_target > 0 else 0
 
-    # 2. الهيكل السلعي للمبيعات مع حساب Stock Health Ratio لكل قسم
+    # 2. الهيكل السلعي للمبيعات
     main_cat_summary = df_clean.groupby('main_category').agg(
         sales=('Actual Sales Amount', 'sum'),
         units=('Sales Quantity', 'sum')
@@ -481,7 +481,6 @@ def process_and_build():
         top_store_per_main_cat[c_name] = f"{st_name} ({best['Actual Sales Amount']:,.0f} SAR)"
     main_cat_summary['leading_store'] = main_cat_summary['main_category'].map(top_store_per_main_cat).fillna("-")
 
-    # 3. الهيكل السلعي: المستوى الرابع
     subsub_summary = df_clean.groupby(['main_category', 'sub_subgroup']).agg(
         sales=('Actual Sales Amount', 'sum'),
         units=('Sales Quantity', 'sum')
@@ -491,7 +490,6 @@ def process_and_build():
 
     store_total_sales_map = store_summary.set_index('clean_code')['sales'].to_dict()
 
-    # 4. تفاصيل مساهمة الأقسام في كل متجر مع حساب Stock Health Ratio خاص بالمتجر
     store_cat_summary = df_clean.groupby(['clean_code', 'main_category']).agg(
         sales=('Actual Sales Amount', 'sum'),
         units=('Sales Quantity', 'sum')
@@ -531,8 +529,14 @@ def process_and_build():
         store_cat_summary_dict[c_code] = cats_list
 
     # ==========================================
-    # 5. استخراج Top 500 و Low 500
+    # 5. محرك التوريد الذكي والـ Auto-Replenishment (مع الكميات الدقيقة QTY)
     # ==========================================
+    store_metrics_df = df_clean.groupby('clean_code').agg(
+        store_units=('Sales Quantity', 'sum'),
+        store_txns=('Receipt Number', 'nunique')
+    ).reset_index()
+    store_metrics_dict = store_metrics_df.set_index('clean_code').to_dict(orient='index')
+
     sku_grouped = df_clean[df_clean['Actual Sales Amount'] > 0].groupby([item_code_col, item_name_col, 'main_category', 'sub_subgroup']).agg(
         sales=('Actual Sales Amount', 'sum'),
         units=('Sales Quantity', 'sum')
@@ -562,16 +566,10 @@ def process_and_build():
         daily_rate = r['units'] / 30.0
         stock_days = int(wh_soh_item / daily_rate) if daily_rate > 0 else 999
         top500_list.append({
-            "rank": idx + 1,
-            "code": sku_c,
-            "name": str(r[item_name_col])[:40],
-            "main_cat": r['main_category'],
-            "subsub": r['sub_subgroup'],
-            "units": int(r['units']),
-            "sales": round(float(r['sales']), 2),
-            "asp": float(r['asp']),
-            "wh_soh": wh_soh_item,
-            "stock_days": stock_days
+            "rank": idx + 1, "code": sku_c, "name": str(r[item_name_col])[:40],
+            "main_cat": r['main_category'], "subsub": r['sub_subgroup'],
+            "units": int(r['units']), "sales": round(float(r['sales']), 2),
+            "asp": float(r['asp']), "wh_soh": wh_soh_item, "stock_days": stock_days
         })
 
     low500_df = sku_grouped.tail(500).sort_values(by='units', ascending=True).reset_index(drop=True)
@@ -582,19 +580,16 @@ def process_and_build():
         daily_rate = r['units'] / 30.0
         stock_days = int(wh_soh_item / daily_rate) if daily_rate > 0 else 999
         low500_list.append({
-            "rank": idx + 1,
-            "code": sku_c,
-            "name": str(r[item_name_col])[:40],
-            "main_cat": r['main_category'],
-            "subsub": r['sub_subgroup'],
-            "units": int(r['units']),
-            "sales": round(float(r['sales']), 2),
-            "asp": float(r['asp']),
-            "wh_soh": wh_soh_item,
-            "stock_days": stock_days
+            "rank": idx + 1, "code": sku_c, "name": str(r[item_name_col])[:40],
+            "main_cat": r['main_category'], "subsub": r['sub_subgroup'],
+            "units": int(r['units']), "sales": round(float(r['sales']), 2),
+            "asp": float(r['asp']), "wh_soh": wh_soh_item, "stock_days": stock_days
         })
 
+    # بناء خطة التوريد الآلي المفصلة لكل صنف وفرع (Auto-Replenishment Plan)
     replenishment_recommendations = []
+    excel_export_data = []
+
     if not df_soh_raw.empty and stock_col_name and code_col_name and item_soh_col:
         store_sku_sales = df_clean.groupby(['clean_code', item_code_col, item_name_col, 'main_category'])['Sales Quantity'].sum().reset_index()
         store_sku_sales.rename(columns={'Sales Quantity': 'sept_units', item_code_col: 'item_code', item_name_col: 'item_name'}, inplace=True)
@@ -610,29 +605,28 @@ def process_and_build():
         merged_sku.rename(columns={stock_col_name: 'store_soh'}, inplace=True)
         merged_sku['daily_rate'] = merged_sku['sept_units'] / 30.0
         merged_sku['days_to_stockout'] = merged_sku['store_soh'] / merged_sku['daily_rate'].replace(0, np.nan)
-        critical_skus = merged_sku[(merged_sku['days_to_stockout'] < 10.0) & (merged_sku['sept_units'] >= 5)].sort_values(by='days_to_stockout', ascending=True)
+        critical_skus = merged_sku[(merged_sku['days_to_stockout'] < 10.0) & (merged_sku['sept_units'] >= 3)].sort_values(by='days_to_stockout', ascending=True)
 
-        for _, row in critical_skus.head(30).iterrows():
+        for _, row in critical_skus.iterrows():
             st_code = row['clean_code']
             st_info = STORE_MAPPING.get(st_code, {})
             st_name = st_info.get('full_name', st_code)
             sku_code = row['clean_sku']
-            sku_name = str(row['item_name'])[:28]
+            sku_name = str(row['item_name'])[:35]
             cat = row['main_category']
             days_left = int(row['days_to_stockout']) if pd.notna(row['days_to_stockout']) else 0
-            needed_qty = int(row['sept_units'] * 1.5)
+            
+            # حساب الكمية المقترحة بدقة (تغطية 28 يوم ناقص المخزون الحالي)
+            daily_v = row['daily_rate']
+            needed_qty = max(10, int((daily_v * 28) - row['store_soh']))
             wh_available = wh_sku_stock_dict.get(sku_code, 0)
 
             if wh_available >= needed_qty:
-                replenishment_recommendations.append({
-                    "type": "Predictive WH Replenishment",
-                    "store_name": f"{st_name} ({st_code})",
-                    "category_focus": f"{cat} | {sku_name} (SKU: {sku_code})",
-                    "from_source": f"Central Warehouse (KSWH - Avail: {wh_available:,})",
-                    "suggested_units": f"{needed_qty:,} Pcs",
-                    "urgency": f"⚠️ Stock-Out in {days_left} Days (Forecasted)"
-                })
+                action_type = "Predictive WH Replenishment"
+                source_route = f"Central Warehouse (KSWH - Avail: {wh_available:,})"
+                urgency_str = f"⚠️ Stock-Out in {days_left} Days (Velocity: {daily_v:.1f}/d)"
             else:
+                action_type = "Store Transfer (IST)"
                 surplus_branches = df_soh_raw[(df_soh_raw['clean_sku'] == sku_code) & (df_soh_raw['store_code'] != 'KSWH') & (df_soh_raw['store_code'] != st_code) & (df_soh_raw[stock_col_name] > 15)]
                 if not surplus_branches.empty:
                     donor_row = surplus_branches.sort_values(by=stock_col_name, ascending=False).iloc[0]
@@ -640,25 +634,35 @@ def process_and_build():
                     donor_info = STORE_MAPPING.get(donor_code, {})
                     donor_name = donor_info.get('full_name', donor_code)
                     donor_qty = int(donor_row[stock_col_name])
+                    source_route = f"{donor_name} ({donor_code} - Surplus: {donor_qty})"
+                    urgency_str = f"🚨 Store Transfer (WH Empty, Stock-out in {days_left}d)"
+                    needed_qty = min(needed_qty, donor_qty // 2)
+                else:
+                    action_type = "Predictive WH Replenishment"
+                    source_route = f"Central Warehouse (KSWH - Limited)"
+                    urgency_str = f"⚠️ Critical Stock-out in {days_left}d"
 
-                    replenishment_recommendations.append({
-                        "type": "Store Transfer (IST)",
-                        "store_name": f"{st_name} ({st_code})",
-                        "category_focus": f"{cat} | {sku_name} (SKU: {sku_code})",
-                        "from_source": f"{donor_name} ({donor_code} - Stock: {donor_qty})",
-                        "suggested_units": f"{min(needed_qty, donor_qty // 2):,} Pcs",
-                        "urgency": f"Store-to-Store (WH Empty, Stock-out in {days_left}d)"
-                    })
+            replenishment_recommendations.append({
+                "type": action_type, "store_name": f"{st_name} ({st_code})",
+                "category_focus": f"{cat} | {sku_name} (SKU: {sku_code})",
+                "from_source": source_route, "suggested_units": f"{needed_qty:,} Pcs",
+                "urgency": urgency_str
+            })
 
-    if not replenishment_recommendations:
-        replenishment_recommendations.append({
-            "type": "Predictive WH Replenishment",
-            "store_name": "MMS Riyadh Solitaire (K108)",
-            "category_focus": "Children's Goods & Beauty | High Velocity",
-            "from_source": "Central Warehouse (KSWH)",
-            "suggested_units": "1,500 Pcs",
-            "urgency": "⚠️ Stock-Out Forecasted in 5 Days"
-        })
+            excel_export_data.append({
+                "Action Type": action_type, "Store Code": st_code, "Store Name": st_name,
+                "Main Category": cat, "SKU Code": sku_code, "Product Name": sku_name,
+                "Store SOH": row['store_soh'], "Daily Velocity": round(daily_v, 2),
+                "Est Days to Stock-out": days_left, "Suggested QTY (Pcs)": needed_qty,
+                "Source Route": source_route
+            })
+
+    # حفظ ملف Excel الخاص بخطة التوريد تلقائياً في مجلد Reports ليكون جاهزاً لفريق الميرشندايزينج
+    if excel_export_data:
+        df_repl_export = pd.DataFrame(excel_export_data)
+        excel_path = os.path.join(REPORTS_DIR, "Auto_Replenishment_Action_Plan.xlsx")
+        df_repl_export.to_excel(excel_path, index=False)
+        print(f"[✓] Auto-Replenishment Excel Plan generated: {excel_path}")
 
     top_main_cats = set(main_cat_summary.head(3)['main_category'])
     def mumuso_commercial_engine(row):
@@ -666,7 +670,6 @@ def process_and_build():
         soh = row['soh_units']
         ach = row['ach_pct'] if pd.notna(row['ach_pct']) else 0
         woc = row['woc']
-
         st_items = store_cat_summary_dict.get(st_code, [])
         st_top_cats = list(dict.fromkeys([c['main_category'] for c in st_items[:5]]))
         missing_cats = [c for c in top_main_cats if c not in st_top_cats]
@@ -803,6 +806,8 @@ def process_and_build():
         reg_lfl = grp[grp['ly_sales'].notna()]
         reg_cur_lfl = reg_lfl['sales'].sum()
         reg_ly_tot = reg_lfl['ly_sales'].sum()
+        
+        # تم تصحيح yoy_val هنا لكي يعمل دون أي خطأ
         reg_yoy = ((reg_cur_lfl - reg_ly_tot) / reg_ly_tot * 100) if reg_ly_tot > 0 else None
 
         ach_col = "#10b981" if r_ach >= 100 else ("#f59e0b" if r_ach >= 80 else "#ef4444")
@@ -876,6 +881,11 @@ def process_and_build():
                 ly_str = '<span style="color:#64748b;">New Store</span>'
                 yoy_cell = '<span style="color:#64748b;">-</span>'
 
+            s_m = store_metrics_dict.get(r['clean_code'], {'store_units': r['units'], 'store_txns': r['txns']})
+            st_units = int(s_m['store_units'])
+            st_txns = int(s_m['store_txns'])
+            st_upt = (st_units / st_txns) if st_txns > 0 else 0
+
             reg_rows += f"""
             <tr onclick="openStoreDetails('{r['clean_code']}')" class="clickable-row">
                 <td style="color:#64748b;">{idx+1}</td>
@@ -886,8 +896,9 @@ def process_and_build():
                 <td>{yoy_cell}</td>
                 <td style="color:#94a3b8;">{t_str}</td>
                 <td style="min-width:120px;">{ach_cell}</td>
-                <td style="font-weight:700;color:#fff;">{int(r['soh_units']):,}</td>
-                <td><span class="badge" style="background:{r['woc_color']}22; color:{r['woc_color']};">{r['woc']} Wks</span></td>
+                <td style="font-weight:700;color:#38bdf8;">{st_units:,}</td>
+                <td style="font-weight:700;color:#fff;">{st_txns:,}</td>
+                <td style="font-weight:700;color:#10b981;">{st_upt:.2f}</td>
                 <td>{r['str_pct']}%</td>
                 <td style="color:#38bdf8;font-weight:600;">{r['asp']:,.2f}</td>
             </tr>
@@ -913,8 +924,9 @@ def process_and_build():
                             <th>YoY Growth</th>
                             <th>Target (SAR)</th>
                             <th>% Ach</th>
-                            <th>Floor SOH</th>
-                            <th>WOC</th>
+                            <th>QTY Sold</th>
+                            <th>Transactions</th>
+                            <th>UPT</th>
                             <th>STR%</th>
                             <th>ASP</th>
                         </tr>
@@ -928,8 +940,9 @@ def process_and_build():
                             <td>{yoy_badge}</td>
                             <td style="color:#94a3b8;">{r_target:,.0f}</td>
                             <td style="color:{ach_col};">{r_ach:.1f}%</td>
-                            <td style="color:#fff;">{r_soh:,.0f}</td>
-                            <td>-</td>
+                            <td style="color:#38bdf8;">{int(r_units):,}</td>
+                            <td style="color:#fff;">{int(r_txns):,}</td>
+                            <td style="color:#10b981;">{r_upt:.2f}</td>
                             <td>-</td>
                             <td style="color:#f59e0b;">{r_asp:,.2f}</td>
                         </tr>
@@ -1000,36 +1013,25 @@ def process_and_build():
             ly_str = f"{row['ly_sales']:,.2f}"
             yoy_val = row['yoy_growth']
             y_col = "#10b981" if yoy_val >= 0 else "#ef4444"
-            yoy_cell = f'<span style="color:{y_col}; font-weight:700;">{yoy_v:+.1f}%</span>'
+            yoy_cell = f'<span style="color:{y_col}; font-weight:700;">{yoy_val:+.1f}%</span>'
         else:
             ly_str = '<span style="color:#64748b;">New Store</span>'
             yoy_cell = '<span style="color:#64748b;">-</span>'
 
         diag_badge = f'<span class="badge" style="background:{row["diag_color"]}22; color:{row["diag_color"]}; border:1px solid {row["diag_color"]}66;">{row["diag_title"]}</span>'
-        woc_badge = f'<span class="badge" style="background:{row["woc_color"]}22; color:{row["woc_color"]}; border:1px solid {row["woc_color"]}66;">{row["woc_status"]}</span>'
 
         store_meta_map[st_code] = {
-            "name": st_name,
-            "region": row['region'],
-            "manager": row['manager'],
-            "sales": f"{row['sales']:,.2f} SAR",
-            "ly_sales": ly_str if "New" not in ly_str else "New Store (No LY)",
+            "name": st_name, "region": row['region'], "manager": row['manager'],
+            "sales": f"{row['sales']:,.2f} SAR", "ly_sales": ly_str,
             "yoy": f"{row['yoy_growth']:+.1f}%" if pd.notna(row['yoy_growth']) else "-",
             "target": f"{target_str} SAR" if target_str != "-" else "No Target",
             "ach": f"{row['ach_pct']:.1f}%" if pd.notna(row['ach_pct']) else "-",
-            "share": f"{row['share']:.2f}%",
-            "txns": f"{int(row['txns']):,}",
-            "atv": f"{row['atv']:,.2f} SAR",
-            "upt": f"{row['upt']:.2f}",
-            "asp": f"{row['asp']:,.2f} SAR",
-            "soh_units": f"{int(row['soh_units']):,} Pcs",
-            "woc": f"{row['woc']} Weeks",
-            "str": f"{row['str_pct']}%",
-            "capacity_badge": row['display_status'],
-            "diag_title": row['diag_title'],
-            "problem": row['problem'],
-            "action": row['action'],
-            "needs": row['needs'],
+            "share": f"{row['share']:.2f}%", "txns": f"{int(row['txns']):,}",
+            "atv": f"{row['atv']:,.2f} SAR", "upt": f"{row['upt']:.2f}",
+            "asp": f"{row['asp']:,.2f} SAR", "soh_units": f"{int(row['soh_units']):,} Pcs",
+            "woc": f"{row['woc']} Weeks", "str": f"{row['str_pct']}%",
+            "capacity_badge": row['display_status'], "diag_title": row['diag_title'],
+            "problem": row['problem'], "action": row['action'], "needs": row['needs'],
             "top_cats": row['top_cats_str']
         }
 
@@ -1055,6 +1057,11 @@ def process_and_build():
             </div>
             """
 
+        st_m = store_metrics_dict.get(st_code, {'store_units': row['units'], 'store_txns': row['txns']})
+        st_units_val = int(st_m['store_units'])
+        st_txns_val = int(st_m['store_txns'])
+        st_upt_val = (st_units_val / st_txns_val) if st_txns_val > 0 else 0
+
         store_table_rows += f"""
         <tr onclick="openStoreDetails('{st_code}')" class="clickable-row" data-region="{row['region']}" title="Click to view detailed store category mix & directives">
             <td style="color:#64748b;font-weight:600;">{idx+1}</td>
@@ -1066,11 +1073,11 @@ def process_and_build():
             <td>{yoy_cell}</td>
             <td style="color:#94a3b8;">{target_str}</td>
             <td style="min-width:130px;">{ach_str}</td>
-            <td style="font-weight:700;color:#fff;">{int(row['soh_units']):,}</td>
-            <td>{woc_badge}</td>
-            <td style="font-weight:700;color:#fff;">{row['str_pct']}%</td>
+            <td style="font-weight:700;color:#38bdf8;">{st_units_val:,}</td>
+            <td style="font-weight:700;color:#fff;">{st_txns_val:,}</td>
+            <td style="font-weight:700;color:#10b981;">{st_upt_val:.2f}</td>
+            <td>{row['str_pct']}%</td>
             <td>{diag_badge}</td>
-            <td>{row['atv']:,.2f}</td>
             <td style="color:#38bdf8;font-weight:600;">{row['asp']:,.2f}</td>
         </tr>
         """
@@ -1175,8 +1182,8 @@ def process_and_build():
         .kpi-grid {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 14px; margin-bottom: 24px; }}
         .kpi-card {{ background: var(--card); border: 1px solid var(--border); border-radius: 10px; padding: 16px; }}
         .kpi-title {{ font-size: 11px; color: var(--text-muted); font-weight: 600; text-transform: uppercase; margin-bottom: 6px; }}
-        .kpi-value {{ font-size: 20px; font-weight: 700; color: #fff; }}
-        .kpi-unit {{ font-size: 11px; color: var(--text-muted); font-weight: 400; }}
+        .kpi-value {{ font-size: 22px; font-weight: 700; color: #fff; }}
+        .kpi-unit {{ font-size: 12px; color: var(--text-muted); font-weight: 400; }}
 
         .chart-container {{ background: var(--card); border: 1px solid var(--border); border-radius: 10px; padding: 22px; margin-bottom: 24px; }}
 
@@ -1447,16 +1454,12 @@ def process_and_build():
         <div class="kpi-value">{total_sales:,.0f} <span class="kpi-unit">SAR</span></div>
     </div>
     <div class="kpi-card">
-        <div class="kpi-title">Total Qty Sold</div>
-        <div class="kpi-value" style="color:#38bdf8;">{total_units:,.0f} <span class="kpi-unit">Pcs</span></div>
+        <div class="kpi-title">LY Gross Sales (MMS)</div>
+        <div class="kpi-value" style="color:#38bdf8;">{total_ly_sales:,.0f} <span class="kpi-unit">SAR</span></div>
     </div>
     <div class="kpi-card">
-        <div class="kpi-title">Total Transactions</div>
-        <div class="kpi-value" style="color:#fff;">{total_txns:,.0f}</div>
-    </div>
-    <div class="kpi-card">
-        <div class="kpi-title">Network UPT</div>
-        <div class="kpi-value" style="color:#10b981;">{network_upt:.2f}</div>
+        <div class="kpi-title">Network LFL YoY Growth</div>
+        <div class="kpi-value" style="color:{net_yoy_col};">{network_lfl_growth:+.1f}%</div>
     </div>
     <div class="kpi-card">
         <div class="kpi-title">Total Target</div>
@@ -1465,6 +1468,10 @@ def process_and_build():
     <div class="kpi-card">
         <div class="kpi-title">Achievement (% Ach)</div>
         <div class="kpi-value" style="color: {'#10b981' if overall_ach >= 100 else '#f59e0b'};">{overall_ach:.1f}%</div>
+    </div>
+    <div class="kpi-card">
+        <div class="kpi-title">Network ATV</div>
+        <div class="kpi-value">SAR {network_atv:.2f}</div>
     </div>
     <div class="kpi-card">
         <div class="kpi-title">Network ASP</div>
@@ -1520,11 +1527,11 @@ def process_and_build():
                         <th>YoY Growth</th>
                         <th>Target (SAR)</th>
                         <th>% Ach</th>
-                        <th>Floor SOH</th>
-                        <th>WOC Cover</th>
+                        <th>QTY Sold</th>
+                        <th>Transactions</th>
+                        <th>UPT</th>
                         <th>STR%</th>
                         <th>Commercial Diagnostic</th>
-                        <th>ATV</th>
                         <th>ASP</th>
                     </tr>
                 </thead>
@@ -1597,11 +1604,11 @@ def process_and_build():
     </div>
 </div>
 
-<!-- 4. Commercial Action Hub -->
+<!-- 4. Commercial Action Hub (Auto-Replenishment & SKU-level Forecast) -->
 <div id="view-action" style="display:none;">
-    <div class="section-title">
-        <span>⚡ PREDICTIVE SKU-LEVEL REPLENISHMENT & STOCK-OUT FORECAST (KSWH & IST)</span>
-        <span style="font-size:12px; color:#38bdf8;">Forecasts exact stock-out dates based on sales velocity</span>
+    <div class="section-title" style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:10px;">
+        <span>⚡ PREDICTIVE AUTO-REPLENISHMENT & STOCK-OUT FORECAST (KSWH & IST)</span>
+        <a href="./reports/Auto_Replenishment_Action_Plan.xlsx" download class="export-btn" style="text-decoration:none; display:inline-flex; align-items:center; gap:6px;">📥 Download Auto-Replenishment Excel Plan</a>
     </div>
 
     <div class="table-wrap" style="margin-bottom:30px;">
@@ -1614,7 +1621,7 @@ def process_and_build():
                         <th>Store Name & Code</th>
                         <th>SKU & Category Focus</th>
                         <th>Source Route (WH / Overstock Branch)</th>
-                        <th>Suggested Qty</th>
+                        <th>Suggested Qty (Pcs)</th>
                         <th>Stock-Out Forecast & Urgency</th>
                     </tr>
                 </thead>
@@ -1935,7 +1942,7 @@ def process_and_build():
     const regionsView = document.getElementById("view-regions");
     const businessView = document.getElementById("view-business");
     const actionView = document.getElementById("view-action");
-    colsBtnStores = document.getElementById("btn-stores");
+    const btnStores = document.getElementById("btn-stores");
     const btnRegions = document.getElementById("btn-regions");
     const btnBusiness = document.getElementById("btn-business");
     const btnAction = document.getElementById("btn-action");
@@ -1944,15 +1951,14 @@ def process_and_build():
     if (regionsView) regionsView.style.display = "none";
     if (businessView) businessView.style.display = "none";
     if (actionView) actionView.style.display = "none";
-    const bStores = document.getElementById("btn-stores");
-    if (bStores) bStores.classList.remove("active");
+    if (btnStores) btnStores.classList.remove("active");
     if (btnRegions) btnRegions.classList.remove("active");
     if (btnBusiness) btnBusiness.classList.remove("active");
     if (btnAction) btnAction.classList.remove("active");
 
     if (viewName === 'stores' && storesView) {{
         storesView.style.display = "block";
-        if (bStores) bStores.classList.add("active");
+        if (btnStores) btnStores.classList.add("active");
     }} else if (viewName === 'regions' && regionsView) {{
         regionsView.style.display = "block";
         if (btnRegions) btnRegions.classList.add("active");
