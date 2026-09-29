@@ -18,7 +18,7 @@ STORE_MAPPING = {
     "K101": {"full_name": "MMS Riyadh The View Mall", "region": "Riyadh Central Region", "manager": "Sultan", "city": "Riyadh"},
     "K102": {"full_name": "MMS Riyadh Tala Mall", "region": "Riyadh Central Region", "manager": "Sultan", "city": "Riyadh"},
     "K108": {"full_name": "MMS Riyadh Solitaire", "region": "Riyadh Central Region", "manager": "Sultan", "city": "Riyadh"},
-    "K109": {"full_name": "MMS Riyadh Localizer", "region": "Riyadh Central Region", "manager": "Sultan", "city": "Riyadh"},
+    "K109": {"full_name": "MMS Riyadh Lastrada", "region": "Riyadh Central Region", "manager": "Sultan", "city": "Riyadh"},
     "K110": {"full_name": "MMS Riyadh U-Walk", "region": "Riyadh Central Region", "manager": "Sultan", "city": "Riyadh"},
     "K130": {"full_name": "MMS Riyadh Al-Rabwa", "region": "Riyadh Central Region", "manager": "Sultan", "city": "Riyadh"},
     "K301": {"full_name": "MMS Mall of Dhahran", "region": "Riyadh Central Region", "manager": "Sultan", "city": "Dhahran"},
@@ -26,7 +26,7 @@ STORE_MAPPING = {
     "K201": {"full_name": "MMS Jeddah Park", "region": "Western Region", "manager": "Rajib", "city": "Jeddah"},
     "K202": {"full_name": "MMS Jeddah Yasmin Mall", "region": "Western Region", "manager": "Rajib", "city": "Jeddah"},
     "K205": {"full_name": "MMS Jeddah U-Walk", "region": "Western Region", "manager": "Rajib", "city": "Jeddah"},
-    "K208": {"full_name": "MMS Jeddah Mall of Arabia", "region": "Western Region", "manager": "Rajib", "city": "Jeddah"},
+    "K208": {"full_name": "MMS Juri Mall", "region": "Western Region", "manager": "Rajib", "city": "Taif"},
     "K210": {"full_name": "MMS Makkah Salam Mall", "region": "Western Region", "manager": "Rajib", "city": "Makkah"},
     "K211": {"full_name": "MMS Madinah", "region": "Western Region", "manager": "Rajib", "city": "Madinah"},
     "K401": {"full_name": "MMS Najran Park", "region": "Western Region", "manager": "Rajib", "city": "Najran"},
@@ -88,7 +88,7 @@ def load_ly_sales_data(ly_path):
                     code = f"K{m.group(0)}"
                     tot_val = pd.to_numeric(df_gsale[col], errors='coerce').sum()
                     if pd.notna(tot_val) and tot_val > 0:
-                        ly_totals[code] = round(float(tot_val), 2)
+                        ly_totals[code] = round(float(tot_val))
         return ly_totals
     except Exception as e:
         print(f"[!] Error reading LY file: {e}")
@@ -188,14 +188,14 @@ def load_soh_data(soh_path):
         return {}, {}, pd.DataFrame(), 0
 
 def send_telegram_alert(total_sales, overall_ach, wh_stock, top_repl_list):
-    """إرسال تنبيه تنفيذي تلقائي إلى Telegram بنص مباشر"""
+    """إرسال تنبيه تنفيذي تلقائي إلى Telegram بنص مباشر ونظيف"""
     token = TELEGRAM_BOT_TOKEN
     chat_id = TELEGRAM_CHAT_ID
     if not token or not chat_id:
         return
 
     text = "MMS Executive Intelligence Update\n\n"
-    text += f"Total Sales: {total_sales:,.0f} SAR\n"
+    text += f"Total Sales: {int(total_sales):,} SAR\n"
     text += f"Target Ach: {overall_ach:.1f}%\n"
     text += f"Warehouse (KSWH): {wh_stock:,} Pcs\n\n"
     text += "Top Critical Replenishments:\n"
@@ -296,21 +296,22 @@ def process_and_build():
         lambda r: STORE_MAPPING.get(r['clean_code'], {}).get('manager', 'Sultan' if r['region'] == 'Riyadh Central Region' else 'Rajib'), axis=1
     )
 
-    store_summary['atv'] = (store_summary['sales'] / store_summary['txns'].replace(0, np.nan)).fillna(0).round(2)
+    # تقريب القيم إلى أرقام صحيحة (Rounded integers)
+    store_summary['atv'] = (store_summary['sales'] / store_summary['txns'].replace(0, np.nan)).fillna(0).round().astype(int)
     store_summary['upt'] = (store_summary['units'] / store_summary['txns'].replace(0, np.nan)).fillna(0).round(2)
-    store_summary['asp'] = (store_summary['sales'] / store_summary['units'].replace(0, np.nan)).fillna(0).round(2)
+    store_summary['asp'] = (store_summary['sales'] / store_summary['units'].replace(0, np.nan)).fillna(0).round().astype(int)
 
-    total_sales = store_summary['sales'].sum()
+    total_sales = round(store_summary['sales'].sum())
     total_txns = store_summary['txns'].sum()
     total_units = store_summary['units'].sum()
-    network_atv = (total_sales / total_txns) if total_txns > 0 else 0
+    network_atv = round(total_sales / total_txns) if total_txns > 0 else 0
     network_upt = (total_units / total_txns) if total_txns > 0 else 0
-    network_asp = (total_sales / total_units) if total_units > 0 else 0
+    network_asp = round(total_sales / total_units) if total_units > 0 else 0
 
-    store_summary['share'] = ((store_summary['sales'] / total_sales) * 100).round(2)
+    store_summary['share'] = ((store_summary['sales'] / total_sales) * 100).round(1)
     store_summary = store_summary.sort_values(by='sales', ascending=False).reset_index(drop=True)
 
-    # حساب مقاييس المتجر أولاً لتفادي أي خطأ
+    # حساب مقاييس المتجر
     store_metrics_df = df_clean.groupby('clean_code').agg(
         store_units=('Sales Quantity', 'sum'),
         store_txns=('Receipt Number', 'nunique')
@@ -326,7 +327,7 @@ def process_and_build():
 
     lfl_stores = store_summary[store_summary['ly_sales'].notna()].copy()
     total_current_lfl_sales = lfl_stores['sales'].sum()
-    total_ly_sales = lfl_stores['ly_sales'].sum()
+    total_ly_sales = round(lfl_stores['ly_sales'].sum())
     network_lfl_growth = ((total_current_lfl_sales - total_ly_sales) / total_ly_sales * 100) if total_ly_sales > 0 else 0
 
     # ربط SOH وحساب WOC و STR%
@@ -361,7 +362,7 @@ def process_and_build():
     )
 
     valid_targets = store_summary[store_summary['target'].notna()]
-    total_target = valid_targets['target'].sum()
+    total_target = round(valid_targets['target'].sum())
     sales_with_target = valid_targets['sales'].sum()
     overall_ach = (sales_with_target / total_target * 100) if total_target > 0 else 0
 
@@ -369,8 +370,8 @@ def process_and_build():
         sales=('Actual Sales Amount', 'sum'),
         units=('Sales Quantity', 'sum')
     ).reset_index().sort_values(by='sales', ascending=False).reset_index(drop=True)
-    main_cat_summary['contribution'] = ((main_cat_summary['sales'] / total_sales) * 100).round(2)
-    main_cat_summary['asp'] = (main_cat_summary['sales'] / main_cat_summary['units'].replace(0, np.nan)).fillna(0).round(2)
+    main_cat_summary['contribution'] = ((main_cat_summary['sales'] / total_sales) * 100).round(1)
+    main_cat_summary['asp'] = (main_cat_summary['sales'] / main_cat_summary['units'].replace(0, np.nan)).fillna(0).round().astype(int)
 
     cat_soh_dict = {}
     stock_col_name = next((c for c in df_soh_raw.columns if any(k in c.lower() for k in ["avail_stock", "current_stock", "stock"])), None)
@@ -403,15 +404,15 @@ def process_and_build():
         best = grp.sort_values(by='Actual Sales Amount', ascending=False).iloc[0]
         c_code = best['clean_code']
         st_name = STORE_MAPPING.get(c_code, {}).get('full_name', best['clean_code'])
-        top_store_per_main_cat[c_name] = f"{st_name} ({best['Actual Sales Amount']:,.0f} SAR)"
+        top_store_per_main_cat[c_name] = f"{st_name} ({round(best['Actual Sales Amount']):,} SAR)"
     main_cat_summary['leading_store'] = main_cat_summary['main_category'].map(top_store_per_main_cat).fillna("-")
 
     subsub_summary = df_clean.groupby(['main_category', 'sub_subgroup']).agg(
         sales=('Actual Sales Amount', 'sum'),
         units=('Sales Quantity', 'sum')
     ).reset_index().sort_values(by='sales', ascending=False).reset_index(drop=True)
-    subsub_summary['contribution'] = ((subsub_summary['sales'] / total_sales) * 100).round(2)
-    subsub_summary['asp'] = (subsub_summary['sales'] / subsub_summary['units'].replace(0, np.nan)).fillna(0).round(2)
+    subsub_summary['contribution'] = ((subsub_summary['sales'] / total_sales) * 100).round(1)
+    subsub_summary['asp'] = (subsub_summary['sales'] / subsub_summary['units'].replace(0, np.nan)).fillna(0).round().astype(int)
 
     store_total_sales_map = store_summary.set_index('clean_code')['sales'].to_dict()
 
@@ -426,10 +427,10 @@ def process_and_build():
         st_total = store_total_sales_map.get(c_code, grp['sales'].sum())
         cats_list = []
         for _, r in grp.sort_values(by='sales', ascending=False).iterrows():
-            c_sales = r['sales']
-            c_units = r['units']
+            c_sales = round(r['sales'])
+            c_units = int(r['units'])
             store_mix = (c_sales / st_total * 100) if st_total > 0 else 0
-            asp_item = (c_sales / c_units) if c_units > 0 else 0
+            asp_item = round(c_sales / c_units) if c_units > 0 else 0
             
             store_cat_woc = round(np.random.uniform(4.0, 10.0), 1)
             if store_cat_woc < 4.0:
@@ -444,21 +445,21 @@ def process_and_build():
 
             cats_list.append({
                 "main_category": r['main_category'],
-                "sales": f"{c_sales:,.2f}",
-                "units": f"{int(c_units):,}",
+                "sales": f"{c_sales:,}",
+                "units": f"{c_units:,}",
                 "store_mix_pct": f"{store_mix:.1f}%",
-                "asp": f"{asp_item:,.2f}",
+                "asp": f"{asp_item:,}",
                 "stock_health": health_str,
                 "health_color": h_col
             })
         store_cat_summary_dict[c_code] = cats_list
 
-    # محرك التوريد متعدد الأطراف المتقارب جغرافياً
+    # محرك التوريد والمناقلات الذكي
     sku_grouped = df_clean[df_clean['Actual Sales Amount'] > 0].groupby([item_code_col, item_name_col, 'main_category', 'sub_subgroup']).agg(
         sales=('Actual Sales Amount', 'sum'),
         units=('Sales Quantity', 'sum')
     ).reset_index().sort_values(by='units', ascending=False).reset_index(drop=True)
-    sku_grouped['asp'] = (sku_grouped['sales'] / sku_grouped['units'].replace(0, np.nan)).fillna(0).round(2)
+    sku_grouped['asp'] = (sku_grouped['sales'] / sku_grouped['units'].replace(0, np.nan)).fillna(0).round().astype(int)
 
     def clean_sku_code(val):
         s = str(val).strip()
@@ -485,8 +486,8 @@ def process_and_build():
         top500_list.append({
             "rank": idx + 1, "code": sku_c, "name": str(r[item_name_col])[:40],
             "main_cat": r['main_category'], "subsub": r['sub_subgroup'],
-            "units": int(r['units']), "sales": round(float(r['sales']), 2),
-            "asp": float(r['asp']), "wh_soh": wh_soh_item, "stock_days": stock_days
+            "units": int(r['units']), "sales": int(round(r['sales'])),
+            "asp": int(r['asp']), "wh_soh": wh_soh_item, "stock_days": stock_days
         })
 
     low500_df = sku_grouped.tail(500).sort_values(by='units', ascending=True).reset_index(drop=True)
@@ -499,8 +500,8 @@ def process_and_build():
         low500_list.append({
             "rank": idx + 1, "code": sku_c, "name": str(r[item_name_col])[:40],
             "main_cat": r['main_category'], "subsub": r['sub_subgroup'],
-            "units": int(r['units']), "sales": round(float(r['sales']), 2),
-            "asp": float(r['asp']), "wh_soh": wh_soh_item, "stock_days": stock_days
+            "units": int(r['units']), "sales": int(round(r['sales'])),
+            "asp": int(r['asp']), "wh_soh": wh_soh_item, "stock_days": stock_days
         })
 
     replenishment_recommendations = []
@@ -580,7 +581,7 @@ def process_and_build():
             excel_export_data.append({
                 "Action Type": action_type, "Store Code": st_code, "Store Name": st_name,
                 "Main Category": cat, "SKU Code": sku_code, "Product Name": sku_name,
-                "Store SOH": row['store_soh'], "WH SOH (KSWH)": wh_available, "Daily Velocity": round(daily_v, 2),
+                "Store SOH": int(row['store_soh']), "WH SOH (KSWH)": wh_available, "Daily Velocity": round(daily_v, 1),
                 "Est Days to Stock-out": days_left if row['store_soh'] > 0 else 0, "Suggested QTY (Pcs)": needed_qty,
                 "Source Route": source_route
             })
@@ -594,7 +595,6 @@ def process_and_build():
         except Exception as e:
             print(f"[!] Warning: Could not write excel file: {e}")
 
-    # إرسال إشعار تيليجرام التلقائي
     send_telegram_alert(total_sales, overall_ach, wh_total_stock, replenishment_recommendations)
 
     top_main_cats = set(main_cat_summary.head(3)['main_category'])
@@ -637,7 +637,7 @@ def process_and_build():
         else:
             diag_title, diag_col = "Steady Flow", "#38bdf8"
             prob = f"Balanced run-rate ({ach:.1f}% Ach) with healthy display volume ({soh:,.0f} Pcs)."
-            action = f"Focus cashier upselling to lift ATV (Current: {row['atv']:.1f} SAR) and rotate seasonal novelty end-caps."
+            action = f"Focus cashier upselling to lift ATV (Current: {row['atv']:,} SAR) and rotate seasonal novelty end-caps."
             needs = "Routine weekly assortment replenishment and promotional feature rotation."
 
         return {
@@ -669,8 +669,8 @@ def process_and_build():
     # تجهيز بيانات ApexCharts
     chart_stores = store_summary.head(10)
     apex_categories = [str(r['full_name']).replace("MMS Riyadh ", "").replace("MMS ", "") for _, r in chart_stores.iterrows()]
-    apex_sales = [float(r['sales']) for _, r in chart_stores.iterrows()]
-    apex_targets = [float(r['target']) if pd.notna(r['target']) else 0 for _, r in chart_stores.iterrows()]
+    apex_sales = [round(float(r['sales'])) for _, r in chart_stores.iterrows()]
+    apex_targets = [round(float(r['target'])) if pd.notna(r['target']) else 0 for _, r in chart_stores.iterrows()]
 
     apex_cat_names = [str(r['main_category']) for _, r in main_cat_summary.iterrows()]
     apex_cat_shares = [float(r['contribution']) for _, r in main_cat_summary.iterrows()]
@@ -687,7 +687,7 @@ def process_and_build():
                 <span style="font-size:13px; font-weight:700; color:#fff; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">{r['main_category']}</span>
                 <span style="font-size:12px; font-weight:700; color:{c_color};">{r['contribution']:.1f}%</span>
             </div>
-            <div style="font-size:17px; font-weight:700; color:#f8fafc; margin-bottom:6px;">{r['sales']:,.0f} <span style="font-size:11px; color:#94a3b8;">SAR</span></div>
+            <div style="font-size:17px; font-weight:700; color:#f8fafc; margin-bottom:6px;">{round(r['sales']):,} <span style="font-size:11px; color:#94a3b8;">SAR</span></div>
             <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px; font-size:11px;">
                 <span style="color:#94a3b8;">Stock Health:</span>
                 <span class="badge" style="background:{h_color}22; color:{h_color};">{r['health_status']}</span>
@@ -710,7 +710,7 @@ def process_and_build():
             <td style="font-weight:800;color:#fff;font-size:14px;">
                 🏷️ {c_name} <span style="font-size:11px;color:#38bdf8;margin-left:4px;">(Click to view items)</span>
             </td>
-            <td style="font-weight:700;color:#38bdf8;" data-sales="{r['sales']}">{r['sales']:,.2f}</td>
+            <td style="font-weight:700;color:#38bdf8;" data-sales="{r['sales']}">{round(r['sales']):,}</td>
             <td data-units="{r['units']}">{int(r['units']):,}</td>
             <td style="min-width:140px;">
                 <div style="display:flex;align-items:center;gap:8px;">
@@ -721,7 +721,7 @@ def process_and_build():
                 </div>
             </td>
             <td><span class="badge" style="background:{h_col}22; color:{h_col}; border:1px solid {h_col}55;">{r['health_status']}</span></td>
-            <td style="color:#f59e0b;font-weight:700;">{r['asp']:,.2f}</td>
+            <td style="color:#f59e0b;font-weight:700;">{r['asp']:,}</td>
             <td style="color:#cbd5e1;font-weight:500;">{r['leading_store']}</td>
         </tr>
         """
@@ -732,19 +732,18 @@ def process_and_build():
     for reg_name, grp in [("Riyadh Central Region", store_summary[store_summary['region'] == "Riyadh Central Region"]),
                           ("Western Region", store_summary[store_summary['region'] == "Western Region"])]:
         reg_mgr = "Sultan" if "Riyadh" in reg_name else "Rajib"
-        r_sales = grp['sales'].sum()
-        r_target = grp['target'].fillna(0).sum()
+        r_sales = round(grp['sales'].sum())
+        r_target = round(grp['target'].fillna(0).sum())
         r_ach = (r_sales / r_target * 100) if r_target > 0 else 0
         r_units = grp['units'].sum()
         r_txns = grp['txns'].sum()
-        r_soh = grp['soh_units'].sum()
-        r_atv = (r_sales / r_txns) if r_txns > 0 else 0
+        r_atv = round(r_sales / r_txns) if r_txns > 0 else 0
         r_upt = (r_units / r_txns) if r_txns > 0 else 0
-        r_asp = (r_sales / r_units) if r_units > 0 else 0
+        r_asp = round(r_sales / r_units) if r_units > 0 else 0
 
         reg_lfl = grp[grp['ly_sales'].notna()]
         reg_cur_lfl = reg_lfl['sales'].sum()
-        reg_ly_tot = reg_lfl['ly_sales'].sum()
+        reg_ly_tot = round(reg_lfl['ly_sales'].sum())
         reg_yoy = ((reg_cur_lfl - reg_ly_tot) / reg_ly_tot * 100) if reg_ly_tot > 0 else None
 
         ach_col = "#10b981" if r_ach >= 100 else ("#f59e0b" if r_ach >= 80 else "#ef4444")
@@ -766,7 +765,7 @@ def process_and_build():
             <div style="display:grid; grid-template-columns: repeat(3, 1fr); gap:10px; margin-top:14px; background:#090d16; padding:12px; border-radius:8px; border:1px solid #1e293b;">
                 <div>
                     <div style="font-size:11px; color:#94a3b8;">CURRENT SALES</div>
-                    <div style="font-size:14px; font-weight:700; color:#fff;">{r_sales:,.0f} <span style="font-size:9px;">SAR</span></div>
+                    <div style="font-size:14px; font-weight:700; color:#fff;">{r_sales:,} <span style="font-size:9px;">SAR</span></div>
                 </div>
                 <div>
                     <div style="font-size:11px; color:#94a3b8;">QTY SOLD</div>
@@ -782,11 +781,11 @@ def process_and_build():
                 </div>
                 <div>
                     <div style="font-size:11px; color:#94a3b8;">ATV</div>
-                    <div style="font-size:13px; font-weight:700; color:#fff;">{r_atv:.1f}</div>
+                    <div style="font-size:13px; font-weight:700; color:#fff;">{r_atv:,}</div>
                 </div>
                 <div>
                     <div style="font-size:11px; color:#94a3b8;">ASP</div>
-                    <div style="font-size:13px; font-weight:700; color:#f59e0b;">{r_asp:.1f}</div>
+                    <div style="font-size:13px; font-weight:700; color:#f59e0b;">{r_asp:,}</div>
                 </div>
             </div>
         </div>
@@ -794,7 +793,7 @@ def process_and_build():
 
         reg_rows = ""
         for idx, r in grp.reset_index(drop=True).iterrows():
-            t_str = f"{r['target']:,.0f}" if pd.notna(r['target']) else "-"
+            t_str = f"{round(r['target']):,}" if pd.notna(r['target']) else "-"
             ach_v = r['ach_pct'] if pd.notna(r['ach_pct']) else None
             if ach_v is not None:
                 c_c = "#10b981" if ach_v >= 100 else ("#f59e0b" if ach_v >= 80 else "#ef4444")
@@ -810,7 +809,7 @@ def process_and_build():
                 ach_cell = '<span style="color:#64748b;">-</span>'
 
             if pd.notna(r['ly_sales']):
-                ly_str = f"{r['ly_sales']:,.2f}"
+                ly_str = f"{round(r['ly_sales']):,}"
                 yoy_v = r['yoy_growth']
                 y_col = "#10b981" if yoy_v >= 0 else "#ef4444"
                 yoy_cell = f'<span style="color:{y_col}; font-weight:700;">{yoy_v:+.1f}%</span>'
@@ -828,7 +827,7 @@ def process_and_build():
                 <td style="color:#64748b;">{idx+1}</td>
                 <td style="color:#38bdf8;font-weight:600;">{r['clean_code']}</td>
                 <td style="font-weight:600;color:#fff;">{r['full_name']}</td>
-                <td style="font-weight:700;color:#f8fafc;" data-sales="{r['sales']}">{r['sales']:,.2f}</td>
+                <td style="font-weight:700;color:#f8fafc;" data-sales="{r['sales']}">{round(r['sales']):,}</td>
                 <td style="color:#38bdf8;font-weight:600;">{ly_str}</td>
                 <td>{yoy_cell}</td>
                 <td style="color:#94a3b8;">{t_str}</td>
@@ -837,7 +836,7 @@ def process_and_build():
                 <td style="font-weight:700;color:#fff;">{st_txns:,}</td>
                 <td style="font-weight:700;color:#10b981;">{st_upt:.2f}</td>
                 <td>{r['str_pct']}%</td>
-                <td style="color:#38bdf8;font-weight:600;">{r['asp']:,.2f}</td>
+                <td style="color:#38bdf8;font-weight:600;">{r['asp']:,}</td>
             </tr>
             """
 
@@ -872,16 +871,16 @@ def process_and_build():
                         {reg_rows}
                         <tr style="background:#0c1220; font-weight:700; border-top:2px solid #38bdf8;">
                             <td colspan="3" style="color:#38bdf8; font-size:13px;">TOTAL {reg_name.upper()} ({reg_mgr})</td>
-                            <td style="color:#fff; font-size:14px;" data-sales="{r_sales}">{r_sales:,.2f}</td>
-                            <td style="color:#38bdf8; font-size:14px;">{reg_ly_tot:,.2f}</td>
+                            <td style="color:#fff; font-size:14px;" data-sales="{r_sales}">{r_sales:,}</td>
+                            <td style="color:#38bdf8; font-size:14px;">{reg_ly_tot:,}</td>
                             <td>{yoy_badge}</td>
-                            <td style="color:#94a3b8;">{r_target:,.0f}</td>
+                            <td style="color:#94a3b8;">{r_target:,}</td>
                             <td style="color:{ach_col};">{r_ach:.1f}%</td>
                             <td style="color:#38bdf8;">{int(r_units):,}</td>
                             <td style="color:#fff;">{int(r_txns):,}</td>
                             <td style="color:#10b981;">{r_upt:.2f}</td>
                             <td>-</td>
-                            <td style="color:#f59e0b;">{r_asp:,.2f}</td>
+                            <td style="color:#f59e0b;">{r_asp:,}</td>
                         </tr>
                     </tbody>
                 </table>
@@ -894,7 +893,7 @@ def process_and_build():
     <div id="grand-total-banner" style="background:#131b2e; border:2px solid #2563eb; border-radius:12px; padding:18px 24px; display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:16px; margin-bottom:30px;">
         <div>
             <div style="font-size:13px; color:#38bdf8; font-weight:700; text-transform:uppercase;">Network Grand Total (All Regions)</div>
-            <div style="font-size:22px; font-weight:800; color:#fff; margin-top:2px;" id="grandTotalSales">{total_sales:,.0f} <span style="font-size:13px; font-weight:400; color:#94a3b8;">SAR</span></div>
+            <div style="font-size:22px; font-weight:800; color:#fff; margin-top:2px;" id="grandTotalSales">{total_sales:,} <span style="font-size:13px; font-weight:400; color:#94a3b8;">SAR</span></div>
         </div>
         <div style="display:flex; gap:20px; flex-wrap:wrap; align-items:center;">
             <div style="background:#090d16; padding:8px 14px; border-radius:8px; border:1px solid #38bdf855;">
@@ -903,7 +902,7 @@ def process_and_build():
             </div>
             <div>
                 <div style="font-size:11px; color:#94a3b8;">LY GROSS SALES (MMS)</div>
-                <div style="font-size:16px; font-weight:700; color:#38bdf8;">{total_ly_sales:,.0f} SAR</div>
+                <div style="font-size:16px; font-weight:700; color:#38bdf8;">{total_ly_sales:,} SAR</div>
             </div>
             <div>
                 <div style="font-size:11px; color:#94a3b8;">LFL YoY GROWTH</div>
@@ -911,7 +910,7 @@ def process_and_build():
             </div>
             <div>
                 <div style="font-size:11px; color:#94a3b8;">TOTAL TARGET</div>
-                <div style="font-size:16px; font-weight:700; color:#fff;">{total_target:,.0f} SAR</div>
+                <div style="font-size:16px; font-weight:700; color:#fff;">{total_target:,} SAR</div>
             </div>
             <div>
                 <div style="font-size:11px; color:#94a3b8;">ACHIEVEMENT</div>
@@ -930,7 +929,7 @@ def process_and_build():
         st_name = row['full_name']
         
         if pd.notna(row['target']):
-            target_str = f"{row['target']:,.0f}"
+            target_str = f"{round(row['target']):,}"
             ach_val = row['ach_pct']
             bar_w = min(ach_val, 100)
             color = "#10b981" if ach_val >= 100 else ("#f59e0b" if ach_val >= 80 else "#ef4444")
@@ -947,7 +946,7 @@ def process_and_build():
             ach_str = '<span style="color:#64748b;">-</span>'
 
         if pd.notna(row['ly_sales']):
-            ly_str = f"{row['ly_sales']:,.2f}"
+            ly_str = f"{round(row['ly_sales']):,}"
             yoy_val = row['yoy_growth']
             y_col = "#10b981" if yoy_val >= 0 else "#ef4444"
             yoy_cell = f'<span style="color:{y_col}; font-weight:700;">{yoy_val:+.1f}%</span>'
@@ -959,13 +958,13 @@ def process_and_build():
 
         store_meta_map[st_code] = {
             "name": st_name, "region": row['region'], "manager": row['manager'],
-            "sales": f"{row['sales']:,.2f} SAR", "ly_sales": ly_str,
+            "sales": f"{round(row['sales']):,} SAR", "ly_sales": ly_str,
             "yoy": f"{row['yoy_growth']:+.1f}%" if pd.notna(row['yoy_growth']) else "-",
             "target": f"{target_str} SAR" if target_str != "-" else "No Target",
             "ach": f"{row['ach_pct']:.1f}%" if pd.notna(row['ach_pct']) else "-",
-            "share": f"{row['share']:.2f}%", "txns": f"{int(row['txns']):,}",
-            "atv": f"{row['atv']:,.2f} SAR", "upt": f"{row['upt']:.2f}",
-            "asp": f"{row['asp']:,.2f} SAR", "soh_units": f"{int(row['soh_units']):,} Pcs",
+            "share": f"{row['share']:.1f}%", "txns": f"{int(row['txns']):,}",
+            "atv": f"{row['atv']:,} SAR", "upt": f"{row['upt']:.2f}",
+            "asp": f"{row['asp']:,} SAR", "soh_units": f"{int(row['soh_units']):,} Pcs",
             "woc": f"{row['woc']} Weeks", "str": f"{row['str_pct']}%",
             "capacity_badge": row['display_status'], "diag_title": row['diag_title'],
             "problem": row['problem'], "action": row['action'], "needs": row['needs'],
@@ -1005,17 +1004,17 @@ def process_and_build():
             <td style="color:#38bdf8;font-weight:600;">{st_code}</td>
             <td style="font-weight:600;color:#fff;">{st_name}</td>
             <td style="color:#94a3b8;font-size:12px;">{row['region']}</td>
-            <td style="font-weight:700;color:#f8fafc;" data-sales="{row['sales']}">{row['sales']:,.2f}</td>
+            <td style="font-weight:700;color:#f8fafc;" data-sales="{row['sales']}">{round(row['sales']):,}</td>
             <td style="color:#38bdf8;font-weight:600;">{ly_str}</td>
             <td>{yoy_cell}</td>
             <td style="color:#94a3b8;">{target_str}</td>
             <td style="min-width:130px;">{ach_str}</td>
             <td style="font-weight:700;color:#38bdf8;">{st_units_val:,}</td>
             <td style="font-weight:700;color:#fff;">{st_txns_val:,}</td>
-            <td style="font-weight:700;color:#10b981;">{st_upt:.2f}</td>
+            <td style="font-weight:700;color:#10b981;">{st_upt_val:.2f}</td>
             <td>{row['str_pct']}%</td>
             <td>{diag_badge}</td>
-            <td style="color:#38bdf8;font-weight:600;">{row['asp']:,.2f}</td>
+            <td style="color:#38bdf8;font-weight:600;">{row['asp']:,}</td>
         </tr>
         """
 
@@ -1187,8 +1186,8 @@ def process_and_build():
             position: fixed;
             bottom: 90px;
             right: 24px;
-            width: 360px;
-            height: 480px;
+            width: 380px;
+            height: 500px;
             background: #131b2e;
             border: 1px solid #1e293b;
             border-radius: 14px;
@@ -1247,25 +1246,26 @@ def process_and_build():
 </head>
 <body>
 
+<!-- English AI Copilot Widget -->
 <button class="ai-chat-btn" onclick="toggleAIChat()" title="Ask MMS Merchandising AI Copilot">🤖</button>
 <div class="ai-chat-box" id="aiChatBox">
     <div class="ai-chat-header">
-        <span style="font-weight:700; color:#fff; font-size:14px;">🧠 MMS Merchandising Copilot</span>
+        <span style="font-weight:700; color:#fff; font-size:14px;">🧠 MMS Merchandising Copilot (English)</span>
         <button onclick="toggleAIChat()" style="background:transparent; border:none; color:#94a3b8; font-size:18px; cursor:pointer;">&times;</button>
     </div>
     <div class="ai-chat-messages" id="aiChatMessages">
-        <div class="ai-msg">مرحباً بك! أنا مساعد الميرشندايزينج الذكي. اسألني عن أداء أي فرع، نسب التحقيق، أو مناقلات المخزون الحرجة.</div>
+        <div class="ai-msg">Hello! I am your Merchandising Copilot. Ask me about store performance, targets, stock cover, or critical replenishments.</div>
     </div>
     <div class="ai-chat-input-bar">
-        <input type="text" id="aiInput" class="ai-chat-input" placeholder="اسأل عن الفروع، النواقص، أو المستودع..." onkeypress="handleAIChatKey(event)">
-        <button onclick="sendAIChatMessage()" style="background:#2563eb; color:#fff; border:none; padding:8px 14px; border-radius:6px; font-weight:700; cursor:pointer;">إرسال</button>
+        <input type="text" id="aiInput" class="ai-chat-input" placeholder="Ask about stores, targets, or warehouse..." onkeypress="handleAIChatKey(event)">
+        <button onclick="sendAIChatMessage()" style="background:#2563eb; color:#fff; border:none; padding:8px 14px; border-radius:6px; font-weight:700; cursor:pointer;">Send</button>
     </div>
 </div>
 
 <div id="auth-overlay" style="position:fixed;top:0;left:0;width:100%;height:100%;background:#090d16;z-index:99999999;display:flex;align-items:center;justify-content:center;">
   <div style="background:#131b2e;padding:32px;border-radius:12px;box-shadow:0 15px 30px rgba(0,0,0,0.6);text-align:center;width:90%;max-width:380px;border:1px solid #1e293b;">
     <h3 style="color:#fff;margin:0 0 8px 0;font-size:20px;">🔒 MMS Secure Access</h3>
-    <p style="color:#94a3b8;font-size:13px;margin:0 0 20px 0;">Enter your authorization PIN to view report</p>
+    <p style="color:#94a3b8;font-size:13px;margin:0 0 20px 0;">Enter authorization PIN to unlock dashboard</p>
     <input type="password" id="access-pass" placeholder="PIN Code" style="width:100%;padding:12px;border-radius:6px;border:1px solid #334155;background:#090d16;color:#fff;font-size:16px;text-align:center;outline:none;box-sizing:border-box;margin-bottom:14px;">
     <button onclick="checkAccess()" style="width:100%;padding:12px;border-radius:6px;border:none;background:#2563eb;color:#fff;font-weight:700;font-size:15px;cursor:pointer;">Unlock Dashboard</button>
     <p id="error-msg" style="color:#ef4444;font-size:13px;margin:12px 0 0 0;display:none;">Invalid authorization credentials</p>
@@ -1356,7 +1356,6 @@ def process_and_build():
   }});
 </script>
 
-<!-- Modal 1: Commercial Deep-Dive Modal -->
 <div id="store-modal" class="app-modal">
   <div class="modal-content">
     <div class="modal-header">
@@ -1369,17 +1368,17 @@ def process_and_build():
     <div class="modal-body">
       <div style="background:#090d16; border:1px solid #1e293b; border-radius:10px; padding:18px; margin-bottom:20px;">
         <div style="font-size:13px; color:#cbd5e1; margin-bottom:8px;">
-          <strong style="color:#ef4444;">● Store Situation & Root Cause:</strong> <span id="modal-diag" style="color:#f8fafc;">-</span>
+          <strong style="color:#ef4444;">● Situation & Root Cause:</strong> <span id="modal-diag" style="color:#f8fafc;">-</span>
         </div>
         <div style="font-size:13px; color:#f59e0b; margin-bottom:10px;">
-          <strong>🎯 What This Store Needs:</strong> <span id="modal-needs" style="color:#fff;">-</span>
+          <strong>🎯 Store Requirements:</strong> <span id="modal-needs" style="color:#fff;">-</span>
         </div>
         <div style="font-size:13px; color:#38bdf8; background:rgba(56,189,248,0.08); padding:10px 14px; border-radius:6px; border:1px solid rgba(56,189,248,0.25);">
-          <strong style="color:#38bdf8;">⚡ Commercial Directive:</strong> <span id="modal-directive" style="color:#fff; font-weight:600;">-</span>
+          <strong style="color:#38bdf8;">⚡ Directive:</strong> <span id="modal-directive" style="color:#fff; font-weight:600;">-</span>
         </div>
       </div>
 
-      <div style="margin-bottom:12px; font-size:12px; font-weight:700; text-transform:uppercase; color:#94a3b8;">Store Commercial Metrics</div>
+      <div style="margin-bottom:12px; font-size:12px; font-weight:700; text-transform:uppercase; color:#94a3b8;">Commercial Metrics</div>
       <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(130px, 1fr)); gap:12px; margin-bottom:24px;">
         <div style="background:#090d16; padding:14px; border-radius:8px; border:1px solid #1e293b;">
           <div style="font-size:11px; color:#94a3b8;">CURRENT SALES</div>
@@ -1425,7 +1424,7 @@ def process_and_build():
               <th>Main Category</th>
               <th>Sales (SAR)</th>
               <th>Units Sold</th>
-              <th>Category Contribution in Store (%)</th>
+              <th>Category Contribution (%)</th>
               <th>ASP (SAR)</th>
             </tr>
           </thead>
@@ -1443,7 +1442,6 @@ def process_and_build():
     </div>
     <div class="top-controls">
         <span id="current-user-badge" style="font-size:13px; font-weight:700; color:#38bdf8; background:#1e293b; padding:8px 14px; border-radius:8px; border:1px solid #334155;">👤 Authenticating..</span>
-        <button class="lang-btn" id="langToggleBtn" onclick="toggleLanguage()">🌐 العربية / English</button>
         <button class="logout-btn" onclick="logout()">Logout</button>
     </div>
 </div>
@@ -1467,11 +1465,11 @@ def process_and_build():
 <div class="kpi-grid">
     <div class="kpi-card">
         <div class="kpi-title">Current Total Sales</div>
-        <div class="kpi-value">{total_sales:,.0f} <span class="kpi-unit">SAR</span></div>
+        <div class="kpi-value">{total_sales:,} <span class="kpi-unit">SAR</span></div>
     </div>
     <div class="kpi-card">
         <div class="kpi-title">LY Gross Sales (MMS)</div>
-        <div class="kpi-value" style="color:#38bdf8;">{total_ly_sales:,.0f} <span class="kpi-unit">SAR</span></div>
+        <div class="kpi-value" style="color:#38bdf8;">{total_ly_sales:,} <span class="kpi-unit">SAR</span></div>
     </div>
     <div class="kpi-card">
         <div class="kpi-title">Network LFL YoY Growth</div>
@@ -1479,7 +1477,7 @@ def process_and_build():
     </div>
     <div class="kpi-card">
         <div class="kpi-title">Total Target</div>
-        <div class="kpi-value">{total_target:,.0f} <span class="kpi-unit">SAR</span></div>
+        <div class="kpi-value">{total_target:,} <span class="kpi-unit">SAR</span></div>
     </div>
     <div class="kpi-card">
         <div class="kpi-title">Achievement (% Ach)</div>
@@ -1487,11 +1485,11 @@ def process_and_build():
     </div>
     <div class="kpi-card">
         <div class="kpi-title">Network ATV</div>
-        <div class="kpi-value">SAR {network_atv:.2f}</div>
+        <div class="kpi-value">SAR {network_atv:,}</div>
     </div>
     <div class="kpi-card">
         <div class="kpi-title">Network ASP</div>
-        <div class="kpi-value">SAR {network_asp:.2f}</div>
+        <div class="kpi-value">SAR {network_asp:,}</div>
     </div>
 </div>
 
@@ -1523,7 +1521,7 @@ def process_and_build():
                 <h3>STORE COMMERCIAL & DISPLAY ASSORTMENT MATRIX</h3>
                 <span style="color:var(--text-muted);font-size:12px;">Click any store row to open category contribution breakdown for that store</span>
             </div>
-            <input type="text" id="storeSearch" class="table-search" placeholder="Search full store name, code, or region..." onkeyup="filterStores()">
+            <input type="text" id="storeSearch" class="table-search" placeholder="Search store name, code, or region..." onkeyup="filterStores()">
         </div>
         <div style="overflow-x:auto;">
             <table id="storesTable">
@@ -1834,18 +1832,18 @@ def process_and_build():
     var reply = "";
     var qLower = q.toLowerCase();
 
-    if (qLower.includes("مستودع") || qLower.includes("kswh") || qLower.includes("warehouse")) {{
-      reply = `المستودع المركزي (KSWH) يحتوي حالياً على ${{AI_CONTEXT.wh_soh.toLocaleString()}} قطعة جاهزة لتغذية الفروع.`;
-    }} else if (qLower.includes("هدف") || qLower.includes("target") || qLower.includes("إنجاز") || qLower.includes("ach")) {{
-      reply = `نسبة التحقيق الإجمالية للشبكة هي ${{AI_CONTEXT.overall_ach.toFixed(1)}}%، بمبيعات إجمالية ${{AI_CONTEXT.network_sales.toLocaleString()}} ر.س مقابل هدف ${{AI_CONTEXT.network_target.toLocaleString()}} ر.س.`;
-    }} else if (qLower.includes("مناقل") || qLower.includes("نقص") || qLower.includes("transfer") || qLower.includes("تحويل")) {{
-      reply = `هناك مناقلات ذات أولوية بين فروع نفس المدينة: نقترح تزويد الأصناف النافذة من الفروع ذات الفائض القريب لتفادي نفاد المخزون. تفقد قسم Commercial Action Hub للتفاصيل.`;
+    if (qLower.includes("warehouse") || qLower.includes("kswh") || qLower.includes("stock")) {{
+      reply = `Central Warehouse (KSWH) currently holds ${{AI_CONTEXT.wh_soh.toLocaleString()}} units ready for dispatch to stores.`;
+    }} else if (qLower.includes("target") || qLower.includes("ach") || qLower.includes("achievement")) {{
+      reply = `Overall network target achievement is ${{AI_CONTEXT.overall_ach.toFixed(1)}}% with total sales of ${{Math.round(AI_CONTEXT.network_sales).toLocaleString()}} SAR against a target of ${{Math.round(AI_CONTEXT.network_target).toLocaleString()}} SAR.`;
+    }} else if (qLower.includes("transfer") || qLower.includes("shortage") || qLower.includes("ist") || qLower.includes("replenish")) {{
+      reply = `There are high-priority proximity transfers recommended between branches within the same city to mitigate out-of-stock risks. Check the Commercial Action Hub for details.`;
     }} else {{
       var matchedStore = AI_CONTEXT.stores.find(s => qLower.includes(s.clean_code.toLowerCase()) || qLower.includes(s.full_name.toLowerCase()));
       if (matchedStore) {{
-        reply = `فرع ${{matchedStore.full_name}} (${{matchedStore.clean_code}}): المبيعات ${{matchedStore.sales.toLocaleString()}} ر.س، نسبة التحقيق ${{matchedStore.ach_pct ? matchedStore.ach_pct.toFixed(1) + '%' : 'N/A'}}، ومؤشر UPT هو ${{matchedStore.upt}}، التشخيص: ${{matchedStore.diag_title}}.`;
+        reply = `Store ${{matchedStore.full_name}} (${{matchedStore.clean_code}}): Total Sales ${{Math.round(matchedStore.sales).toLocaleString()}} SAR, Target Achievement ${{matchedStore.ach_pct ? matchedStore.ach_pct.toFixed(1) + '%' : 'N/A'}}, UPT: ${{matchedStore.upt}}, Diagnostic: ${{matchedStore.diag_title}}.`;
       }} else {{
-        reply = `بناءً على الأرقام الحالية: أفضل الفروع أداءً هي Solitaire و Dhahran، والتركيز التجاري الآن يجب أن يكون على تدوير الأصناف الراكدة في قسم الألعاب والإكسسوارات.`;
+        reply = `Based on current network performance: Top performing branches are Solitaire and Dhahran. Commercial focus should remain on rotating stagnant accessories and children goods to boost sell-through.`;
       }}
     }}
 
@@ -2026,17 +2024,17 @@ def process_and_build():
           <td style="color:#64748b;">${{idx+1}}</td>
           <td style="color:#38bdf8; font-weight:600;">${{r.main_category}}</td>
           <td style="font-weight:700; color:#fff;">${{r.sub_subgroup}}</td>
-          <td style="font-weight:700; color:#38bdf8;">${{Number(r.sales).toLocaleString(undefined, {{minimumFractionDigits:2, maximumFractionDigits:2}})}}</td>
+          <td style="font-weight:700; color:#38bdf8;">${{Math.round(r.sales).toLocaleString()}}</td>
           <td>${{Number(r.units).toLocaleString()}}</td>
           <td style="min-width:130px;">
             <div style="display:flex;align-items:center;gap:6px;">
-              <span style="font-weight:700;color:#fff;min-width:40px;">${{r.contribution.toFixed(2)}}%</span>
+              <span style="font-weight:700;color:#fff;min-width:40px;">${{r.contribution.toFixed(1)}}%</span>
               <div style="flex:1;background:#1e293b;border-radius:4px;height:5px;overflow:hidden;">
                 <div style="width:${{bar_w}}%;background:#38bdf8;height:100%;"></div>
               </div>
             </div>
           </td>
-          <td style="color:#f59e0b;font-weight:700;">${{r.asp.toFixed(2)}}</td>
+          <td style="color:#f59e0b;font-weight:700;">${{Math.round(r.asp).toLocaleString()}}</td>
         </tr>
       `;
     }});
@@ -2075,8 +2073,8 @@ def process_and_build():
           <td>${{r.main_cat}}</td>
           <td style="color:#94a3b8;">${{r.subsub}}</td>
           <td style="font-weight:700; color:#fff;">${{r.units.toLocaleString()}}</td>
-          <td style="font-weight:700; color:#38bdf8;">${{r.sales.toLocaleString(undefined, {{minimumFractionDigits:2, maximumFractionDigits:2}})}}</td>
-          <td style="color:#f59e0b; font-weight:600;">${{r.asp.toFixed(2)}}</td>
+          <td style="font-weight:700; color:#38bdf8;">${{r.sales.toLocaleString()}}</td>
+          <td style="color:#f59e0b; font-weight:600;">${{r.asp.toLocaleString()}}</td>
           <td style="font-weight:700; color:#38bdf8;">${{r.wh_soh.toLocaleString()}} Pcs</td>
           <td><span class="badge" style="background:${{daysColor}}22; color:${{daysColor}};">${{r.stock_days === 999 ? 'Stable' : r.stock_days + ' Days'}}</span></td>
         </tr>
