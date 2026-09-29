@@ -34,14 +34,15 @@ STORE_MAPPING = {
     "K404": {"full_name": "MMS Abha", "region": "Western Region", "manager": "Rajib", "city": "Abha", "brand": "MMS"},
     "K501": {"full_name": "MMS Tabuk Park", "region": "Western Region", "manager": "Rajib", "city": "Tabuk", "brand": "MMS"},
 
-    # DZL (DOZOLO) STORES (6 Doors)
-    "K104": {"full_name": "DZL Uwalk Riyadh", "region": "Riyadh Central Region", "manager": "Sultan", "city": "Riyadh", "brand": "DZL"},
+    # DZL (DOZOLO) STORES (3 Active Doors)
     "K107": {"full_name": "DZL Riyadh Park", "region": "Riyadh Central Region", "manager": "Sultan", "city": "Riyadh", "brand": "DZL"},
     "K111": {"full_name": "DZL Solitaire", "region": "Riyadh Central Region", "manager": "Sultan", "city": "Riyadh", "brand": "DZL"},
-    "K206": {"full_name": "DZL Uwalk Jeddah", "region": "Western Region", "manager": "Rajib", "city": "Jeddah", "brand": "DZL"},
-    "K204": {"full_name": "DZL Redsea", "region": "Western Region", "manager": "Rajib", "city": "Jeddah", "brand": "DZL"},
-    "K502": {"full_name": "DZL Tabuk", "region": "Western Region", "manager": "Rajib", "city": "Tabuk", "brand": "DZL"}
+    "K204": {"full_name": "DZL Redsea", "region": "Western Region", "manager": "Rajib", "city": "Jeddah", "brand": "DZL"}
 }
+
+DZL_VALID_CODES = {"K107", "K111", "K204"}
+MMS_VALID_CODES = {k for k, v in STORE_MAPPING.items() if v["brand"] == "MMS"}
+ALL_VALID_CODES = DZL_VALID_CODES.union(MMS_VALID_CODES)
 
 def identify_files():
     sales_mms = os.path.join(REPORTS_DIR, "50100002-20260928.xlsx")
@@ -85,6 +86,11 @@ def clean_store_code_str(val):
         return f"K{num}"
     return s
 
+def clean_sku_code(val):
+    s = str(val).strip()
+    if s.endswith('.0'): s = s[:-2]
+    return s
+
 def load_ly_sales_data(ly_path):
     if not ly_path or not os.path.exists(ly_path): return {}
     ly_totals = {}
@@ -105,9 +111,15 @@ def load_ly_sales_data(ly_path):
                 m = re.search(r'^\d+', col_str)
                 if m:
                     code = f"K{m.group(0)}"
-                    tot_val = pd.to_numeric(df_gsale[col], errors='coerce').sum()
-                    if pd.notna(tot_val) and tot_val > 0:
-                        ly_totals[code] = round(float(tot_val))
+                    is_dzl_col = "(DZL)" in col_str.upper()
+                    if is_dzl_col and code in DZL_VALID_CODES:
+                        tot_val = pd.to_numeric(df_gsale[col], errors='coerce').sum()
+                        if pd.notna(tot_val) and tot_val > 0:
+                            ly_totals[code] = round(float(tot_val))
+                    elif not is_dzl_col and code in MMS_VALID_CODES:
+                        tot_val = pd.to_numeric(df_gsale[col], errors='coerce').sum()
+                        if pd.notna(tot_val) and tot_val > 0:
+                            ly_totals[code] = round(float(tot_val))
         return ly_totals
     except Exception as e:
         print(f"[!] Error reading LY file: {e}")
@@ -127,9 +139,9 @@ def load_targets(target_path):
         t_map = {}
         for _, r in df_t.iterrows():
             c_code = clean_store_code_str(r[store_col])
-            t_map[c_code] = float(r[sep_col])
-            # أيضاً مطابقة بالاسم
-            t_map[str(r[store_col]).strip().upper()] = float(r[sep_col])
+            if c_code in ALL_VALID_CODES:
+                t_map[c_code] = float(r[sep_col])
+                t_map[str(r[store_col]).strip().upper()] = float(r[sep_col])
         return t_map
     except Exception as e:
         print(f"Target load error: {e}")
@@ -143,18 +155,20 @@ def load_soh_data(soh_path):
     try:
         xl = pd.ExcelFile(soh_path)
         sheet_to_use = "Sheet1" if "Sheet1" in xl.sheet_names else xl.sheet_names[0]
-        df_soh = pd.read_excel(soh_path, sheet_name=sheet_to_use, skiprows=1)
-        df_soh.columns = [c.replace('\u200c', '').replace('\ufeff', '').strip() for c in df_soh.columns]
         
-        if "avail_stock" not in [c.lower() for c in df_soh.columns] and "current_stock" not in [c.lower() for c in df_soh.columns]:
+        # قراءة مع معالجة استباقية لأسماء الأعمدة حتى لا يحدث خطأ 'int' has no attribute 'replace'
+        df_soh = pd.read_excel(soh_path, sheet_name=sheet_to_use, skiprows=1)
+        df_soh.columns = [str(c).replace('\u200c', '').replace('\ufeff', '').strip() for c in df_soh.columns]
+        
+        if "avail_stock" not in [str(c).lower() for c in df_soh.columns] and "current_stock" not in [str(c).lower() for c in df_soh.columns]:
             df_soh = pd.read_excel(soh_path, sheet_name=sheet_to_use)
-            df_soh.columns = [c.replace('\u200c', '').replace('\ufeff', '').strip() for c in df_soh.columns]
+            df_soh.columns = [str(c).replace('\u200c', '').replace('\ufeff', '').strip() for c in df_soh.columns]
 
-        code_col = next((c for c in df_soh.columns if c.lower() in ["org code", "organization code", "org_code", "store code"]), None)
-        stock_col = next((c for c in df_soh.columns if c.lower() in ["avail_stock", "current_stock"]), None)
-        price_col = next((c for c in df_soh.columns if "retail_price" in c.lower() or "price" in c.lower()), None)
-        cat_col = next((c for c in df_soh.columns if c.lower() == "category"), None)
-        pg_col = next((c for c in df_soh.columns if c.lower() in ["product_group", "product group"]), None)
+        code_col = next((c for c in df_soh.columns if str(c).lower() in ["org code", "organization code", "org_code", "store code"]), None)
+        stock_col = next((c for c in df_soh.columns if str(c).lower() in ["avail_stock", "current_stock"]), None)
+        price_col = next((c for c in df_soh.columns if "retail_price" in str(c).lower() or "price" in str(c).lower()), None)
+        cat_col = next((c for c in df_soh.columns if str(c).lower() == "category"), None)
+        pg_col = next((c for c in df_soh.columns if str(c).lower() in ["product_group", "product group"]), None)
 
         if not code_col or not stock_col: return {}, {}, pd.DataFrame(), 0
 
@@ -184,7 +198,7 @@ def load_soh_data(soh_path):
         wh_df = df_soh[df_soh['clean_code'] == 'KSWH']
         if not wh_df.empty: wh_total_stock = int(wh_df[stock_col].sum())
 
-        stores_soh_df = df_soh[df_soh['clean_code'] != 'KSWH']
+        stores_soh_df = df_soh[(df_soh['clean_code'] != 'KSWH') & (df_soh['clean_code'].isin(ALL_VALID_CODES))]
         grouped = stores_soh_df.groupby('clean_code').agg(
             soh_units=(stock_col, 'sum'),
             soh_val=('stock_val', 'sum')
@@ -202,13 +216,13 @@ def send_telegram_alert(total_sales, overall_ach, wh_stock, top_repl_list):
     if not token or not chat_id: return
 
     text = "MMS & DZL Executive Intelligence Update\n\n"
-    text += f"Total Group Sales: {int(total_sales):,} SAR\n"
+    text += f"Total Sales: {int(total_sales):,} SAR\n"
     text += f"Overall Achievement: {overall_ach:.1f}%\n"
     text += f"Warehouse (KSWH): {wh_stock:,} Pcs\n\n"
     text += "Top Critical Replenishments:\n"
     for r in top_repl_list[:4]:
         text += f"- [{r.get('brand','MMS')}] {r['store_name']}: {r['category_focus']} -> {r['suggested_units']}\n"
-    text += "\nDashboard is live with isolated MMS & DZL networks."
+    text += "\nDashboard live with verified SOH and DZL network."
 
     try:
         url = f"https://api.telegram.org/bot{token}/sendMessage"
@@ -221,43 +235,33 @@ def send_telegram_alert(total_sales, overall_ach, wh_stock, top_repl_list):
 
 def process_and_build():
     sales_mms_file, sales_dzl_file, soh_file, target_file, ly_file = identify_files()
-    print(f"[*] MMS Sales Report: {sales_mms_file}")
-    print(f"[*] DZL Sales Report: {sales_dzl_file}")
-    print(f"[*] SOH File:         {soh_file}")
-    print(f"[*] Target File:      {target_file}")
-    print(f"[*] LY File:          {ly_file}")
-
     targets_map = load_targets(target_file)
     soh_map, soh_hier_map, df_soh_raw, wh_total_stock = load_soh_data(soh_file)
     ly_sales_map = load_ly_sales_data(ly_file)
 
     dfs = []
-    # 1. قراءة مبيعات MMS
     if os.path.exists(sales_mms_file):
         df_m = pd.read_excel(sales_mms_file, skiprows=1)
         df_m = df_m.iloc[:-1].copy()
-        df_m.columns = [c.replace('\u200c', '').replace('\ufeff', '').strip() for c in df_m.columns]
+        df_m.columns = [str(c).replace('\u200c', '').replace('\ufeff', '').strip() for c in df_m.columns]
         df_m['brand_origin'] = "MMS"
         dfs.append(df_m)
 
-    # 2. قراءة مبيعات DZL بمرونة تامة في الأعمدة والأسطر
     if os.path.exists(sales_dzl_file):
         try:
             df_d = pd.read_excel(sales_dzl_file)
-            # فحص إذا كان الصف الأول هو عناوين الأعمدة الحقيقية أم الثاني
             has_org = any("org" in str(c).lower() or "store" in str(c).lower() for c in df_d.columns)
             if not has_org:
                 df_d = pd.read_excel(sales_dzl_file, skiprows=1)
             df_d = df_d.iloc[:-1].copy() if len(df_d) > 1 and "total" in str(df_d.iloc[-1].values).lower() else df_d
-            df_d.columns = [c.replace('\u200c', '').replace('\ufeff', '').strip() for c in df_d.columns]
+            df_d.columns = [str(c).replace('\u200c', '').replace('\ufeff', '').strip() for c in df_d.columns]
             df_d['brand_origin'] = "DZL"
             dfs.append(df_d)
-            print(f"[✓] DZL Sales file successfully integrated: {len(df_d)} rows loaded.")
         except Exception as e:
             print(f"[!] Warning reading DZL sales: {e}")
 
     df_clean = pd.concat(dfs, ignore_index=True) if dfs else pd.DataFrame()
-    df_clean.columns = [c.replace('\u200c', '').replace('\ufeff', '').strip() for c in df_clean.columns]
+    df_clean.columns = [str(c).replace('\u200c', '').replace('\ufeff', '').strip() for c in df_clean.columns]
 
     numeric_cols = [
         'Sales Quantity', 'Selling Price', 'Sales Revenue', 'Discount Amount',
@@ -267,19 +271,21 @@ def process_and_build():
         if col in df_clean.columns:
             df_clean[col] = pd.to_numeric(df_clean[col], errors='coerce').fillna(0)
 
-    # كشف عمود كود المتجر
-    org_code_col = next((c for c in df_clean.columns if any(k in c.lower() for k in ['organization code', 'org code', 'store code', 'shop code'])), None)
+    org_code_col = next((c for c in df_clean.columns if any(k in str(c).lower() for k in ['organization code', 'org code', 'store code', 'shop code'])), None)
     if not org_code_col: org_code_col = df_clean.columns[0]
 
-    org_name_col = next((c for c in df_clean.columns if any(k in c.lower() for k in ['organization name', 'org name', 'store name', 'shop name'])), None)
+    org_name_col = next((c for c in df_clean.columns if any(k in str(c).lower() for k in ['organization name', 'org name', 'store name', 'shop name'])), None)
     if not org_name_col: org_name_col = org_code_col
 
-    item_code_col = next((c for c in df_clean.columns if c.lower() in ['product code', 'item code', 'barcode', 'sku code', 'product no']), None)
-    item_name_col = next((c for c in df_clean.columns if c.lower() in ['product name', 'item name', 'product_name']), None)
+    item_code_col = next((c for c in df_clean.columns if str(c).lower() in ['product code', 'item code', 'barcode', 'sku code', 'product no', 'item_code']), None)
+    item_name_col = next((c for c in df_clean.columns if str(c).lower() in ['product name', 'item name', 'product_name']), None)
+    barcode_col = next((c for c in df_clean.columns if any(k in str(c).lower() for k in ['barcode', 'bar code', 'upc'])), None)
+    
     if not item_code_col: item_code_col = df_clean.columns[0]
     if not item_name_col: item_name_col = item_code_col
+    if not barcode_col: barcode_col = item_code_col
 
-    raw_subsub_col = next((c for c in df_clean.columns if c.lower() in ['category name', 'product_category', 'category']), None)
+    raw_subsub_col = next((c for c in df_clean.columns if str(c).lower() in ['category name', 'product_category', 'category']), None)
     if not raw_subsub_col:
         df_clean['raw_subsub'] = "General Items"
         raw_subsub_col = 'raw_subsub'
@@ -301,37 +307,21 @@ def process_and_build():
         return "Variety Lifestyle"
 
     df_clean['main_category'] = df_clean['sub_subgroup'].apply(map_to_main_category)
-
-    # تطهير كود المتجر وتحديد البراند بدقة
     df_clean['clean_code'] = df_clean[org_code_col].apply(clean_store_code_str)
 
-    def identify_brand(row):
-        code = row['clean_code']
-        if code in STORE_MAPPING:
-            return STORE_MAPPING[code]['brand']
-        org_name = str(row[org_name_col]).upper()
-        if "DZL" in org_name or "DOZOLO" in org_name or row.get('brand_origin') == 'DZL':
-            return "DZL"
-        return "MMS"
+    # حصر البيانات فقط في المحلات المعتمدة (17 MMS + 3 DZL)
+    df_clean = df_clean[df_clean['clean_code'].isin(ALL_VALID_CODES)].copy()
+    df_clean['brand'] = df_clean['clean_code'].apply(lambda c: STORE_MAPPING[c]['brand'])
 
-    df_clean['brand'] = df_clean.apply(identify_brand, axis=1)
-
-    # إجماليات المتاجر
     store_summary = df_clean.groupby(['clean_code', org_name_col, 'brand']).agg(
         sales=('Actual Sales Amount', 'sum'),
         units=('Sales Quantity', 'sum'),
         txns=('Receipt Number', 'nunique') if 'Receipt Number' in df_clean.columns else ('Sales Quantity', 'count')
     ).reset_index()
 
-    store_summary['full_name'] = store_summary.apply(
-        lambda r: STORE_MAPPING.get(r['clean_code'], {}).get('full_name', str(r[org_name_col])), axis=1
-    )
-    store_summary['region'] = store_summary.apply(
-        lambda r: STORE_MAPPING.get(r['clean_code'], {}).get('region', 'Western Region' if any(k in str(r[org_name_col]).upper() for k in ['JED', 'REDSEA', 'TABUK']) or 'K2' in r['clean_code'] else 'Riyadh Central Region'), axis=1
-    )
-    store_summary['manager'] = store_summary.apply(
-        lambda r: STORE_MAPPING.get(r['clean_code'], {}).get('manager', 'Sultan' if r['region'] == 'Riyadh Central Region' else 'Rajib'), axis=1
-    )
+    store_summary['full_name'] = store_summary.apply(lambda r: STORE_MAPPING[r['clean_code']]['full_name'], axis=1)
+    store_summary['region'] = store_summary.apply(lambda r: STORE_MAPPING[r['clean_code']]['region'], axis=1)
+    store_summary['manager'] = store_summary.apply(lambda r: STORE_MAPPING[r['clean_code']]['manager'], axis=1)
 
     store_summary['atv'] = (store_summary['sales'] / store_summary['txns'].replace(0, np.nan)).fillna(0).round().astype(int)
     store_summary['upt'] = (store_summary['units'] / store_summary['txns'].replace(0, np.nan)).fillna(0).round(2)
@@ -399,22 +389,31 @@ def process_and_build():
     sales_with_target = valid_targets['sales'].sum()
     overall_ach = (sales_with_target / total_target * 100) if total_target > 0 else 0
 
-    # مصفوفة الحصص لكل علامة تجارية لاستخدامها في تحديث بطاقات الـ KPI ديناميكياً
     brand_kpi_summary = {}
     for b in ['ALL', 'MMS', 'DZL']:
         sub_df = store_summary if b == 'ALL' else store_summary[store_summary['brand'] == b]
         b_sales = int(sub_df['sales'].sum())
         b_target = int(sub_df['target'].fillna(0).sum())
-        b_ly = int(sub_df['ly_sales'].fillna(0).sum())
+        
+        sub_lfl = sub_df[sub_df['ly_sales'].notna()]
+        b_ly = int(sub_lfl['ly_sales'].sum())
+        b_cur_lfl = sub_lfl['sales'].sum()
+        
         b_units = int(sub_df['units'].sum())
         b_txns = int(sub_df['txns'].sum())
+        b_soh = int(sub_df['soh_units'].sum())
         b_ach = round((b_sales / b_target * 100), 1) if b_target > 0 else 0
-        b_yoy = round(((b_sales - b_ly) / b_ly * 100), 1) if b_ly > 0 else 0
+        b_yoy_val = round(((b_cur_lfl - b_ly) / b_ly * 100), 1) if b_ly > 0 else 0
         b_atv = int(round(b_sales / b_txns)) if b_txns > 0 else 0
+        b_upt = round(b_units / b_txns, 2) if b_txns > 0 else 0
         b_asp = int(round(b_sales / b_units)) if b_units > 0 else 0
+        b_str = round((b_units / (b_units + b_soh) * 100), 1) if (b_units + b_soh) > 0 else 0
+        
         brand_kpi_summary[b] = {
-            "sales": f"{b_sales:,} SAR", "target": f"{b_target:,} SAR", "ly": f"{b_ly:,} SAR",
-            "ach": f"{b_ach}%", "yoy": f"{b_yoy:+.1f}%", "atv": f"SAR {b_atv:,}", "asp": f"SAR {b_asp:,}"
+            "sales": f"{b_sales:,}", "target": f"{b_target:,}", "ly": f"{b_ly:,}",
+            "ach": f"{b_ach}%", "yoy": f"{b_yoy_val:+.1f}%", "yoy_val": b_yoy_val,
+            "atv": f"{b_atv:,}", "units": f"{b_units:,}", "txns": f"{b_txns:,}",
+            "upt": f"{b_upt:.2f}", "str": f"{b_str}%", "asp": f"{b_asp:,}"
         }
 
     main_cat_summary = df_clean.groupby('main_category').agg(
@@ -425,8 +424,8 @@ def process_and_build():
     main_cat_summary['asp'] = (main_cat_summary['sales'] / main_cat_summary['units'].replace(0, np.nan)).fillna(0).round().astype(int)
 
     cat_soh_dict = {}
-    stock_col_name = next((c for c in df_soh_raw.columns if any(k in c.lower() for k in ["avail_stock", "current_stock", "stock"])), None)
-    cat_col_name = next((c for c in df_soh_raw.columns if c.lower() == "category"), None)
+    stock_col_name = next((c for c in df_soh_raw.columns if any(k in str(c).lower() for k in ["avail_stock", "current_stock", "stock"])), None)
+    cat_col_name = next((c for c in df_soh_raw.columns if str(c).lower() == "category"), None)
     if not df_soh_raw.empty and stock_col_name and cat_col_name:
         cat_soh_grouped = df_soh_raw.groupby(cat_col_name)[stock_col_name].sum().to_dict()
         for k, v in cat_soh_grouped.items():
@@ -489,15 +488,9 @@ def process_and_build():
             })
         store_cat_summary_dict[c_code] = cats_list
 
-    # محرك التوريد التلقائي المعزول كلياً
-    def clean_sku_code(val):
-        s = str(val).strip()
-        if s.endswith('.0'): s = s[:-2]
-        return s
-
     wh_sku_stock_dict = {}
-    item_soh_col = next((c for c in df_soh_raw.columns if any(k in c.lower() for k in ["product code", "item code", "barcode", "sku code"])), None)
-    code_col_name = next((c for c in df_soh_raw.columns if any(k in c.lower() for k in ["org code", "organization code", "org_code", "store code"])), None)
+    item_soh_col = next((c for c in df_soh_raw.columns if any(k in str(c).lower() for k in ["product code", "item code", "barcode", "sku code"])), None)
+    code_col_name = next((c for c in df_soh_raw.columns if any(k in str(c).lower() for k in ["org code", "organization code", "org_code", "store code"])), None)
 
     if not df_soh_raw.empty and stock_col_name and item_soh_col and code_col_name:
         df_soh_raw['clean_sku'] = df_soh_raw[item_soh_col].apply(clean_sku_code)
@@ -544,9 +537,10 @@ def process_and_build():
     excel_export_dzl = []
 
     if not df_soh_raw.empty and stock_col_name and code_col_name and item_soh_col:
-        store_sku_sales = df_clean.groupby(['clean_code', item_code_col, item_name_col, 'main_category', 'brand'])['Sales Quantity'].sum().reset_index()
-        store_sku_sales.rename(columns={'Sales Quantity': 'sept_units', item_code_col: 'item_code', item_name_col: 'item_name'}, inplace=True)
+        store_sku_sales = df_clean.groupby(['clean_code', item_code_col, barcode_col, item_name_col, 'main_category', 'brand'])['Sales Quantity'].sum().reset_index()
+        store_sku_sales.rename(columns={'Sales Quantity': 'sept_units', item_code_col: 'item_code', barcode_col: 'barcode', item_name_col: 'item_name'}, inplace=True)
         store_sku_sales['clean_sku'] = store_sku_sales['item_code'].apply(clean_sku_code)
+        store_sku_sales['barcode_clean'] = store_sku_sales['barcode'].apply(clean_sku_code)
 
         merged_sku = pd.merge(
             store_sku_sales,
@@ -563,12 +557,13 @@ def process_and_build():
         for _, row in critical_skus.iterrows():
             st_code = row['clean_code']
             st_brand = row['brand']
-            st_info = STORE_MAPPING.get(st_code, {})
-            st_name = st_info.get('full_name', st_code)
-            st_city = st_info.get('city', '')
-            st_region = st_info.get('region', '')
+            st_info = STORE_MAPPING[st_code]
+            st_name = st_info['full_name']
+            st_city = st_info['city']
+            st_region = st_info['region']
 
             sku_code = row['clean_sku']
+            barcode_val = row['barcode_clean']
             sku_name = str(row['item_name'])[:35]
             cat = row['main_category']
             days_left = int(row['days_to_stockout']) if pd.notna(row['days_to_stockout']) else 0
@@ -588,6 +583,7 @@ def process_and_build():
                     (df_soh_raw['store_code'] != 'KSWH') & 
                     (df_soh_raw['store_code'] != st_code) & 
                     (df_soh_raw['brand'] == st_brand) & 
+                    (df_soh_raw['store_code'].isin(ALL_VALID_CODES)) &
                     (df_soh_raw[stock_col_name] > 15)
                 ].copy()
                 
@@ -599,8 +595,8 @@ def process_and_build():
                     donor_row = surplus_branches.sort_values(by=['city_match', 'region_match', stock_col_name], ascending=[False, False, False]).iloc[0]
                     
                     donor_code = donor_row['store_code']
-                    donor_info = STORE_MAPPING.get(donor_code, {})
-                    donor_name = donor_info.get('full_name', donor_code)
+                    donor_info = STORE_MAPPING[donor_code]
+                    donor_name = donor_info['full_name']
                     donor_qty = int(donor_row[stock_col_name])
                     match_type = "🏙️ Same City" if donor_row['city_match'] else ("📍 Same Region" if donor_row['region_match'] else "🚛 Cross-Region")
                     source_route = f"{donor_name} ({donor_code} - Surplus: {donor_qty}) [{match_type}]"
@@ -611,7 +607,7 @@ def process_and_build():
 
             rep_item = {
                 "brand": st_brand, "type": action_type, "store_name": f"{st_name} ({st_code})",
-                "category_focus": f"{cat} | {sku_name} (SKU: {sku_code})",
+                "category_focus": f"{cat} | {sku_name} (Barcode: {barcode_val})",
                 "from_source": source_route, "suggested_units": f"{needed_qty:,} Pcs",
                 "urgency": urgency_str
             }
@@ -619,7 +615,7 @@ def process_and_build():
 
             export_entry = {
                 "Brand": st_brand, "Action Type": action_type, "Store Code": st_code, "Store Name": st_name,
-                "Main Category": cat, "SKU Code": sku_code, "Product Name": sku_name,
+                "Barcode": barcode_val, "SKU Code": sku_code, "Product Name": sku_name, "Main Category": cat,
                 "Store SOH": int(row['store_soh']), "WH SOH (KSWH)": wh_available, "Daily Velocity": round(daily_v, 1),
                 "Est Days to Stock-out": days_left if row['store_soh'] > 0 else 0, "Suggested QTY (Pcs)": needed_qty,
                 "Source Route": source_route
@@ -634,12 +630,10 @@ def process_and_build():
         if excel_export_mms:
             path_mms = os.path.join(REPORTS_DIR, "Auto_Replenishment_MMS.xlsx")
             pd.DataFrame(excel_export_mms).to_excel(path_mms, index=False)
-            print(f"[✓] Auto-Replenishment Plan generated for MMS: {path_mms}")
 
         if excel_export_dzl:
             path_dzl = os.path.join(REPORTS_DIR, "Auto_Replenishment_DZL.xlsx")
             pd.DataFrame(excel_export_dzl).to_excel(path_dzl, index=False)
-            print(f"[✓] Auto-Replenishment Plan generated for DZL: {path_dzl}")
     except Exception as e:
         print(f"[!] Warning exporting Excel plans: {e}")
 
@@ -700,11 +694,10 @@ def process_and_build():
 
     insights = {
         "critical": f"Central warehouse (KSWH) holds {wh_total_stock:,} units ready for category stock health optimization.",
-        "attention": "Independent transfer and replenishment schedules generated for DZL and MMS stores.",
+        "attention": "Independent transfer and replenishment schedules generated for DZL (3 doors) and MMS (17 doors).",
         "opportunity": "Scale high-velocity children's toys and beauty categories across underperforming doors to beat LY benchmarks."
     }
 
-    # ApexCharts Setup
     chart_stores = store_summary.head(12)
     apex_categories = [str(r['full_name']).replace("MMS Riyadh ", "").replace("MMS ", "").replace("DZL ", "") for _, r in chart_stores.iterrows()]
     apex_sales = [round(float(r['sales'])) for _, r in chart_stores.iterrows()]
@@ -817,7 +810,7 @@ def process_and_build():
                 </div>
                 <div>
                     <div style="font-size:11px; color:#94a3b8;">ATV</div>
-                    <div style="font-size:13px; font-weight:700; color:#fff;">{r_atv:,}</div>
+                    <div style="font-size:13px; font-weight:700; color:#fff;">{r_atv:,} SAR</div>
                 </div>
                 <div>
                     <div style="font-size:11px; color:#94a3b8;">ASP</div>
@@ -862,8 +855,9 @@ def process_and_build():
                 <td style="font-weight:700;color:#38bdf8;">{st_units:,}</td>
                 <td style="font-weight:700;color:#fff;">{st_txns:,}</td>
                 <td style="font-weight:700;color:#10b981;">{st_upt:.2f}</td>
+                <td style="font-weight:700;color:#38bdf8;">{r['atv']:,}</td>
                 <td>{r['str_pct']}%</td>
-                <td style="color:#38bdf8;font-weight:600;">{r['asp']:,}</td>
+                <td style="color:#f59e0b;font-weight:600;">{r['asp']:,}</td>
             </tr>
             """
 
@@ -890,6 +884,7 @@ def process_and_build():
                             <th>QTY Sold</th>
                             <th>Transactions</th>
                             <th>UPT</th>
+                            <th>ATV (SAR)</th>
                             <th>STR%</th>
                             <th>ASP</th>
                         </tr>
@@ -906,6 +901,7 @@ def process_and_build():
                             <td style="color:#38bdf8;">{int(r_units):,}</td>
                             <td style="color:#fff;">{int(r_txns):,}</td>
                             <td style="color:#10b981;">{r_upt:.2f}</td>
+                            <td style="color:#38bdf8;">{r_atv:,}</td>
                             <td>-</td>
                             <td style="color:#f59e0b;">{r_asp:,}</td>
                         </tr>
@@ -1025,12 +1021,13 @@ def process_and_build():
             <td>{yoy_cell}</td>
             <td style="color:#94a3b8;">{target_str}</td>
             <td style="min-width:130px;">{ach_str}</td>
-            <td style="font-weight:700;color:#38bdf8;">{st_units_val:,}</td>
-            <td style="font-weight:700;color:#fff;">{st_txns_val:,}</td>
-            <td style="font-weight:700;color:#10b981;">{st_upt:.2f}</td>
+            <td style="font-weight:700;color:#38bdf8;">{st_units:,}</td>
+            <td style="font-weight:700;color:#fff;">{st_txns:,}</td>
+            <td style="font-weight:700;color:#10b981;">{st_upt_val:.2f}</td>
+            <td style="font-weight:700;color:#38bdf8;">{row['atv']:,}</td>
             <td>{row['str_pct']}%</td>
             <td>{diag_badge}</td>
-            <td style="color:#38bdf8;font-weight:600;">{row['asp']:,}</td>
+            <td style="color:#f59e0b;font-weight:600;">{row['asp']:,}</td>
         </tr>
         """
 
@@ -1078,7 +1075,6 @@ def process_and_build():
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>MMS & DZL Executive Commercial Intelligence Dashboard</title>
-    <!-- ApexCharts Library -->
     <script src="https://cdn.jsdelivr.net/npm/apexcharts"></script>
     <style>
         :root {{
@@ -1195,7 +1191,7 @@ def process_and_build():
         <button onclick="toggleAIChat()" style="background:transparent; border:none; color:#94a3b8; font-size:18px; cursor:pointer;">&times;</button>
     </div>
     <div class="ai-chat-messages" id="aiChatMessages">
-        <div class="ai-msg">Hello! I am your Multi-Brand Merchandising Copilot. Ask me about MMS or DZL store performance, targets, stock cover, or critical replenishments.</div>
+        <div class="ai-msg">Hello! I am your Multi-Brand Merchandising Copilot. Ask me about MMS (17 doors) or DZL (3 doors) store performance, targets, stock cover, or critical replenishments.</div>
     </div>
     <div class="ai-chat-input-bar">
         <input type="text" id="aiInput" class="ai-chat-input" placeholder="Ask about MMS or DZL stores, warehouse..." onkeypress="handleAIChatKey(event)">
@@ -1250,7 +1246,7 @@ def process_and_build():
     document.querySelectorAll(".region-table-wrap").forEach(function(el) {{
       if (el.getAttribute("data-region") !== user.region) el.style.display = "none";
     }});
-    document.querySelectorAll("#storesTable tbody tr").forEach(function(el) {{
+    document.querySelectorAll("#storesTable tbody tr.store-row").forEach(function(el) {{
       if (el.getAttribute("data-region") !== user.region) el.style.display = "none";
     }});
     document.querySelectorAll(".decision-card-item").forEach(function(el) {{
@@ -1370,7 +1366,7 @@ def process_and_build():
         <div class="brand-switcher">
             <button class="brand-btn active" id="btn-brand-ALL" onclick="switchBrand('ALL')">🏢 ALL BRANDS</button>
             <button class="brand-btn" id="btn-brand-MMS" onclick="switchBrand('MMS')">🔴 MUMUSO (17)</button>
-            <button class="brand-btn" id="btn-brand-DZL" onclick="switchBrand('DZL')">🟡 DZL (6)</button>
+            <button class="brand-btn" id="btn-brand-DZL" onclick="switchBrand('DZL')">🟡 DZL (3)</button>
         </div>
         <span id="current-user-badge" style="font-size:13px; font-weight:700; color:#38bdf8; background:#1e293b; padding:8px 14px; border-radius:8px; border:1px solid #334155;">👤 Authenticating..</span>
         <button class="logout-btn" onclick="logout()">Logout</button>
@@ -1393,7 +1389,6 @@ def process_and_build():
     </div>
 </div>
 
-<!-- بطاقات الـ KPI العلوية الديناميكية التي تتحدث تلقائياً مع اختيار البراند -->
 <div class="kpi-grid">
     <div class="kpi-card">
         <div class="kpi-title">Current Total Sales</div>
@@ -1405,7 +1400,7 @@ def process_and_build():
     </div>
     <div class="kpi-card">
         <div class="kpi-title">Network LFL YoY Growth</div>
-        <div class="kpi-value" id="kpi-yoy-growth" style="color:{net_yoy_col};">{network_lfl_growth:+.1f}%</div>
+        <div class="kpi-value" id="kpi-yoy-growth" style="color:{net_yoy_col}; font-weight:800;">{network_lfl_growth:+.1f}%</div>
     </div>
     <div class="kpi-card">
         <div class="kpi-title">Total Target</div>
@@ -1470,6 +1465,7 @@ def process_and_build():
                         <th>QTY Sold</th>
                         <th>Transactions</th>
                         <th>UPT</th>
+                        <th>ATV (SAR)</th>
                         <th>STR%</th>
                         <th>Commercial Diagnostic</th>
                         <th>ASP</th>
@@ -1477,6 +1473,21 @@ def process_and_build():
                 </thead>
                 <tbody>
                     {store_table_rows}
+                    <tr id="storesTableTotalRow" style="background:#0c1220; font-weight:800; border-top:3px solid #38bdf8; font-size:13px;">
+                        <td colspan="4" style="color:#38bdf8; text-transform:uppercase;" id="storesTotalTitle">TOTAL PORTFOLIO (ALL DOORS)</td>
+                        <td style="color:#fff;" id="tot-sales">{total_sales:,}</td>
+                        <td style="color:#38bdf8;" id="tot-ly">{total_ly_sales:,}</td>
+                        <td id="tot-yoy" style="color:{net_yoy_col}; font-weight:800;">{network_lfl_growth:+.1f}%</td>
+                        <td style="color:#94a3b8;" id="tot-target">{total_target:,}</td>
+                        <td id="tot-ach" style="color:{'#10b981' if overall_ach>=100 else '#f59e0b'};">{overall_ach:.1f}%</td>
+                        <td style="color:#38bdf8;" id="tot-units">{total_units:,}</td>
+                        <td style="color:#fff;" id="tot-txns">{total_txns:,}</td>
+                        <td style="color:#10b981;" id="tot-upt">{network_upt:.2f}</td>
+                        <td style="color:#38bdf8;" id="tot-atv">{network_atv:,}</td>
+                        <td id="tot-str">-</td>
+                        <td style="color:#64748b;">-</td>
+                        <td style="color:#f59e0b;" id="tot-asp">{network_asp:,}</td>
+                    </tr>
                 </tbody>
             </table>
         </div>
@@ -1561,7 +1572,6 @@ def process_and_build():
         </div>
     </div>
 
-    <!-- أزرار تصفية خطة التوريد حسب البراند -->
     <div style="display:flex; gap:10px; margin-bottom:14px; align-items:center;">
         <span style="font-size:13px; font-weight:700; color:#94a3b8;">Filter Replenishment By Brand:</span>
         <button class="sub-tab-btn active" id="repl-btn-all" onclick="filterReplByBrand('ALL')">🏢 ALL BRANDS</button>
@@ -1576,7 +1586,7 @@ def process_and_build():
                 <span style="color:var(--text-muted); font-size:12px;">Transfers are strictly isolated per brand network to guarantee operational compliance</span>
             </div>
             <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap;">
-                <input type="text" id="replSearch" class="table-search" placeholder="Search SKU, Store, or Category..." onkeyup="filterReplTable()">
+                <input type="text" id="replSearch" class="table-search" placeholder="Search Barcode, SKU, Store, or Category..." onkeyup="filterReplTable()">
                 <select id="replTypeFilter" class="table-select" onchange="filterReplTable()">
                     <option value="ALL">All Actions</option>
                     <option value="Predictive WH Replenishment">Central WH (KSWH)</option>
@@ -1607,7 +1617,7 @@ def process_and_build():
     <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:16px; flex-wrap:wrap; gap:12px;">
         <div style="display:flex; gap:10px;">
             <button class="sub-tab-btn active" id="btn-top500" onclick="switchMoversTab('top')">🔥 TOP 500 HIGH-VELOCITY FAST MOVERS</button>
-            <button class="sub-tab-btn" id="btn-low500" onclick="switchMoversTab('low')">❄️ LOW 500 DEAD & SLOW STOCK (CLEARANCE CANDIDATES)</button>
+            <button class="sub-tab-btn" id="btn-low500" onclick="switchMoversTab('low')">❄️️ LOW 500 DEAD & SLOW STOCK (CLEARANCE CANDIDATES)</button>
         </div>
         <div style="display:flex; gap:10px; align-items:center;">
             <select id="moversCatFilter" class="table-select" onchange="filterMoversTable()">
@@ -1659,7 +1669,27 @@ def process_and_build():
 
   document.addEventListener("DOMContentLoaded", function() {{
     initApexCharts();
+    checkAndApplyYoYColor("ALL");
   }});
+
+  function checkAndApplyYoYColor(brand) {{
+    const k = BRAND_KPIS[brand];
+    if (!k) return;
+    const isNegative = (k.yoy_val < 0);
+    const targetColor = isNegative ? "#ef4444" : "#10b981";
+
+    const yoyEl = document.getElementById("kpi-yoy-growth");
+    if (yoyEl) {{
+      yoyEl.innerText = k.yoy;
+      yoyEl.style.setProperty("color", targetColor, "important");
+    }}
+
+    const totYoyEl = document.getElementById("tot-yoy");
+    if (totYoyEl) {{
+      totYoyEl.innerText = k.yoy;
+      totYoyEl.style.setProperty("color", targetColor, "important");
+    }}
+  }}
 
   function initApexCharts() {{
     var storeOptions = {{
@@ -1732,38 +1762,48 @@ def process_and_build():
     }}
   }}
 
-  // دالة التبديل الفوري بين البراندين وتحديث بطاقات الـ KPI العلوية
   function switchBrand(brand) {{
     currentActiveBrand = brand;
     document.querySelectorAll(".brand-btn").forEach(btn => btn.classList.remove("active"));
     const activeBtn = document.getElementById("btn-brand-" + brand);
     if (activeBtn) activeBtn.classList.add("active");
 
-    // 1. تحديث بطاقات الـ KPI العلوية لحظياً
     if (BRAND_KPIS[brand]) {{
       const k = BRAND_KPIS[brand];
-      document.getElementById("kpi-total-sales").innerHTML = k.sales;
-      document.getElementById("kpi-total-target").innerText = k.target;
-      document.getElementById("kpi-ly-sales").innerText = k.ly;
+      document.getElementById("kpi-total-sales").innerHTML = k.sales + " <span class='kpi-unit'>SAR</span>";
+      document.getElementById("kpi-total-target").innerText = k.target + " SAR";
+      document.getElementById("kpi-ly-sales").innerText = k.ly + " SAR";
       document.getElementById("kpi-overall-ach").innerText = k.ach;
-      document.getElementById("kpi-yoy-growth").innerText = k.yoy;
-      document.getElementById("kpi-network-atv").innerText = k.atv;
-      document.getElementById("kpi-network-asp").innerText = k.asp;
+
+      checkAndApplyYoYColor(brand);
+
+      document.getElementById("kpi-network-atv").innerText = "SAR " + k.atv;
+      document.getElementById("kpi-network-asp").innerText = "SAR " + k.asp;
+
+      const titlePrefix = brand === "ALL" ? "TOTAL PORTFOLIO (ALL DOORS)" : (brand === "MMS" ? "TOTAL MUMUSO NETWORK (17 DOORS)" : "TOTAL DZL DOZOLO (3 DOORS)");
+      document.getElementById("storesTotalTitle").innerText = titlePrefix;
+      document.getElementById("tot-sales").innerText = k.sales;
+      document.getElementById("tot-ly").innerText = k.ly;
+      document.getElementById("tot-target").innerText = k.target;
+      document.getElementById("tot-ach").innerText = k.ach;
+      document.getElementById("tot-units").innerText = k.units;
+      document.getElementById("tot-txns").innerText = k.txns;
+      document.getElementById("tot-upt").innerText = k.upt;
+      document.getElementById("tot-atv").innerText = k.atv;
+      document.getElementById("tot-str").innerText = k.str;
+      document.getElementById("tot-asp").innerText = k.asp;
     }}
 
-    // 2. فلترة صفوف الجداول
     document.querySelectorAll(".store-row").forEach(row => {{
       const rBrand = row.getAttribute("data-brand");
       row.style.display = (brand === "ALL" || rBrand === brand) ? "" : "none";
     }});
 
-    // 3. فلترة بطاقات القرارات
     document.querySelectorAll(".store-card-item").forEach(card => {{
       const cBrand = card.getAttribute("data-brand");
       card.style.display = (brand === "ALL" || cBrand === brand) ? "" : "none";
     }});
 
-    // 4. فلترة جدول التوريد وقائمة الأصناف
     filterReplByBrand(brand);
     renderMoversTable();
   }}
@@ -1823,7 +1863,7 @@ def process_and_build():
     var qLower = q.toLowerCase();
 
     if (qLower.includes("dzl") || qLower.includes("dozolo")) {{
-      reply = `DZL Network has 6 operational stores. Top central location is DZL Solitaire and Riyadh Park. All DZL replenishment and transfers are strictly isolated from MMS.`;
+      reply = `DZL Network has 3 operational stores: DZL Riyadh Park (K107), DZL Solitaire (K111), and DZL Redsea (K204). All transfers remain isolated from MMS.`;
     }} else if (qLower.includes("warehouse") || qLower.includes("kswh") || qLower.includes("stock")) {{
       reply = `Central Warehouse (KSWH) currently holds ${{AI_CONTEXT.wh_soh.toLocaleString()}} units ready for dispatch across both networks.`;
     }} else if (qLower.includes("target") || qLower.includes("ach") || qLower.includes("achievement")) {{
@@ -1833,7 +1873,7 @@ def process_and_build():
     }} else {{
       var matchedStore = AI_CONTEXT.stores.find(s => qLower.includes(s.clean_code.toLowerCase()) || qLower.includes(s.full_name.toLowerCase()));
       if (matchedStore) {{
-        reply = `Store ${{matchedStore.full_name}} (${{matchedStore.clean_code}} - [${{matchedStore.brand}}]): Total Sales ${{Math.round(matchedStore.sales).toLocaleString()}} SAR, Target Achievement ${{matchedStore.ach_pct ? matchedStore.ach_pct.toFixed(1) + '%' : 'N/A'}}, UPT: ${{matchedStore.upt}}, Status: ${{matchedStore.diag_title}}.`;
+        reply = `Store ${{matchedStore.full_name}} (${{matchedStore.clean_code}} - [${{matchedStore.brand}}]): Total Sales ${{Math.round(matchedStore.sales).toLocaleString()}} SAR, Target Achievement ${{matchedStore.ach_pct ? matchedStore.ach_pct.toFixed(1) + '%' : 'N/A'}}, UPT: ${{matchedStore.upt}}, ATV: ${{matchedStore.atv}}, Status: ${{matchedStore.diag_title}}.`;
       }} else {{
         reply = `Network summary: Solitaire and Dhahran lead performance. Check Commercial Action Hub for brand-specific IST transfers.`;
       }}
@@ -2133,7 +2173,7 @@ def process_and_build():
 
   function filterStores() {{
       const query = document.getElementById("storeSearch").value.toLowerCase();
-      const rows = document.querySelectorAll("#storesTable tbody tr");
+      const rows = document.querySelectorAll("#storesTable tbody tr.store-row");
       rows.forEach(r => {{
           const text = r.innerText.toLowerCase();
           const rBrand = r.getAttribute("data-brand");
