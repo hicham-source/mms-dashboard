@@ -43,6 +43,7 @@ STORE_MAPPING = {
 DZL_VALID_CODES = {"K107", "K111", "K204"}
 MMS_VALID_CODES = {k for k, v in STORE_MAPPING.items() if v["brand"] == "MMS"}
 ALL_VALID_CODES = DZL_VALID_CODES.union(MMS_VALID_CODES)
+EXCLUDED_KEYWORDS = ['gwp', 'shopping bag', 'carrier bag', 'plastic bag', 'gift with purchase', 'non-sale', 'packaging']
 
 def identify_files():
     sales_mms = os.path.join(REPORTS_DIR, "50100002-20260928.xlsx")
@@ -148,7 +149,6 @@ def load_targets(target_path):
         return {}
 
 def load_soh_data(soh_path):
-    """قراءة وفحص سطوك DZL و MMS بالتفصيل من ملف SOH.xlsx ومطابقة كود المحل والبراند بدقة"""
     if not soh_path or not os.path.exists(soh_path): return {}, {}, pd.DataFrame(), 0
     soh_store_summary = {}
     soh_hierarchy_map = {}
@@ -160,25 +160,28 @@ def load_soh_data(soh_path):
         df_soh = pd.read_excel(soh_path, sheet_name=sheet_to_use, skiprows=1)
         df_soh.columns = [str(c).replace('\u200c', '').replace('\ufeff', '').strip() for c in df_soh.columns]
         
-        # فحص إضافي إذا كانت العناوين في الصف الأول
         if not any(k in [str(c).lower() for c in df_soh.columns] for k in ["avail_stock", "current_stock", "stock"]):
             df_soh = pd.read_excel(soh_path, sheet_name=sheet_to_use)
             df_soh.columns = [str(c).replace('\u200c', '').replace('\ufeff', '').strip() for c in df_soh.columns]
 
         code_col = next((c for c in df_soh.columns if any(k in str(c).lower() for k in ["org code", "organization code", "org_code", "store code", "org_no"])), None)
-        brand_col = next((c for c in df_soh.columns if str(c).strip().lower() in ["brand", "brand_name"]), None)
         stock_col = next((c for c in df_soh.columns if any(k in str(c).lower() for k in ["avail_stock", "current_stock", "stock", "qty"])), None)
         price_col = next((c for c in df_soh.columns if "retail_price" in str(c).lower() or "price" in str(c).lower()), None)
         cat_col = next((c for c in df_soh.columns if str(c).lower() == "category"), None)
-        pg_col = next((c for c in df_soh.columns if str(c).lower() in ["product_group", "product group"]), None)
+        desc_col = next((c for c in df_soh.columns if any(k in str(c).lower() for k in ["product name", "item name", "description"])), None)
 
         if not code_col or not stock_col:
-            print("[!] Could not detect SOH columns.")
             return {}, {}, pd.DataFrame(), 0
 
         df_soh = df_soh[df_soh[code_col].notna()].copy()
         df_soh[stock_col] = pd.to_numeric(df_soh[stock_col], errors='coerce').fillna(0)
-        
+
+        if desc_col:
+            for kw in EXCLUDED_KEYWORDS:
+                df_soh = df_soh[~df_soh[desc_col].astype(str).str.lower().str.contains(kw)]
+        if cat_col:
+            df_soh = df_soh[~df_soh[cat_col].astype(str).str.lower().str.contains('gwp')]
+
         if price_col:
             df_soh[price_col] = pd.to_numeric(df_soh[price_col], errors='coerce').fillna(0)
             df_soh['stock_val'] = df_soh[stock_col] * df_soh[price_col]
@@ -192,19 +195,6 @@ def load_soh_data(soh_path):
 
         df_soh['clean_code'] = df_soh[code_col].apply(parse_soh_code)
 
-        # تحديد علامة الصنف (MMS أم DZL)
-        if brand_col:
-            df_soh['brand'] = df_soh[brand_col].astype(str).str.strip().str.upper()
-        else:
-            df_soh['brand'] = df_soh['clean_code'].apply(lambda c: STORE_MAPPING.get(c, {}).get('brand', 'MMS'))
-
-        if cat_col and pg_col:
-            pairs = df_soh[[cat_col, pg_col]].drop_duplicates().dropna()
-            for _, r in pairs.iterrows():
-                pg_val = str(r[pg_col]).strip()
-                c_val = str(r[cat_col]).replace('_', ' ').replace('’', "'").strip()
-                if pg_val: soh_hierarchy_map[pg_val.lower()] = c_val
-
         wh_df = df_soh[df_soh['clean_code'] == 'KSWH']
         if not wh_df.empty: wh_total_stock = int(wh_df[stock_col].sum())
 
@@ -215,7 +205,6 @@ def load_soh_data(soh_path):
         ).reset_index()
 
         soh_store_summary = grouped.set_index('clean_code').to_dict(orient='index')
-        print(f"[✓] SOH successfully loaded: {len(soh_store_summary)} stores mapped.")
         return soh_store_summary, soh_hierarchy_map, df_soh, wh_total_stock
     except Exception as e:
         print(f"[!] Error processing SOH: {e}")
@@ -240,7 +229,7 @@ def send_telegram_alert(total_sales, overall_ach, wh_stock, top_repl_list):
         payload = json.dumps({"chat_id": chat_id, "text": text}).encode('utf-8')
         req = urllib.request.Request(url, data=payload, headers={'Content-Type': 'application/json'})
         urllib.request.urlopen(req, timeout=8)
-        print("[✓] Telegram executive summary alert sent successfully!")
+        print("[✓] Telegram alert sent successfully!")
     except Exception as e:
         print(f"[!] Warning: Could not send Telegram alert: {e}")
 
@@ -288,13 +277,15 @@ def process_and_build():
     org_name_col = next((c for c in df_clean.columns if any(k in str(c).lower() for k in ['organization name', 'org name', 'store name', 'shop name'])), None)
     if not org_name_col: org_name_col = org_code_col
 
-    item_code_col = next((c for c in df_clean.columns if str(c).lower() in ['product code', 'item code', 'barcode', 'sku code', 'product no', 'item_code']), None)
+    pg_col = next((c for c in df_clean.columns if any(k in str(c).lower() for k in ['product_group', 'product group', 'style', 'model'])), None)
+    item_code_col = next((c for c in df_clean.columns if str(c).lower() in ['product code', 'item code', 'sku code', 'product no', 'item_code']), None)
     item_name_col = next((c for c in df_clean.columns if str(c).lower() in ['product name', 'item name', 'product_name']), None)
     barcode_col = next((c for c in df_clean.columns if any(k in str(c).lower() for k in ['barcode', 'bar code', 'upc'])), None)
-    
+
     if not item_code_col: item_code_col = df_clean.columns[0]
     if not item_name_col: item_name_col = item_code_col
     if not barcode_col: barcode_col = item_code_col
+    if not pg_col: pg_col = item_name_col
 
     raw_subsub_col = next((c for c in df_clean.columns if str(c).lower() in ['category name', 'product_category', 'category']), None)
     if not raw_subsub_col:
@@ -303,25 +294,26 @@ def process_and_build():
 
     df_clean['sub_subgroup'] = df_clean[raw_subsub_col].fillna("Other").astype(str).str.strip()
 
-    # مصفوفة الفئات المزدوجة (MMS + DZL Footwear/Accessories)
+    for kw in EXCLUDED_KEYWORDS:
+        df_clean = df_clean[~df_clean[item_name_col].astype(str).str.lower().str.contains(kw)]
+        df_clean = df_clean[~df_clean['sub_subgroup'].astype(str).str.lower().str.contains(kw)]
+
+    df_clean['clean_code'] = df_clean[org_code_col].apply(clean_store_code_str)
+    df_clean = df_clean[df_clean['clean_code'].isin(ALL_VALID_CODES)].copy()
+    df_clean['brand'] = df_clean['clean_code'].apply(lambda c: STORE_MAPPING[c]['brand'])
+
     def map_to_main_category(row):
         code = str(row['clean_code'])
         sub_raw = str(row['sub_subgroup']).strip()
         sub_l = sub_raw.lower()
 
-        # إذا كان المتجر DZL: نحترم مصفوفة الفئات الخاصة به (Shoes, Accessories, GWP, etc.)
         if code in DZL_VALID_CODES or row.get('brand') == 'DZL':
-            if any(x in sub_l for x in ['shoe', 'footwear', 'sandal', 'slipper', 'boot', 'sneaker', 'heel', 'flat']):
+            if any(x in sub_l for x in ['shoe', 'footwear', 'sandal', 'slipper', 'boot', 'sneaker', 'runner', 'trainer']):
                 return "Shoes"
-            elif any(x in sub_l for x in ['bag', 'wallet', 'belt', 'accessory', 'accessories', 'sock', 'hat', 'cap', 'sunglass']):
+            elif any(x in sub_l for x in ['bag', 'wallet', 'belt', 'accessory', 'accessories', 'sock', 'hat', 'insole']):
                 return "Accessories"
-            elif 'gwp' in sub_l:
-                return "GWP"
-            elif sub_raw in ["Shoes", "Accessories", "GWP", "Home & Daily Use"]:
-                return sub_raw
-            return "Shoes & Accessories"
+            return "Shoes"
 
-        # إذا كان MMS: الفئات التسع القياسية
         if sub_l in soh_hier_map: return soh_hier_map[sub_l]
         if any(x in sub_l for x in ['toy', 'doll', 'clay', 'puzzle', 'baby', 'block', 'gun', 'bubble']): return "Children's Goods"
         if any(x in sub_l for x in ['lip', 'mask', 'cream', 'perfume', 'makeup', 'eyebrow', 'clean', 'wipe', 'bath', 'nail', 'soap']): return "Beauty & Cleaning"
@@ -334,9 +326,6 @@ def process_and_build():
         if any(x in sub_l for x in ['pillow', 'towel', 'cushion', 'eyemask']): return "Home Textile"
         return "Variety Lifestyle"
 
-    df_clean['clean_code'] = df_clean[org_code_col].apply(clean_store_code_str)
-    df_clean = df_clean[df_clean['clean_code'].isin(ALL_VALID_CODES)].copy()
-    df_clean['brand'] = df_clean['clean_code'].apply(lambda c: STORE_MAPPING[c]['brand'])
     df_clean['main_category'] = df_clean.apply(map_to_main_category, axis=1)
 
     store_summary = df_clean.groupby(['clean_code', org_name_col, 'brand']).agg(
@@ -442,10 +431,12 @@ def process_and_build():
             "upt": f"{b_upt:.2f}", "str": f"{b_str}%", "asp": f"{b_asp:,}"
         }
 
-    main_cat_summary = df_clean.groupby('main_category').agg(
-        sales=('Actual Sales Amount', 'sum'),
-        units=('Sales Quantity', 'sum')
-    ).reset_index().sort_values(by='sales', ascending=False).reset_index(drop=True)
+    main_cat_summary = df_clean.groupby('main_category', as_index=False).agg({
+        'Actual Sales Amount': 'sum',
+        'Sales Quantity': 'sum'
+    })
+    main_cat_summary.rename(columns={'Actual Sales Amount': 'sales', 'Sales Quantity': 'units'}, inplace=True)
+    main_cat_summary = main_cat_summary.sort_values(by='sales', ascending=False).reset_index(drop=True)
     main_cat_summary['contribution'] = ((main_cat_summary['sales'] / total_sales) * 100).round(1)
     main_cat_summary['asp'] = (main_cat_summary['sales'] / main_cat_summary['units'].replace(0, np.nan)).fillna(0).round().astype(int)
 
@@ -453,10 +444,10 @@ def process_and_build():
     stock_col_name = next((c for c in df_soh_raw.columns if any(k in str(c).lower() for k in ["avail_stock", "current_stock", "stock"])), None)
     cat_col_name = next((c for c in df_soh_raw.columns if str(c).lower() == "category"), None)
     if not df_soh_raw.empty and stock_col_name and cat_col_name:
-        cat_soh_grouped = df_soh_raw.groupby(cat_col_name)[stock_col_name].sum().to_dict()
-        for k, v in cat_soh_grouped.items():
-            clean_k = str(k).replace('_', ' ').replace('’', "'").strip()
-            cat_soh_dict[clean_k] = int(v)
+        cat_soh_grouped = df_soh_raw.groupby(cat_col_name, as_index=False)[stock_col_name].sum()
+        for _, row_c in cat_soh_grouped.iterrows():
+            clean_k = str(row_c[cat_col_name]).replace('_', ' ').replace('’', "'").strip()
+            cat_soh_dict[clean_k] = int(row_c[stock_col_name])
 
     def get_cat_health(row):
         c_name = str(row['main_category']).strip()
@@ -471,7 +462,7 @@ def process_and_build():
     main_cat_summary['health_status'] = [x[0] for x in cat_health_res]
     main_cat_summary['health_color'] = [x[1] for x in cat_health_res]
 
-    main_cat_store = df_clean.groupby(['main_category', 'clean_code'])['Actual Sales Amount'].sum().reset_index()
+    main_cat_store = df_clean.groupby(['main_category', 'clean_code'], as_index=False)['Actual Sales Amount'].sum()
     top_store_per_main_cat = {}
     for c_name, grp in main_cat_store.groupby('main_category'):
         best = grp.sort_values(by='Actual Sales Amount', ascending=False).iloc[0]
@@ -480,18 +471,21 @@ def process_and_build():
         top_store_per_main_cat[c_name] = f"{st_name} ({round(best['Actual Sales Amount']):,} SAR)"
     main_cat_summary['leading_store'] = main_cat_summary['main_category'].map(top_store_per_main_cat).fillna("-")
 
-    subsub_summary = df_clean.groupby(['main_category', 'sub_subgroup']).agg(
-        sales=('Actual Sales Amount', 'sum'),
-        units=('Sales Quantity', 'sum')
-    ).reset_index().sort_values(by='sales', ascending=False).reset_index(drop=True)
+    subsub_summary = df_clean.groupby(['main_category', 'sub_subgroup'], as_index=False).agg({
+        'Actual Sales Amount': 'sum',
+        'Sales Quantity': 'sum'
+    })
+    subsub_summary.rename(columns={'Actual Sales Amount': 'sales', 'Sales Quantity': 'units'}, inplace=True)
+    subsub_summary = subsub_summary.sort_values(by='sales', ascending=False).reset_index(drop=True)
     subsub_summary['contribution'] = ((subsub_summary['sales'] / total_sales) * 100).round(1)
     subsub_summary['asp'] = (subsub_summary['sales'] / subsub_summary['units'].replace(0, np.nan)).fillna(0).round().astype(int)
 
     store_total_sales_map = store_summary.set_index('clean_code')['sales'].to_dict()
-    store_cat_summary = df_clean.groupby(['clean_code', 'main_category']).agg(
-        sales=('Actual Sales Amount', 'sum'),
-        units=('Sales Quantity', 'sum')
-    ).reset_index()
+    store_cat_summary = df_clean.groupby(['clean_code', 'main_category'], as_index=False).agg({
+        'Actual Sales Amount': 'sum',
+        'Sales Quantity': 'sum'
+    })
+    store_cat_summary.rename(columns={'Actual Sales Amount': 'sales', 'Sales Quantity': 'units'}, inplace=True)
 
     store_cat_summary_dict = {}
     for code, grp in store_cat_summary.groupby('clean_code'):
@@ -504,7 +498,6 @@ def process_and_build():
             store_mix = (c_sales / st_total * 100) if st_total > 0 else 0
             asp_item = round(c_sales / c_units) if c_units > 0 else 0
             
-            # WOC حقيقي ودقيق
             st_woc_val = store_summary[store_summary['clean_code'] == c_code]['woc'].values[0] if not store_summary[store_summary['clean_code'] == c_code].empty else 6.0
             h_str = f"OOS Risk ({st_woc_val} Wks)" if st_woc_val < 4.0 and st_woc_val > 0 else (f"Healthy ({st_woc_val} Wks)" if 4.0 <= st_woc_val <= 10.0 else f"Overstocked ({st_woc_val} Wks)")
             h_col = "#ef4444" if st_woc_val < 4.0 and st_woc_val > 0 else ("#10b981" if 4.0 <= st_woc_val <= 10.0 else "#f59e0b")
@@ -517,70 +510,95 @@ def process_and_build():
         store_cat_summary_dict[c_code] = cats_list
 
     wh_sku_stock_dict = {}
-    item_soh_col = next((c for c in df_soh_raw.columns if any(k in str(c).lower() for k in ["product code", "item code", "barcode", "sku code"])), None)
+    wh_barcode_stock_dict = {}
+    item_soh_col = next((c for c in df_soh_raw.columns if any(k in str(c).lower() for k in ["item code", "item_code", "sku code"])), None)
+    barcode_soh_col = next((c for c in df_soh_raw.columns if any(k in str(c).lower() for k in ["barcode", "bar code", "upc"])), None)
     code_col_name = next((c for c in df_soh_raw.columns if any(k in str(c).lower() for k in ["org code", "organization code", "org_code", "store code"])), None)
 
-    if not df_soh_raw.empty and stock_col_name and item_soh_col and code_col_name:
-        df_soh_raw['clean_sku'] = df_soh_raw[item_soh_col].apply(clean_sku_code)
+    if not df_soh_raw.empty and stock_col_name and code_col_name:
         df_soh_raw['store_code'] = df_soh_raw[code_col_name].apply(clean_store_code_str)
-        df_soh_raw['brand'] = df_soh_raw['store_code'].apply(lambda c: STORE_MAPPING.get(c, {}).get('brand', 'MMS'))
-        wh_sku_stock_dict = df_soh_raw[df_soh_raw['store_code'] == 'KSWH'].groupby('clean_sku')[stock_col_name].sum().to_dict()
+        if item_soh_col:
+            wh_sku_stock_dict = df_soh_raw[df_soh_raw['store_code'] == 'KSWH'].groupby(df_soh_raw[item_soh_col].apply(clean_sku_code), as_index=False)[stock_col_name].sum().set_index('clean_sku')[stock_col_name].to_dict() if 'clean_sku' in df_soh_raw else {}
+        if barcode_soh_col:
+            df_soh_raw['clean_barcode'] = df_soh_raw[barcode_soh_col].apply(clean_sku_code)
+            wh_barcode_stock_dict = df_soh_raw[df_soh_raw['store_code'] == 'KSWH'].groupby('clean_barcode', as_index=False)[stock_col_name].sum().set_index('clean_barcode')[stock_col_name].to_dict()
 
-    sku_grouped = df_clean[df_clean['Actual Sales Amount'] > 0].groupby([item_code_col, item_name_col, 'main_category', 'sub_subgroup', 'brand']).agg(
-        sales=('Actual Sales Amount', 'sum'),
-        units=('Sales Quantity', 'sum')
-    ).reset_index().sort_values(by='units', ascending=False).reset_index(drop=True)
-    sku_grouped['asp'] = (sku_grouped['sales'] / sku_grouped['units'].replace(0, np.nan)).fillna(0).round().astype(int)
+    # بناء قائمة Top Movers بأمان تام وبدون أي تكرار لأعمدة Pandas
+    top_movers_list = []
 
-    top500_df = sku_grouped.head(500).copy()
-    top500_list = []
-    for idx, r in top500_df.iterrows():
-        sku_c = clean_sku_code(r[item_code_col])
-        wh_soh_item = int(wh_sku_stock_dict.get(sku_c, 0))
-        daily_rate = r['units'] / 30.0
-        stock_days = int(wh_soh_item / daily_rate) if daily_rate > 0 else 999
-        top500_list.append({
-            "rank": idx + 1, "code": sku_c, "name": str(r[item_name_col])[:40],
-            "main_cat": r['main_category'], "subsub": r['sub_subgroup'], "brand": r['brand'],
-            "units": int(r['units']), "sales": int(round(r['sales'])),
-            "asp": int(r['asp']), "wh_soh": wh_soh_item, "stock_days": stock_days
+    # 1. DZL Top 20 Shoes (Product Group / SKC)
+    dzl_df = df_clean[df_clean['brand'] == 'DZL'].copy()
+    if not dzl_df.empty:
+        dzl_agg = dzl_df.groupby([pg_col, barcode_col, item_name_col, 'main_category'], as_index=False).agg({
+            'Actual Sales Amount': 'sum',
+            'Sales Quantity': 'sum'
         })
+        dzl_agg.rename(columns={'Actual Sales Amount': 'sales_rev', 'Sales Quantity': 'tot_units'}, inplace=True)
+        dzl_agg = dzl_agg.sort_values(by='tot_units', ascending=False)
+        
+        dzl_shoes_only = dzl_agg[dzl_agg['main_category'] == 'Shoes'].head(20)
+        for idx, r in dzl_shoes_only.iterrows():
+            b_val = clean_sku_code(r[barcode_col])
+            pg_val = str(r[pg_col])[:30]
+            wh_stock = int(wh_barcode_stock_dict.get(b_val, 0))
+            u_sold = int(r['tot_units'])
+            rev_val = round(r['sales_rev'])
+            daily_v = u_sold / 30.0
+            stock_days = int(wh_stock / daily_v) if daily_v > 0 else 999
+            asp_v = round(rev_val / u_sold) if u_sold > 0 else 0
+            top_movers_list.append({
+                "rank": len(top_movers_list) + 1, "code": b_val, "name": f"[{pg_val}] {str(r[item_name_col])[:20]}",
+                "main_cat": r['main_category'], "subsub": "Product Group / SKC", "brand": "DZL",
+                "units": u_sold, "sales": rev_val, "asp": int(asp_v), "wh_soh": wh_stock, "stock_days": stock_days
+            })
 
-    low500_df = sku_grouped.tail(500).sort_values(by='units', ascending=True).reset_index(drop=True)
-    low500_list = []
-    for idx, r in low500_df.iterrows():
-        sku_c = clean_sku_code(r[item_code_col])
-        wh_soh_item = int(wh_sku_stock_dict.get(sku_c, 0))
-        daily_rate = r['units'] / 30.0
-        stock_days = int(wh_soh_item / daily_rate) if daily_rate > 0 else 999
-        low500_list.append({
-            "rank": idx + 1, "code": sku_c, "name": str(r[item_name_col])[:40],
-            "main_cat": r['main_category'], "subsub": r['sub_subgroup'], "brand": r['brand'],
-            "units": int(r['units']), "sales": int(round(r['sales'])),
-            "asp": int(r['asp']), "wh_soh": wh_soh_item, "stock_days": stock_days
+    # 2. MMS Top 100 Fast Movers
+    mms_df = df_clean[df_clean['brand'] == 'MMS'].copy()
+    if not mms_df.empty:
+        mms_agg = mms_df.groupby([barcode_col, item_code_col, item_name_col, 'main_category', 'sub_subgroup'], as_index=False).agg({
+            'Actual Sales Amount': 'sum',
+            'Sales Quantity': 'sum'
         })
+        mms_agg.rename(columns={'Actual Sales Amount': 'sales_rev', 'Sales Quantity': 'tot_units'}, inplace=True)
+        mms_agg = mms_agg.sort_values(by='tot_units', ascending=False).head(100)
 
+        for idx, r in mms_agg.iterrows():
+            b_val = clean_sku_code(r[barcode_col])
+            i_val = clean_sku_code(r[item_code_col])
+            wh_stock = int(wh_barcode_stock_dict.get(b_val, wh_sku_stock_dict.get(i_val, 0)))
+            u_sold = int(r['tot_units'])
+            rev_val = round(r['sales_rev'])
+            daily_v = u_sold / 30.0
+            stock_days = int(wh_stock / daily_v) if daily_v > 0 else 999
+            asp_v = round(rev_val / u_sold) if u_sold > 0 else 0
+            top_movers_list.append({
+                "rank": len(top_movers_list) + 1, "code": b_val if b_val else i_val, "name": str(r[item_name_col])[:40],
+                "main_cat": r['main_category'], "subsub": r['sub_subgroup'], "brand": "MMS",
+                "units": u_sold, "sales": rev_val, "asp": int(asp_v), "wh_soh": wh_stock, "stock_days": stock_days
+            })
+
+    # خطة التوريد التلقائية
     replenishment_recommendations = []
     excel_export_mms = []
     excel_export_dzl = []
 
-    if not df_soh_raw.empty and stock_col_name and code_col_name and item_soh_col:
-        store_sku_sales = df_clean.groupby(['clean_code', item_code_col, barcode_col, item_name_col, 'main_category', 'brand'])['Sales Quantity'].sum().reset_index()
-        store_sku_sales.rename(columns={'Sales Quantity': 'sept_units', item_code_col: 'item_code', barcode_col: 'barcode', item_name_col: 'item_name'}, inplace=True)
-        store_sku_sales['clean_sku'] = store_sku_sales['item_code'].apply(clean_sku_code)
-        store_sku_sales['barcode_clean'] = store_sku_sales['barcode'].apply(clean_sku_code)
+    if not df_soh_raw.empty and stock_col_name and code_col_name:
+        store_sku_sales = df_clean.groupby(['clean_code', item_code_col, barcode_col, item_name_col, 'main_category', 'brand'], as_index=False).agg({'Sales Quantity': 'sum'})
+        store_sku_sales.rename(columns={'Sales Quantity': 'sept_units'}, inplace=True)
+        store_sku_sales['clean_barcode'] = store_sku_sales[barcode_col].apply(clean_sku_code)
+        store_sku_sales['clean_sku'] = store_sku_sales[item_code_col].apply(clean_sku_code)
 
         merged_sku = pd.merge(
             store_sku_sales,
-            df_soh_raw[['store_code', 'clean_sku', stock_col_name]],
-            left_on=['clean_code', 'clean_sku'],
-            right_on=['store_code', 'clean_sku'],
+            df_soh_raw[['store_code', 'clean_barcode', stock_col_name]] if 'clean_barcode' in df_soh_raw.columns else df_soh_raw[['store_code', 'clean_sku', stock_col_name]],
+            left_on=['clean_code', 'clean_barcode'],
+            right_on=['store_code', 'clean_barcode'],
             how='inner'
         )
         merged_sku.rename(columns={stock_col_name: 'store_soh'}, inplace=True)
         merged_sku['daily_rate'] = merged_sku['sept_units'] / 30.0
         merged_sku['days_to_stockout'] = merged_sku['store_soh'] / merged_sku['daily_rate'].replace(0, np.nan)
-        critical_skus = merged_sku[(merged_sku['days_to_stockout'] < 10.0) & (merged_sku['sept_units'] >= 3)].sort_values(by='days_to_stockout', ascending=True)
+        critical_skus = merged_sku[(merged_sku['days_to_stockout'] < 10.0) & (merged_sku['sept_units'] >= 2)].sort_values(by='days_to_stockout', ascending=True)
 
         for _, row in critical_skus.iterrows():
             st_code = row['clean_code']
@@ -590,15 +608,14 @@ def process_and_build():
             st_city = st_info['city']
             st_region = st_info['region']
 
-            sku_code = row['clean_sku']
-            barcode_val = row['barcode_clean']
-            sku_name = str(row['item_name'])[:35]
+            b_val = row['clean_barcode']
+            sku_name = str(row[item_name_col])[:35]
             cat = row['main_category']
             days_left = int(row['days_to_stockout']) if pd.notna(row['days_to_stockout']) else 0
             
             daily_v = row['daily_rate']
             needed_qty = max(10, int((daily_v * 28) - row['store_soh']))
-            wh_available = wh_sku_stock_dict.get(sku_code, 0)
+            wh_available = wh_barcode_stock_dict.get(b_val, 0)
             urgency_str = f"🚨 Out of Stock (0 Pcs left)" if row['store_soh'] <= 0 else f"⚠️ Stock-Out in {days_left}d (Vel: {daily_v:.1f}/d)"
 
             if wh_available >= needed_qty:
@@ -607,26 +624,21 @@ def process_and_build():
             else:
                 action_type = "Store Transfer (IST)"
                 surplus_branches = df_soh_raw[
-                    (df_soh_raw['clean_sku'] == sku_code) & 
+                    (df_soh_raw.get('clean_barcode', df_soh_raw.get('clean_sku')) == b_val) & 
                     (df_soh_raw['store_code'] != 'KSWH') & 
                     (df_soh_raw['store_code'] != st_code) & 
-                    (df_soh_raw['brand'] == st_brand) & 
                     (df_soh_raw['store_code'].isin(ALL_VALID_CODES)) &
-                    (df_soh_raw[stock_col_name] > 15)
+                    (df_soh_raw[stock_col_name] > 10)
                 ].copy()
                 
                 if not surplus_branches.empty:
                     surplus_branches['donor_city'] = surplus_branches['store_code'].apply(lambda c: STORE_MAPPING.get(c, {}).get('city', ''))
-                    surplus_branches['donor_region'] = surplus_branches['store_code'].apply(lambda c: STORE_MAPPING.get(c, {}).get('region', ''))
                     surplus_branches['city_match'] = (surplus_branches['donor_city'] == st_city).astype(int)
-                    surplus_branches['region_match'] = (surplus_branches['donor_region'] == st_region).astype(int)
-                    donor_row = surplus_branches.sort_values(by=['city_match', 'region_match', stock_col_name], ascending=[False, False, False]).iloc[0]
-                    
+                    donor_row = surplus_branches.sort_values(by=['city_match', stock_col_name], ascending=[False, False]).iloc[0]
                     donor_code = donor_row['store_code']
-                    donor_info = STORE_MAPPING[donor_code]
-                    donor_name = donor_info['full_name']
+                    donor_name = STORE_MAPPING[donor_code]['full_name']
                     donor_qty = int(donor_row[stock_col_name])
-                    match_type = "🏙️ Same City" if donor_row['city_match'] else ("📍 Same Region" if donor_row['region_match'] else "🚛 Cross-Region")
+                    match_type = "🏙️ Same City" if donor_row['city_match'] else "🚛 Inter-City"
                     source_route = f"{donor_name} ({donor_code} - Surplus: {donor_qty}) [{match_type}]"
                     needed_qty = min(needed_qty, donor_qty // 2)
                 else:
@@ -635,7 +647,7 @@ def process_and_build():
 
             rep_item = {
                 "brand": st_brand, "type": action_type, "store_name": f"{st_name} ({st_code})",
-                "category_focus": f"{cat} | {sku_name} (Barcode: {barcode_val})",
+                "category_focus": f"{cat} | {sku_name} (Barcode: {b_val})",
                 "from_source": source_route, "suggested_units": f"{needed_qty:,} Pcs",
                 "urgency": urgency_str
             }
@@ -643,7 +655,7 @@ def process_and_build():
 
             export_entry = {
                 "Brand": st_brand, "Action Type": action_type, "Store Code": st_code, "Store Name": st_name,
-                "Barcode": barcode_val, "SKU Code": sku_code, "Product Name": sku_name, "Main Category": cat,
+                "Barcode": b_val, "Product Name": sku_name, "Main Category": cat,
                 "Store SOH": int(row['store_soh']), "WH SOH (KSWH)": wh_available, "Daily Velocity": round(daily_v, 1),
                 "Est Days to Stock-out": days_left if row['store_soh'] > 0 else 0, "Suggested QTY (Pcs)": needed_qty,
                 "Source Route": source_route
@@ -656,16 +668,11 @@ def process_and_build():
 
     try:
         if excel_export_mms:
-            path_mms = os.path.join(REPORTS_DIR, "Auto_Replenishment_MMS.xlsx")
-            pd.DataFrame(excel_export_mms).to_excel(path_mms, index=False)
-
+            pd.DataFrame(excel_export_mms).to_excel(os.path.join(REPORTS_DIR, "Auto_Replenishment_MMS.xlsx"), index=False)
         if excel_export_dzl:
-            path_dzl = os.path.join(REPORTS_DIR, "Auto_Replenishment_DZL.xlsx")
-            pd.DataFrame(excel_export_dzl).to_excel(path_dzl, index=False)
+            pd.DataFrame(excel_export_dzl).to_excel(os.path.join(REPORTS_DIR, "Auto_Replenishment_DZL.xlsx"), index=False)
     except Exception as e:
         print(f"[!] Warning exporting Excel plans: {e}")
-
-    send_telegram_alert(total_sales, overall_ach, wh_total_stock, replenishment_recommendations)
 
     top_main_cats = set(main_cat_summary.head(3)['main_category'])
     def commercial_diagnosis_engine(row):
@@ -691,12 +698,12 @@ def process_and_build():
             needs = f"Priority replenishment for core volume drivers in {st_top_cats[0] if st_top_cats else 'Shoes & Accessories'}."
         elif ach < 70 and soh >= 10000:
             diag_title, diag_col = "Assortment Mismatch", "#f59e0b"
-            prob = f"Store holds solid display depth ({soh:,.0f} Pcs) but turnover is slow ({ach:.1f}% Ach). Gondolas tied to slow sub-subgroups."
+            prob = f"Store holds solid display depth ({soh:,.0f} Pcs) but turnover is slow ({ach:.1f}% Ach)."
             action = f"⚡ ACTION: Execute Category Assortment Swap. Reallocate front entrance to fast moving sizes & footwear winners."
             needs = "Inject high-velocity categories."
         else:
             diag_title, diag_col = "Steady Flow", "#38bdf8"
-            prob = f"Balanced run-rate ({ach:.1f}% Ach) with display volume ({soh:,.0f} Pcs)."
+            prob = f"Balanced run-rate ({ach:.1f}% Ach) with healthy display volume ({soh:,.0f} Pcs)."
             action = f"Focus cashier upselling to lift ATV (Current: {row['atv']:,} SAR) and rotate seasonal novelty end-caps."
             needs = "Routine weekly assortment replenishment and promotional feature rotation."
 
@@ -721,9 +728,9 @@ def process_and_build():
     store_summary['top_cats_str'] = [e['top_categories_str'] for e in engine_res]
 
     insights = {
-        "critical": f"Central warehouse (KSWH) holds {wh_total_stock:,} units ready for category stock health optimization.",
-        "attention": "Independent transfer and replenishment schedules generated for DZL (3 doors) and MMS (17 doors).",
-        "opportunity": "Scale high-velocity footwear & lifestyle categories across underperforming doors to beat LY benchmarks."
+        "critical": f"Central warehouse (KSWH) holds {wh_total_stock:,} commercial units ready for category stock health optimization.",
+        "attention": "Independent transfer and replenishment schedules generated for DZL (3 doors) and MMS (17 doors). Non-commercial items excluded.",
+        "opportunity": "Scale Top 20 high-velocity footwear & lifestyle categories across underperforming doors to beat LY benchmarks."
     }
 
     chart_stores = store_summary.head(12)
@@ -1084,8 +1091,7 @@ def process_and_build():
     for _, s in store_summary.iterrows():
         store_options_html += f'<option value="{s["clean_code"]}">{s["full_name"]} ({s["clean_code"]}) - {s["brand"]}</option>'
 
-    top500_json = json.dumps(top500_list)
-    low500_json = json.dumps(low500_list)
+    top_movers_json = json.dumps(top_movers_list)
 
     dashboard_ai_context = {
         "network_sales": total_sales,
@@ -1219,7 +1225,7 @@ def process_and_build():
         <button onclick="toggleAIChat()" style="background:transparent; border:none; color:#94a3b8; font-size:18px; cursor:pointer;">&times;</button>
     </div>
     <div class="ai-chat-messages" id="aiChatMessages">
-        <div class="ai-msg">Hello! I am your Multi-Brand Merchandising Copilot. Ask me about MMS (17 doors) or DZL (3 doors) store performance, targets, stock cover, or critical replenishments.</div>
+        <div class="ai-msg">Hello! I am your Multi-Brand Merchandising Copilot. Ask me about MMS (17 doors) or DZL (3 doors) store performance, targets, stock cover, or critical replenishments. Non-commercial SKUs are excluded.</div>
     </div>
     <div class="ai-chat-input-bar">
         <input type="text" id="aiInput" class="ai-chat-input" placeholder="Ask about MMS or DZL stores, warehouse..." onkeypress="handleAIChatKey(event)">
@@ -1451,8 +1457,8 @@ def process_and_build():
 <div class="view-toggle-bar">
     <button class="view-btn active" id="btn-stores" onclick="switchView('stores')">🏢 Store Commercial Matrix</button>
     <button class="view-btn" id="btn-regions" onclick="switchView('regions')">🌍 Region-Wise Performance</button>
-    <button class="view-btn" id="btn-business" onclick="switchView('business')">📦 Business-Wise Performance (9 Categories)</button>
-    <button class="view-btn" id="btn-action" onclick="switchView('action')" style="border-left:2px solid #38bdf8;">⚡ Commercial Action Hub (Replenishment & Top/Low 500)</button>
+    <button class="view-btn" id="btn-business" onclick="switchView('business')">📦 Business-Wise Performance</button>
+    <button class="view-btn" id="btn-action" onclick="switchView('action')" style="border-left:2px solid #38bdf8;">⚡ Commercial Action Hub (Replenishment & Top Movers)</button>
 </div>
 
 <!-- 1. Store Commercial Matrix View -->
@@ -1555,7 +1561,7 @@ def process_and_build():
     <div class="table-wrap">
         <div class="table-header">
             <div>
-                <h3 id="tableHierarchyTitle">PRODUCT HIERARCHY MATRIX (LEVEL 1: MAIN CATEGORIES)</h3>
+                <h3 id="tableHierarchyTitle">PRODUCT HIERARCHY MATRIX</h3>
                 <span style="color:var(--text-muted);font-size:12px;">Select Store to inspect category mix and Stock Health Ratio</span>
             </div>
             <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap;">
@@ -1590,7 +1596,7 @@ def process_and_build():
     </div>
 </div>
 
-<!-- 4. Commercial Action Hub (Isolated MMS & DZL Auto-Replenishment) -->
+<!-- 4. Commercial Action Hub (Top 20 Shoes for DZL & Predictive Replenishment) -->
 <div id="view-action" style="display:none;">
     <div class="section-title" style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:10px;">
         <span>⚡ PREDICTIVE AUTO-REPLENISHMENT & STOCK-OUT FORECAST (KSWH & IST)</span>
@@ -1644,14 +1650,13 @@ def process_and_build():
 
     <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:16px; flex-wrap:wrap; gap:12px;">
         <div style="display:flex; gap:10px;">
-            <button class="sub-tab-btn active" id="btn-top500" onclick="switchMoversTab('top')">🔥 TOP 500 HIGH-VELOCITY FAST MOVERS</button>
-            <button class="sub-tab-btn" id="btn-low500" onclick="switchMoversTab('low')">❄ LOW 500 DEAD & SLOW STOCK (CLEARANCE CANDIDATES)</button>
+            <button class="sub-tab-btn active" id="btn-top-movers" style="cursor:default;">🔥 HIGH-VELOCITY CORE MOVERS (<span id="movers-label-text">TOP 100 MMS & TOP 20 DZL SHOES</span>)</button>
         </div>
         <div style="display:flex; gap:10px; align-items:center;">
             <select id="moversCatFilter" class="table-select" onchange="filterMoversTable()">
                 {main_cat_options}
             </select>
-            <input type="text" id="moversSearch" class="table-search" placeholder="Search SKU code or name..." onkeyup="filterMoversTable()">
+            <input type="text" id="moversSearch" class="table-search" placeholder="Search Barcode, SKU, or Product..." onkeyup="filterMoversTable()">
         </div>
         <div>
             <button class="export-btn" onclick="exportMoversToExcel()">📥 Export List to Excel</button>
@@ -1687,17 +1692,16 @@ def process_and_build():
   const BRAND_KPIS = {json.dumps(brand_kpi_summary)};
   const SUBSUB_DATA = {json.dumps(subsub_json_data)};
   const MAIN_CAT_HTML = `{main_cat_table_rows}`;
-  const TOP_500_DATA = {top500_json};
-  const LOW_500_DATA = {low500_json};
+  const TOP_MOVERS_DATA = {top_movers_json};
   const AI_CONTEXT = {json.dumps(dashboard_ai_context)};
 
-  let currentMoversType = 'top';
   let currentActiveBrand = 'ALL';
   let currentReplBrand = 'ALL';
 
   document.addEventListener("DOMContentLoaded", function() {{
     initApexCharts();
     checkAndApplyYoYColor("ALL");
+    renderMoversTable();
   }});
 
   function checkAndApplyYoYColor(brand) {{
@@ -1832,6 +1836,13 @@ def process_and_build():
       card.style.display = (brand === "ALL" || cBrand === brand) ? "" : "none";
     }});
 
+    const lbl = document.getElementById("movers-label-text");
+    if (lbl) {{
+        if (brand === "DZL") lbl.innerText = "TOP 20 DZL SHOES (BY PRODUCT GROUP / SKC)";
+        else if (brand === "MMS") lbl.innerText = "TOP 100 MUMUSO MOVERS";
+        else lbl.innerText = "TOP 100 MMS & TOP 20 DZL SHOES";
+    }}
+
     filterReplByBrand(brand);
     renderMoversTable();
   }}
@@ -1891,9 +1902,9 @@ def process_and_build():
     var qLower = q.toLowerCase();
 
     if (qLower.includes("dzl") || qLower.includes("dozolo")) {{
-      reply = `DZL Network has 3 operational stores: DZL Riyadh Park (K107), DZL Solitaire (K111), and DZL Redsea (K204). Footwear and accessories inventory is fully segregated from MMS.`;
+      reply = `DZL Network has 3 operational stores: DZL Riyadh Park (K107), DZL Solitaire (K111), and DZL Redsea (K204). Footwear and accessories inventory is fully segregated from MMS. Non-commercial items like GWP are filtered out.`;
     }} else if (qLower.includes("warehouse") || qLower.includes("kswh") || qLower.includes("stock")) {{
-      reply = `Central Warehouse (KSWH) currently holds ${{AI_CONTEXT.wh_soh.toLocaleString()}} units ready for dispatch across both networks.`;
+      reply = `Central Warehouse (KSWH) currently holds ${{AI_CONTEXT.wh_soh.toLocaleString()}} commercial units ready for dispatch across both networks.`;
     }} else if (qLower.includes("target") || qLower.includes("ach") || qLower.includes("achievement")) {{
       reply = `Overall portfolio target achievement is ${{AI_CONTEXT.overall_ach.toFixed(1)}}% with total sales of ${{Math.round(AI_CONTEXT.network_sales).toLocaleString()}} SAR against a target of ${{Math.round(AI_CONTEXT.network_target).toLocaleString()}} SAR.`;
     }} else if (qLower.includes("transfer") || qLower.includes("shortage") || qLower.includes("ist")) {{
@@ -1990,7 +2001,7 @@ def process_and_build():
     const title = document.getElementById("tableHierarchyTitle");
 
     if (storeCode === "ALL" && catName === "ALL") {{
-      title.innerText = "PRODUCT HIERARCHY MATRIX (LEVEL 1: MAIN CATEGORIES)";
+      title.innerText = "PRODUCT HIERARCHY MATRIX";
       thead.innerHTML = `
         <tr>
           <th>#</th>
@@ -2082,20 +2093,12 @@ def process_and_build():
     tbody.innerHTML = rowsHtml || "<tr><td colspan='7' style='text-align:center;'>No matching products found for this filter</td></tr>";
   }}
 
-  function switchMoversTab(type) {{
-    currentMoversType = type;
-    document.getElementById("btn-top500").classList.toggle("active", type === 'top');
-    document.getElementById("btn-low500").classList.toggle("active", type === 'low');
-    renderMoversTable();
-  }}
-
   function renderMoversTable() {{
-    const data = (currentMoversType === 'top') ? TOP_500_DATA : LOW_500_DATA;
     const catFilter = document.getElementById("moversCatFilter").value;
     const searchVal = document.getElementById("moversSearch").value.toLowerCase();
     const tbody = document.getElementById("moversTableBody");
 
-    let filtered = data.filter(item => {{
+    let filtered = TOP_MOVERS_DATA.filter(item => {{
       const matchBrand = (currentActiveBrand === "ALL" || item.brand === currentActiveBrand);
       const matchCat = (catFilter === "ALL" || item.main_cat === catFilter);
       const matchSearch = (item.code.toLowerCase().includes(searchVal) || item.name.toLowerCase().includes(searchVal) || item.subsub.toLowerCase().includes(searchVal));
@@ -2103,13 +2106,13 @@ def process_and_build():
     }});
 
     let html = "";
-    filtered.slice(0, 100).forEach(r => {{
-      const rankColor = currentMoversType === 'top' ? '#10b981' : '#ef4444';
+    filtered.forEach((r, idx) => {{
+      const rankColor = '#10b981';
       const daysColor = r.stock_days < 15 ? '#ef4444' : (r.stock_days < 30 ? '#f59e0b' : '#10b981');
       const bColor = r.brand === 'DZL' ? '#ef4444' : '#38bdf8';
       html += `
         <tr>
-          <td style="color:${{rankColor}}; font-weight:800;">#${{r.rank}}</td>
+          <td style="color:${{rankColor}}; font-weight:800;">#${{idx+1}}</td>
           <td style="color:#38bdf8; font-weight:600;"><span class="badge" style="background:${{bColor}}22; color:${{bColor}}; margin-right:4px;">${{r.brand}}</span>${{r.code}}</td>
           <td style="color:#fff; font-weight:600;">${{r.name}}</td>
           <td>${{r.main_cat}}</td>
@@ -2129,16 +2132,17 @@ def process_and_build():
   function filterMoversTable() {{ renderMoversTable(); }}
 
   function exportMoversToExcel() {{
-    const data = (currentMoversType === 'top') ? TOP_500_DATA : LOW_500_DATA;
-    let csv = "Rank,Brand,Item Code,Product Name,Main Category,Sub-Category,Units Sold,Sales Revenue (SAR),ASP (SAR),WH SOH (KSWH),Est. Stock-Out (Days)\\n";
-    data.forEach(r => {{
-      csv += `"${{r.rank}}","${{r.brand}}","${{r.code}}","${{r.name.replace(/"/g, '""')}}","${{r.main_cat}}","${{r.subsub}}","${{r.units}}","${{r.sales}}","${{r.asp}}","${{r.wh_soh}}","${{r.stock_days}}"\\n`;
+    let csv = "Rank,Brand,Barcode/SKC,Product Name/Model,Main Category,Sub-Category,Units Sold,Sales Revenue (SAR),ASP (SAR),WH SOH (KSWH),Est. Stock-Out (Days)\\n";
+    TOP_MOVERS_DATA.forEach((r, idx) => {{
+      if (currentActiveBrand === "ALL" || r.brand === currentActiveBrand) {{
+        csv += `"${{idx+1}}","${{r.brand}}","${{r.code}}","${{r.name.replace(/"/g, '""')}}","${{r.main_cat}}","${{r.subsub}}","${{r.units}}","${{r.sales}}","${{r.asp}}","${{r.wh_soh}}","${{r.stock_days}}"\\n`;
+      }}
     }});
 
     const blob = new Blob(["\\uFEFF" + csv], {{ type: 'text/csv;charset=utf-8;' }});
     const link = document.createElement("a");
     link.href = URL.createObjectURL(blob);
-    link.download = `Portfolio_${{currentMoversType.toUpperCase()}}_500_Movers.csv`;
+    link.download = `Top_Commercial_Movers_${{currentActiveBrand}}.csv`;
     link.style.display = "none";
     document.body.appendChild(link);
     link.click();
@@ -2203,10 +2207,10 @@ def process_and_build():
       const query = document.getElementById("storeSearch").value.toLowerCase();
       const rows = document.querySelectorAll("#storesTable tbody tr.store-row");
       rows.forEach(r => {{
-          const text = r.innerText.toLowerCase();
+          const title = r.innerText.toLowerCase();
           const rBrand = r.getAttribute("data-brand");
           const matchBrand = (currentActiveBrand === "ALL" || rBrand === currentActiveBrand);
-          r.style.display = (matchBrand && text.includes(query)) ? "" : "none";
+          r.style.display = (matchBrand && title.includes(query)) ? "" : "none";
       }});
   }}
 </script>
