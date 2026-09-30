@@ -208,7 +208,6 @@ def load_soh_data(soh_path):
         df_soh = df_soh[df_soh[code_col].notna()].copy()
         df_soh[stock_col] = pd.to_numeric(df_soh[stock_col], errors='coerce').fillna(0)
 
-        # استبعاد GWP و Shopping Bags والمواد غير التجارية
         if desc_col:
             for kw in EXCLUDED_KEYWORDS:
                 df_soh = df_soh[~df_soh[desc_col].astype(str).str.lower().str.contains(kw, regex=False)]
@@ -269,6 +268,17 @@ def load_soh_data(soh_path):
         return {}, {}, {}, {}, pd.DataFrame(), 0
 
 def process_and_build():
+    # تهيئة جميع المتغيرات مسبقاً لمنع أي NameError بشكل نهائي
+    replenishment_recommendations = []
+    excel_export_mms = []
+    excel_export_dzl = []
+    store_table_rows = ""
+    decision_cards_html = ""
+    region_kpi_cards = ""
+    region_tables_html = ""
+    repl_rows_html = ""
+    html_content = ""
+
     sales_mms_file, sales_dzl_file, soh_file, target_file, ly_file = identify_files()
     targets_map = load_targets(target_file)
     soh_map, soh_hier_map, sku_to_pg_map, sku_to_cat_map, df_soh_raw, wh_total_stock = load_soh_data(soh_file)
@@ -462,9 +472,19 @@ def process_and_build():
             "upt": f"{b_upt:.2f}", "str": f"{b_str}%", "asp": f"{b_asp:,}"
         }
 
-    # ==========================================
+    # بيانات مخطط Top Stores لكل براند لتحديث المخطط ديناميكياً
+    store_chart_data = {}
+    for b in ['ALL', 'MMS', 'DZL']:
+        sub_st = store_summary if b == 'ALL' else store_summary[store_summary['brand'] == b]
+        limit = 12 if b != 'DZL' else 3
+        sub_chart = sub_st.sort_values(by='sales', ascending=False).head(limit)
+        store_chart_data[b] = {
+            "categories": [str(r['full_name']).replace("MMS Riyadh ", "").replace("MMS ", "").replace("DZL ", "") for _, r in sub_chart.iterrows()],
+            "sales": [round(float(r['sales'])) for _, r in sub_chart.iterrows()],
+            "targets": [round(float(r['target'])) if pd.notna(r['target']) else 0 for _, r in sub_chart.iterrows()]
+        }
+
     # إعداد إحصائيات المناطق المعزولة بالكامل لكل براند (Region KPIs per Brand)
-    # ==========================================
     region_kpis_by_brand = {}
     for b in ['ALL', 'MMS', 'DZL']:
         sub_st = store_summary if b == 'ALL' else store_summary[store_summary['brand'] == b]
@@ -561,6 +581,16 @@ def process_and_build():
             })
         store_category_details[st_c] = cats_list
 
+    # مصفوفة الـ Drill-down للأصناف في قسم Business-Wise
+    drilldown_items = df_clean.groupby(['brand', 'main_category', 'gender', 'style_group', 'clean_barcode', 'clean_item_name'], as_index=False).agg(
+        sales=('Actual Sales Amount', 'sum'),
+        units=('Sales Quantity', 'sum')
+    ).sort_values(by='sales', ascending=False)
+
+    drilldown_items['wh_soh'] = drilldown_items['clean_barcode'].map(wh_barcode_stock_dict).fillna(0).astype(int)
+    drilldown_items['asp'] = (drilldown_items['sales'] / drilldown_items['units'].replace(0, np.nan)).fillna(0).round().astype(int)
+    business_drilldown_data = drilldown_items.to_dict(orient='records')
+
     # بناء قائمة Top 20 Shoes و Low 20 Shoes لـ DZL
     dzl_shoes_df = df_clean[(df_clean['brand'] == 'DZL') & (df_clean['main_category'] == 'Shoes') & (df_clean['Actual Sales Amount'] > 0)].copy()
     dzl_top20_groups = []
@@ -625,11 +655,7 @@ def process_and_build():
         dzl_top20_groups = build_group_data(dzl_pg_summary.sort_values(by=['units', 'sales'], ascending=[False, False]).head(20))
         dzl_low20_groups = build_group_data(dzl_pg_summary.sort_values(by=['units', 'sales'], ascending=[True, True]).head(20))
 
-    # خطة التوريد التلقائية المعزولة
-    replenishment_recommendations = []
-    excel_export_mms = []
-    excel_export_dzl = []
-
+    # محرك التوريد التلقائي مع إعطاء الأولوية المطلقة للأحذية (Shoes Priority 1)
     if not df_soh_raw.empty and stock_col_name and code_col_name and barcode_soh_col:
         store_sku_sales = df_clean.groupby(['clean_code', 'clean_barcode', 'clean_sku', 'clean_item_name', 'style_group', 'main_category', 'brand'], as_index=False).agg(
             sept_units=('Sales Quantity', 'sum')
@@ -646,9 +672,17 @@ def process_and_build():
         merged_sku.rename(columns={stock_col_name: 'store_soh'}, inplace=True)
         merged_sku['daily_rate'] = merged_sku['sept_units'] / 30.0
         merged_sku['days_to_stockout'] = merged_sku['store_soh'] / merged_sku['daily_rate'].replace(0, np.nan)
-        critical_skus = merged_sku[(merged_sku['days_to_stockout'] < 10.0) & (merged_sku['sept_units'] >= 2)].sort_values(by='days_to_stockout', ascending=True)
+        
+        critical_shoes = merged_sku[(merged_sku['main_category'] == 'Shoes') & ((merged_sku['days_to_stockout'] < 12.0) | (merged_sku['store_soh'] <= 2)) & (merged_sku['sept_units'] >= 1)].copy()
+        critical_shoes['priority_rank'] = 1
+        
+        critical_acc = merged_sku[(merged_sku['main_category'] != 'Shoes') & (merged_sku['days_to_stockout'] < 8.0) & (merged_sku['sept_units'] >= 2)].copy()
+        critical_acc['priority_rank'] = 2
 
-        for _, row in critical_skus.iterrows():
+        all_critical = pd.concat([critical_shoes, critical_acc], ignore_index=True)
+        all_critical = all_critical.sort_values(by=['priority_rank', 'days_to_stockout', 'sept_units'], ascending=[True, True, False])
+
+        for _, row in all_critical.iterrows():
             st_code = row['clean_code']
             st_brand = row['brand']
             st_info = STORE_MAPPING[st_code]
@@ -663,9 +697,15 @@ def process_and_build():
             days_left = int(row['days_to_stockout']) if pd.notna(row['days_to_stockout']) else 0
             
             daily_v = row['daily_rate']
-            needed_qty = max(6 if st_brand == 'DZL' else 10, int((daily_v * 28) - row['store_soh']))
+            needed_qty = max(6 if cat == 'Shoes' else 4, int((daily_v * 28) - row['store_soh']))
             wh_available = int(wh_barcode_stock_dict.get(b_val, 0))
-            urgency_str = f"🚨 Out of Stock (0 Pcs left)" if row['store_soh'] <= 0 else f"⚠️ Stock-Out in {days_left}d (Vel: {daily_v:.1f}/d)"
+            
+            if row['store_soh'] <= 0:
+                urgency_str = "🚨 Out of Stock (0 Pcs left)"
+            elif row['store_soh'] <= 2 and cat == 'Shoes':
+                urgency_str = f"⚠️ Broken Size Run ({int(row['store_soh'])} Pcs left)"
+            else:
+                urgency_str = f"⚠️ Stock-Out in {days_left}d (Vel: {daily_v:.1f}/d)"
 
             if wh_available >= needed_qty:
                 action_type = "Predictive WH Replenishment"
@@ -677,7 +717,7 @@ def process_and_build():
                     (df_soh_raw['store_code'] != 'KSWH') & 
                     (df_soh_raw['store_code'] != st_code) & 
                     (df_soh_raw['store_code'].isin(DZL_VALID_CODES if st_brand == 'DZL' else MMS_VALID_CODES)) &
-                    (df_soh_raw[stock_col_name] > (6 if st_brand == 'DZL' else 12))
+                    (df_soh_raw[stock_col_name] > (4 if cat == 'Shoes' else 8))
                 ].copy()
                 
                 if not surplus_branches.empty:
@@ -694,20 +734,22 @@ def process_and_build():
                     action_type = "Predictive WH Replenishment"
                     source_route = f"Central Warehouse (KSWH - Limited: {wh_available})"
 
+            p_icon = "👟 [SHOE PRIORITY 1]" if cat == 'Shoes' else "👜 [ACCESSORY]"
             rep_item = {
                 "brand": st_brand, "type": action_type, "store_name": f"{st_name} ({st_code})",
-                "category_focus": f"{cat} | [{style_grp}] {sku_name} (Barcode: {b_val})",
+                "category_focus": f"{p_icon} {cat} | [{style_grp}] {sku_name} (Barcode: {b_val})",
                 "from_source": source_route, "suggested_units": f"{needed_qty:,} Pcs",
                 "urgency": urgency_str
             }
             replenishment_recommendations.append(rep_item)
 
             export_entry = {
-                "Brand": st_brand, "Action Type": action_type, "Store Code": st_code, "Store Name": st_name,
+                "Brand": st_brand, "Priority": "1 - High (Shoes)" if cat == 'Shoes' else "2 - Routine (Accessory)",
+                "Action Type": action_type, "Store Code": st_code, "Store Name": st_name,
                 "Product Group / Style": style_grp, "Barcode / SKC": b_val, "Item Code": sku_code,
-                "Product Name": sku_name, "Main Category": cat,
+                "Product Name": sku_name, "Category": cat,
                 "Store SOH": int(row['store_soh']), "WH SOH (KSWH)": wh_available, "Daily Velocity": round(daily_v, 1),
-                "Est Days to Stock-out": days_left if row['store_soh'] > 0 else 0, "Suggested QTY (Pcs)": needed_qty,
+                "Urgency Status": urgency_str, "Suggested QTY (Pcs)": needed_qty,
                 "Source Route": source_route
             }
 
@@ -722,7 +764,7 @@ def process_and_build():
         if excel_export_dzl:
             pd.DataFrame(excel_export_dzl).to_excel(os.path.join(REPORTS_DIR, "Auto_Replenishment_DZL.xlsx"), index=False)
     except Exception as e:
-        print(f"[!] Warning: Could not overwrite Excel files (File might be open): {e}")
+        print(f"[!] Warning: Could not overwrite Excel files: {e}")
 
     def commercial_diagnosis_engine(row):
         st_code = row['clean_code']
@@ -763,14 +805,7 @@ def process_and_build():
     store_summary['needs'] = [e['needs'] for e in engine_res]
     store_summary['top_cats_str'] = [e['top_categories_str'] for e in engine_res]
 
-    chart_stores = store_summary.head(12)
-    apex_categories = [str(r['full_name']).replace("MMS Riyadh ", "").replace("MMS ", "").replace("DZL ", "") for _, r in chart_stores.iterrows()]
-    apex_sales = [round(float(r['sales'])) for _, r in chart_stores.iterrows()]
-    apex_targets = [round(float(r['target'])) if pd.notna(r['target']) else 0 for _, r in chart_stores.iterrows()]
-
     net_yoy_col = "#10b981" if network_lfl_growth >= 0 else "#ef4444"
-    store_table_rows = ""
-    decision_cards_html = ""
     store_meta_map = {}
 
     for idx, row in store_summary.iterrows():
@@ -847,10 +882,6 @@ def process_and_build():
             <td style="color:#f59e0b;font-weight:600;">{row['asp']:,}</td>
         </tr>
         """
-
-    # إعداد جداول وكروت المناطق (Region-Wise)
-    region_kpi_cards = ""
-    region_tables_html = ""
 
     for reg_name, grp in [("Riyadh Central Region", store_summary[store_summary['region'] == "Riyadh Central Region"]),
                           ("Western Region", store_summary[store_summary['region'] == "Western Region"])]:
@@ -984,8 +1015,6 @@ def process_and_build():
         </div>
         """
 
-    # تجهيز جدول التوريد (repl_rows_html) بشكل مسبق قبل بناء الـ HTML
-    repl_rows_html = ""
     for idx, rep in enumerate(replenishment_recommendations):
         badge_col = "#38bdf8" if "WH" in rep['type'] else "#ef4444"
         brand_p = f'<span class="badge" style="background:{"#ef444422" if rep["brand"]=="DZL" else "#38bdf822"}; color:{"#ef4444" if rep["brand"]=="DZL" else "#38bdf8"}; border:1px solid {"#ef444455" if rep["brand"]=="DZL" else "#38bdf855"};">{rep["brand"]}</span>'
@@ -1001,7 +1030,6 @@ def process_and_build():
         </tr>
         """
 
-    # بناء قالب الـ HTML كاملاً بعد حساب كافة المتغيرات وبدون أخطاء
     html_content = f"""<!DOCTYPE html>
 <html lang="en" id="html-root">
 <head>
@@ -1030,7 +1058,7 @@ def process_and_build():
         .brand-btn {{ background: transparent; border: none; color: #94a3b8; padding: 6px 14px; border-radius: 6px; font-size: 13px; font-weight: 700; cursor: pointer; transition: 0.2s; }}
         .brand-btn.active {{ background: #2563eb; color: #fff; }}
 
-        .logout-btn {{ background: #ef444422; border: 1px solid #ef444455; color: #ef4444; padding: 8px 14px; border-radius: 8px; font-weight: 700; cursor: pointer; transition: 0.2s; font-size: 12px; }}
+        .logout-btn {{ background: #ef444422; border: 1px solid #ef444455; color: #ef4444; padding: 8px 14px; border-radius: 8px; font-weight: 700; cursor: pointer; font-size: 12px; }}
 
         .view-toggle-bar {{ display: flex; background: #0c1220; padding: 4px; border-radius: 10px; border: 1px solid var(--border); margin-bottom: 24px; width: fit-content; gap: 4px; flex-wrap: wrap; }}
         .view-btn {{ background: transparent; border: none; color: var(--text-muted); padding: 10px 22px; border-radius: 8px; font-size: 14px; font-weight: 700; cursor: pointer; transition: 0.2s; }}
@@ -1260,6 +1288,11 @@ def process_and_build():
 
 <!-- 1. Store Commercial Matrix View -->
 <div id="view-stores">
+    <div class="section-title"><span>⚡ Critical Action Directives (Store Diagnostics & SOH Coverage)</span></div>
+    <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(320px, 1fr)); gap:14px; margin-bottom:24px;">
+        {decision_cards_html}
+    </div>
+
     <div class="chart-container">
         <div class="section-title">
             <span>📊 Top Stores Performance vs Target (Interactive ApexCharts)</span>
@@ -1330,11 +1363,11 @@ def process_and_build():
     {region_tables_html}
 </div>
 
-<!-- 3. Business-Wise View (2 Charts: Category Contribution + Gender-Wise Contribution) -->
+<!-- 3. Business-Wise View (2 Charts: Category Contribution + Gender-Wise Contribution + Drill-down) -->
 <div id="view-business" style="display:none;">
     <div class="section-title">
         <span id="businessViewTitle">🏷️ CATEGORY PORTFOLIO CONTRIBUTION</span>
-        <span style="font-size:12px; color:var(--text-muted); font-weight:400;">100% Commercial Assortment (GWP & Shopping Bags Excluded)</span>
+        <span style="font-size:12px; color:var(--text-muted); font-weight:400;">100% Commercial Assortment (Click any row/chart to drill down)</span>
     </div>
     
     <div class="cards-scroll-container" id="categoryCardsContainer"></div>
@@ -1355,10 +1388,11 @@ def process_and_build():
         </div>
     </div>
 
-    <div style="display:flex; gap:16px; flex-wrap:wrap;">
+    <div style="display:flex; gap:16px; flex-wrap:wrap; margin-bottom:24px;">
         <div class="table-wrap" style="flex:1; min-width:340px;">
             <div class="table-header">
                 <h3 id="tableHierarchyTitle">CATEGORY CONTRIBUTION BREAKDOWN</h3>
+                <span style="font-size:11px; color:#38bdf8;">(Click to filter items below)</span>
             </div>
             <div style="overflow-x:auto;">
                 <table>
@@ -1380,6 +1414,7 @@ def process_and_build():
         <div class="table-wrap" id="genderTableWrap" style="flex:1; min-width:340px;">
             <div class="table-header">
                 <h3>GENDER-WISE FOOTWEAR CONTRIBUTION</h3>
+                <span style="font-size:11px; color:#ec4899;">(Click to filter items below)</span>
             </div>
             <div style="overflow-x:auto;">
                 <table>
@@ -1396,6 +1431,36 @@ def process_and_build():
                     <tbody id="genderTableBody"></tbody>
                 </table>
             </div>
+        </div>
+    </div>
+
+    <!-- Drill-Down Table in Business-Wise -->
+    <div class="table-wrap" id="businessDrillDownSection" style="margin-top:24px;">
+        <div class="table-header">
+            <div>
+                <h3 style="color:#38bdf8;" id="drilldownTitle">🔍 DRILL-DOWN ITEM & STYLE MATRIX: ALL ITEMS</h3>
+                <span style="font-size:12px; color:var(--text-muted);" id="drilldownSubtitle">Detailed style-level & SKU breakdown</span>
+            </div>
+            <input type="text" id="drilldownSearch" class="table-search" placeholder="Filter by Style, Name or Barcode..." onkeyup="filterDrilldownTable()">
+        </div>
+        <div style="max-height: 480px; overflow-y: auto; overflow-x: auto;">
+            <table>
+                <thead style="position: sticky; top: 0; z-index: 10;">
+                    <tr>
+                        <th>#</th>
+                        <th>Product Group / Style</th>
+                        <th>SKU / Barcode</th>
+                        <th>Item Description</th>
+                        <th>Category</th>
+                        <th>Gender</th>
+                        <th>Units Sold</th>
+                        <th>Sales Revenue (SAR)</th>
+                        <th>ASP (SAR)</th>
+                        <th>KSWH SOH</th>
+                    </tr>
+                </thead>
+                <tbody id="drilldownTableBody"></tbody>
+            </table>
         </div>
     </div>
 </div>
@@ -1481,6 +1546,7 @@ def process_and_build():
 
 <script>
   const BRAND_KPIS = {json.dumps(brand_kpi_summary)};
+  const STORE_CHART_DATA = {json.dumps(store_chart_data)};
   const REGION_KPIS = {json.dumps(region_kpis_by_brand)};
   const STORE_META = {json.dumps(store_meta_map)};
   const STORE_DETAILS = {json.dumps(store_category_details)};
@@ -1488,10 +1554,13 @@ def process_and_build():
   const DZL_GENDER_DATA = {json.dumps(dzl_gender_data)};
   const DZL_TOP_20 = {json.dumps(dzl_top20_groups)};
   const DZL_LOW_20 = {json.dumps(dzl_low20_groups)};
+  const BUSINESS_DRILLDOWN = {json.dumps(business_drilldown_data)};
 
   let currentActiveBrand = 'ALL';
   let currentReplBrand = 'ALL';
   let currentDZLMoversType = 'top';
+  let currentDrillFilter = {{ type: 'ALL', value: 'ALL' }};
+  let storeChartInstance = null;
   let donutChart = null;
   let genderChart = null;
 
@@ -1501,10 +1570,11 @@ def process_and_build():
   }});
 
   function initApexCharts() {{
+    const d = STORE_CHART_DATA['ALL'];
     var storeOptions = {{
       series: [
-        {{ name: 'Actual Sales (SAR)', data: {json.dumps(apex_sales)} }},
-        {{ name: 'Target (SAR)', data: {json.dumps(apex_targets)} }}
+        {{ name: 'Actual Sales (SAR)', data: d.sales }},
+        {{ name: 'Target (SAR)', data: d.targets }}
       ],
       chart: {{
         type: 'bar', height: 340, toolbar: {{ show: false }}, background: 'transparent'
@@ -1517,7 +1587,7 @@ def process_and_build():
       dataLabels: {{ enabled: false }},
       stroke: {{ show: true, width: 2, colors: ['transparent'] }},
       xaxis: {{
-        categories: {json.dumps(apex_categories)},
+        categories: d.categories,
         labels: {{ style: {{ colors: '#94a3b8', fontSize: '11px' }} }}
       }},
       yaxis: {{
@@ -1531,7 +1601,8 @@ def process_and_build():
 
     var storeChartEl = document.querySelector("#apexStoreChart");
     if (storeChartEl) {{
-      new ApexCharts(storeChartEl, storeOptions).render();
+      storeChartInstance = new ApexCharts(storeChartEl, storeOptions);
+      storeChartInstance.render();
     }}
   }}
 
@@ -1620,18 +1691,18 @@ def process_and_build():
     const cats = CATEGORY_DATA_BY_BRAND[brand] || [];
     const colors = ['#38bdf8', '#f59e0b', '#10b981', '#ec4899', '#818cf8', '#a855f7', '#06b6d4', '#e11d48'];
 
-    // 1. Cards
     let cardsHtml = "";
     cats.forEach((c, idx) => {{
       const clr = colors[idx % colors.length];
+      const safeCat = html.escape(c.main_category).replace("'", "\\'");
       cardsHtml += `
-        <div style="background:var(--card); border:1px solid var(--border); border-top:3px solid ${{clr}}; border-radius:10px; padding:16px; min-width:210px; max-width:260px; flex:1;">
+        <div onclick="setBusinessDrillDown('category', '${{safeCat}}')" class="clickable-row" style="background:var(--card); border:1px solid var(--border); border-top:3px solid ${{clr}}; border-radius:10px; padding:16px; min-width:210px; max-width:260px; flex:1;" title="Click to drill down into ${{c.main_category}} items">
           <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px;">
             <span style="font-size:13px; font-weight:700; color:#fff;">${{c.main_category}}</span>
             <span style="font-size:12px; font-weight:700; color:${{clr}};">${{c.contribution}}%</span>
           </div>
           <div style="font-size:18px; font-weight:700; color:#f8fafc; margin-bottom:4px;">${{Math.round(c.sales).toLocaleString()}} <span style="font-size:11px; color:#94a3b8;">SAR</span></div>
-          <div style="font-size:11px; color:#94a3b8; margin-bottom:8px;">Units Sold: <strong style="color:#fff;">${{Number(c.units).toLocaleString()}} Pcs</strong> | ASP: <strong style="color:#f59e0b;">${{c.asp}} SAR</strong></div>
+          <div style="font-size:11px; color:#94a3b8; margin-bottom:8px;">Units: <strong style="color:#fff;">${{Number(c.units).toLocaleString()}}</strong> | ASP: <strong style="color:#f59e0b;">${{c.asp}}</strong></div>
           <div style="background:#090d16; border-radius:4px; height:5px; overflow:hidden;">
             <div style="background:${{clr}}; width:${{Math.min(c.contribution, 100)}}%; height:100%;"></div>
           </div>
@@ -1640,13 +1711,13 @@ def process_and_build():
     }});
     document.getElementById("categoryCardsContainer").innerHTML = cardsHtml;
 
-    // 2. Category Table
     let tableHtml = "";
     cats.forEach((c, idx) => {{
+      const safeCat = html.escape(c.main_category).replace("'", "\\'");
       tableHtml += `
-        <tr>
+        <tr onclick="setBusinessDrillDown('category', '${{safeCat}}')" class="clickable-row" title="Click to drill down into ${{c.main_category}} items">
           <td style="color:#64748b; font-weight:600;">${{idx+1}}</td>
-          <td style="font-weight:700; color:#fff;">🏷️ ${{c.main_category}}</td>
+          <td style="font-weight:700; color:#fff;">🏷️ ${{c.main_category}} <span style="font-size:11px; color:#38bdf8;">(Drill-down ▼)</span></td>
           <td style="font-weight:700; color:#38bdf8;">${{Math.round(c.sales).toLocaleString()}}</td>
           <td>${{Number(c.units).toLocaleString()}}</td>
           <td style="font-weight:700; color:#10b981;">${{c.contribution}}%</td>
@@ -1656,13 +1727,13 @@ def process_and_build():
     }});
     document.getElementById("hierarchyTableBody").innerHTML = tableHtml;
 
-    // 3. Gender Table
     let gTableHtml = "";
     (DZL_GENDER_DATA.records || []).forEach((g, idx) => {{
+      const safeG = html.escape(g.gender).replace("'", "\\'");
       gTableHtml += `
-        <tr>
+        <tr onclick="setBusinessDrillDown('gender', '${{safeG}}')" class="clickable-row" title="Click to drill down into ${{g.gender}} items">
           <td style="color:#64748b; font-weight:600;">${{idx+1}}</td>
-          <td style="font-weight:700; color:#fff;">👟 ${{g.gender}}</td>
+          <td style="font-weight:700; color:#fff;">👟 ${{g.gender}} <span style="font-size:11px; color:#ec4899;">(Drill-down ▼)</span></td>
           <td style="font-weight:700; color:#38bdf8;">${{Math.round(g.sales).toLocaleString()}}</td>
           <td>${{Number(g.units).toLocaleString()}}</td>
           <td style="font-weight:700; color:#ec4899;">${{g.share}}%</td>
@@ -1672,7 +1743,6 @@ def process_and_build():
     }});
     document.getElementById("genderTableBody").innerHTML = gTableHtml;
 
-    // 4. Category Donut Chart
     const series = cats.map(c => c.contribution);
     const labels = cats.map(c => c.main_category);
 
@@ -1687,7 +1757,6 @@ def process_and_build():
     }});
     donutChart.render();
 
-    // 5. Gender Donut Chart (Shown for DZL or Consolidated)
     const genderWrapper = document.getElementById("genderChartWrapper");
     const genderTableWrap = document.getElementById("genderTableWrap");
     if (brand === 'DZL' || brand === 'ALL') {{
@@ -1707,6 +1776,73 @@ def process_and_build():
       genderWrapper.style.display = "none";
       genderTableWrap.style.display = "none";
     }}
+
+    renderBusinessDrillDown();
+  }}
+
+  function setBusinessDrillDown(type, val) {{
+    currentDrillFilter = {{ type: type, value: val }};
+    renderBusinessDrillDown();
+    const target = document.getElementById("businessDrillDownSection");
+    if (target) target.scrollIntoView({{ behavior: 'smooth' }});
+  }}
+
+  function renderBusinessDrillDown() {{
+    const tbody = document.getElementById("drilldownTableBody");
+    const searchVal = document.getElementById("drilldownSearch").value.toLowerCase();
+    
+    let filtered = BUSINESS_DRILLDOWN.filter(item => {{
+      const matchBrand = (currentActiveBrand === "ALL" || item.brand === currentActiveBrand);
+      let matchFilter = true;
+      if (currentDrillFilter.type === 'category' && currentDrillFilter.value !== 'ALL') {{
+        matchFilter = (item.main_category === currentDrillFilter.value);
+      }} else if (currentDrillFilter.type === 'gender' && currentDrillFilter.value !== 'ALL') {{
+        matchFilter = (item.gender === currentDrillFilter.value && item.main_category === 'Shoes');
+      }}
+      const matchSearch = (
+        item.style_group.toLowerCase().includes(searchVal) ||
+        item.clean_barcode.toLowerCase().includes(searchVal) ||
+        item.clean_item_name.toLowerCase().includes(searchVal)
+      );
+      return matchBrand && matchFilter && matchSearch;
+    }});
+
+    const titleEl = document.getElementById("drilldownTitle");
+    const subEl = document.getElementById("drilldownSubtitle");
+    if (currentDrillFilter.type === 'category') {{
+      titleEl.innerText = `🔍 DRILL-DOWN ITEM & STYLE MATRIX: CATEGORY (${{currentDrillFilter.value.toUpperCase()}})`;
+      subEl.innerText = `Showing all items under ${{currentDrillFilter.value}} (${{filtered.length}} items)`;
+    }} else if (currentDrillFilter.type === 'gender') {{
+      titleEl.innerText = `🔍 DRILL-DOWN ITEM & STYLE MATRIX: GENDER (${{currentDrillFilter.value.toUpperCase()}} FOOTWEAR)`;
+      subEl.innerText = `Showing footwear items under size run for ${{currentDrillFilter.value}} (${{filtered.length}} items)`;
+    }} else {{
+      titleEl.innerText = "🔍 DRILL-DOWN ITEM & STYLE MATRIX: ALL ITEMS";
+      subEl.innerText = "Click on any category or gender above to narrow drill-down";
+    }}
+
+    let html = "";
+    filtered.slice(0, 100).forEach((r, idx) => {{
+      const bColor = r.brand === 'DZL' ? '#ef4444' : '#38bdf8';
+      html += `
+        <tr>
+          <td style="color:#64748b; font-weight:600;">${{idx+1}}</td>
+          <td style="font-weight:700; color:#fff;">${{r.style_group}}</td>
+          <td style="color:#38bdf8; font-weight:600;"><span class="badge" style="background:${{bColor}}22; color:${{bColor}}; margin-right:4px;">${{r.brand}}</span>${{r.clean_barcode}}</td>
+          <td style="color:#fff;">${{r.clean_item_name}}</td>
+          <td style="color:#94a3b8;">${{r.main_category}}</td>
+          <td><span class="badge" style="background:#ec489922; color:#ec4899;">${{r.gender}}</span></td>
+          <td style="font-weight:700; color:#fff;">${{r.units}} Pcs</td>
+          <td style="font-weight:700; color:#38bdf8;">${{Math.round(r.sales).toLocaleString()}}</td>
+          <td style="color:#f59e0b; font-weight:700;">${{r.asp}}</td>
+          <td style="color:#10b981; font-weight:700;">${{r.wh_soh}} Pcs</td>
+        </tr>
+      `;
+    }});
+    tbody.innerHTML = html || "<tr><td colspan='10' style='text-align:center;'>No matching items found for drill-down</td></tr>";
+  }}
+
+  function filterDrilldownTable() {{
+    renderBusinessDrillDown();
   }}
 
   function switchDZLMovers(type) {{
@@ -1792,6 +1928,17 @@ def process_and_build():
     const activeBtn = document.getElementById("btn-brand-" + brand);
     if (activeBtn) activeBtn.classList.add("active");
 
+    if (storeChartInstance && STORE_CHART_DATA[brand]) {{
+      const d = STORE_CHART_DATA[brand];
+      storeChartInstance.updateOptions({{
+        xaxis: {{ categories: d.categories }}
+      }});
+      storeChartInstance.updateSeries([
+        {{ name: 'Actual Sales (SAR)', data: d.sales }},
+        {{ name: 'Target (SAR)', data: d.targets }}
+      ]);
+    }}
+
     if (BRAND_KPIS[brand]) {{
       const k = BRAND_KPIS[brand];
       document.getElementById("kpi-total-sales").innerHTML = k.sales + " <span class='kpi-unit'>SAR</span>";
@@ -1851,7 +1998,7 @@ def process_and_build():
     const titleEl = document.getElementById("replTableHeaderTitle");
     if (titleEl) {{
         if (brand === "MMS") titleEl.innerText = "⚡ ACTIONABLE REPLENISHMENT DIRECTIVES (MUMUSO ONLY)";
-        else if (brand === "DZL") titleEl.innerText = "⚡ ACTIONABLE REPLENISHMENT DIRECTIVES (DZL DOZOLO ONLY)";
+        else if (brand === "DZL") titleEl.innerText = "⚡ ACTIONABLE REPLENISHMENT DIRECTIVES (DZL DOZOLO ONLY - SHOES PRIORITY 1)";
         else titleEl.innerText = "⚡ ACTIONABLE REPLENISHMENT DIRECTIVES (MULTI-STORE BALANCING)";
     }}
     filterReplTable();
