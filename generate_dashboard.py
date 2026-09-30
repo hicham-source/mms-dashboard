@@ -208,6 +208,7 @@ def load_soh_data(soh_path):
         df_soh = df_soh[df_soh[code_col].notna()].copy()
         df_soh[stock_col] = pd.to_numeric(df_soh[stock_col], errors='coerce').fillna(0)
 
+        # استبعاد GWP و Shopping Bags والمواد غير التجارية
         if desc_col:
             for kw in EXCLUDED_KEYWORDS:
                 df_soh = df_soh[~df_soh[desc_col].astype(str).str.lower().str.contains(kw, regex=False)]
@@ -573,7 +574,7 @@ def process_and_build():
             })
         store_category_details[st_c] = cats_list
 
-    drilldown_items = df_clean.groupby(['brand', 'main_category', 'gender', 'style_group', 'clean_barcode', 'clean_item_name'], as_index=False).agg(
+    drilldown_items = df_clean.groupby(['brand', 'clean_code', 'main_category', 'gender', 'style_group', 'clean_barcode', 'clean_item_name'], as_index=False).agg(
         sales=('Actual Sales Amount', 'sum'),
         units=('Sales Quantity', 'sum')
     ).sort_values(by='sales', ascending=False)
@@ -582,69 +583,71 @@ def process_and_build():
     drilldown_items['asp'] = (drilldown_items['sales'] / drilldown_items['units'].replace(0, np.nan)).fillna(0).round().astype(int)
     business_drilldown_data = drilldown_items.to_dict(orient='records')
 
+    # بناء قائمة Top 20 Shoes و Low 20 Shoes لـ DZL (Portfolio + Store-wise)
     dzl_shoes_df = df_clean[(df_clean['brand'] == 'DZL') & (df_clean['main_category'] == 'Shoes') & (df_clean['Actual Sales Amount'] > 0)].copy()
-    dzl_top20_groups = []
-    dzl_low20_groups = []
+    dzl_top20_groups = {}
+    dzl_low20_groups = {}
 
     if not dzl_shoes_df.empty:
-        dzl_tot_shoe_sales = dzl_shoes_df['Actual Sales Amount'].sum()
-        dzl_pg_summary = dzl_shoes_df.groupby('style_group', as_index=False).agg(
-            sales=('Actual Sales Amount', 'sum'),
-            units=('Sales Quantity', 'sum')
-        )
-        dzl_pg_summary['asp'] = (dzl_pg_summary['sales'] / dzl_pg_summary['units'].replace(0, np.nan)).fillna(0).round().astype(int)
-        dzl_pg_summary['share_pct'] = ((dzl_pg_summary['sales'] / dzl_tot_shoe_sales) * 100).round(1) if dzl_tot_shoe_sales > 0 else 0
-        
-        sku_details = dzl_shoes_df.groupby(['style_group', 'clean_barcode', 'clean_sku', 'clean_item_name', 'gender'], as_index=False).agg(
-            sku_sales=('Actual Sales Amount', 'sum'),
-            sku_units=('Sales Quantity', 'sum')
-        ).sort_values(by='sku_units', ascending=False)
+        def build_dzl_movers_for_scope(sub_df, scope_key):
+            if sub_df.empty: return [], []
+            tot_s = sub_df['Actual Sales Amount'].sum()
+            pg_s = sub_df.groupby('style_group', as_index=False).agg(
+                sales=('Actual Sales Amount', 'sum'),
+                units=('Sales Quantity', 'sum')
+            )
+            pg_s['asp'] = (pg_s['sales'] / pg_s['units'].replace(0, np.nan)).fillna(0).round().astype(int)
+            pg_s['share_pct'] = ((pg_s['sales'] / tot_s) * 100).round(1) if tot_s > 0 else 0
+            
+            sku_s = sub_df.groupby(['style_group', 'clean_barcode', 'clean_sku', 'clean_item_name', 'gender'], as_index=False).agg(
+                sku_sales=('Actual Sales Amount', 'sum'),
+                sku_units=('Sales Quantity', 'sum')
+            ).sort_values(by='sku_units', ascending=False)
 
-        def build_group_data(df_slice):
-            out_list = []
-            for idx, r in df_slice.reset_index(drop=True).iterrows():
-                pg_name = str(r['style_group'])
-                child_skus = sku_details[sku_details['style_group'] == pg_name]
-                child_list = []
-                tot_wh_stock = 0
-                tot_st_stock = 0
-                gender_val = child_skus['gender'].iloc[0] if not child_skus.empty else "Women"
-                for _, cr in child_skus.iterrows():
-                    b_code = str(cr['clean_barcode'])
-                    wh_s = int(wh_barcode_stock_dict.get(b_code, 0))
-                    st_s = int(store_barcode_stock_dict.get(b_code, 0))
-                    tot_wh_stock += wh_s
-                    tot_st_stock += st_s
-                    child_list.append({
-                        "barcode": b_code,
-                        "item_code": str(cr['clean_sku']),
-                        "name": str(cr['clean_item_name'])[:45],
-                        "units": int(cr['sku_units']),
-                        "sales": int(round(cr['sku_sales'])),
-                        "store_soh": st_s,
-                        "wh_soh": wh_s
+            def create_list(slice_df):
+                res = []
+                for idx, r in slice_df.reset_index(drop=True).iterrows():
+                    pg_name = str(r['style_group'])
+                    c_skus = sku_s[sku_s['style_group'] == pg_name]
+                    c_list = []
+                    t_wh = 0
+                    t_st = 0
+                    g_val = c_skus['gender'].iloc[0] if not c_skus.empty else "Women"
+                    for _, cr in c_skus.iterrows():
+                        b_c = str(cr['clean_barcode'])
+                        wh_s = int(wh_barcode_stock_dict.get(b_c, 0))
+                        st_s = int(store_barcode_stock_dict.get(b_c, 0))
+                        t_wh += wh_s
+                        t_st += st_s
+                        c_list.append({
+                            "barcode": b_c, "item_code": str(cr['clean_sku']),
+                            "name": str(cr['clean_item_name'])[:45],
+                            "units": int(cr['sku_units']), "sales": int(round(cr['sku_sales'])),
+                            "store_soh": st_s, "wh_soh": wh_s
+                        })
+                    daily_v = r['units'] / 30.0
+                    days_left = int((t_st + t_wh) / daily_v) if daily_v > 0 else 999
+                    res.append({
+                        "rank": idx + 1, "style_group": pg_name, "gender": g_val,
+                        "units": int(r['units']), "sales": int(round(r['sales'])),
+                        "share_pct": float(r['share_pct']), "asp": int(r['asp']),
+                        "store_soh": t_st, "wh_soh": t_wh, "stock_days": days_left,
+                        "skus_count": len(c_list), "skus": c_list
                     })
-                daily_v = r['units'] / 30.0
-                days_left = int((tot_st_stock + tot_wh_stock) / daily_v) if daily_v > 0 else 999
-                out_list.append({
-                    "rank": idx + 1,
-                    "style_group": pg_name,
-                    "gender": gender_val,
-                    "units": int(r['units']),
-                    "sales": int(round(r['sales'])),
-                    "share_pct": float(r['share_pct']),
-                    "asp": int(r['asp']),
-                    "store_soh": tot_st_stock,
-                    "wh_soh": tot_wh_stock,
-                    "stock_days": days_left,
-                    "skus_count": len(child_list),
-                    "skus": child_list
-                })
-            return out_list
+                return res
 
-        dzl_top20_groups = build_group_data(dzl_pg_summary.sort_values(by=['units', 'sales'], ascending=[False, False]).head(20))
-        dzl_low20_groups = build_group_data(dzl_pg_summary.sort_values(by=['units', 'sales'], ascending=[True, True]).head(20))
+            top_l = create_list(pg_s.sort_values(by=['units', 'sales'], ascending=[False, False]).head(20))
+            low_l = create_list(pg_s.sort_values(by=['units', 'sales'], ascending=[True, True]).head(20))
+            return top_l, low_l
 
+        dzl_top20_groups['ALL'], dzl_low20_groups['ALL'] = build_dzl_movers_for_scope(dzl_shoes_df, 'ALL')
+        for st_code in DZL_VALID_CODES:
+            st_df = dzl_shoes_df[dzl_shoes_df['clean_code'] == st_code]
+            t_l, l_l = build_dzl_movers_for_scope(st_df, st_code)
+            dzl_top20_groups[st_code] = t_l
+            dzl_low20_groups[st_code] = l_l
+
+    # محرك التوريد التلقائي المعزول مع إعطاء الأولوية القصوى للأحذية وتفعيل IST الآلي عند نفاد المستودع
     if not df_soh_raw.empty and stock_col_name and code_col_name and barcode_soh_col:
         store_sku_sales = df_clean.groupby(['clean_code', 'clean_barcode', 'clean_sku', 'clean_item_name', 'style_group', 'main_category', 'brand'], as_index=False).agg(
             sept_units=('Sales Quantity', 'sum')
@@ -720,8 +723,8 @@ def process_and_build():
                     source_route = f"{donor_name} ({donor_code} - Surplus: {donor_qty}) [{match_type}]"
                     needed_qty = min(needed_qty, max(2, donor_qty // 2))
                 else:
-                    action_type = "Predictive WH Replenishment"
-                    source_route = f"Central Warehouse (KSWH - Limited: {wh_available})"
+                    action_type = "Store Transfer (IST - Peer Network)"
+                    source_route = f"Peer Store Network (WH Stock: {wh_available} - Cross-Store Balance)"
 
             p_icon = "👟 [SHOE PRIORITY 1]" if cat == 'Shoes' else "👜 [ACCESSORY]"
             rep_item = {
@@ -795,9 +798,9 @@ def process_and_build():
     store_summary['top_cats_str'] = [e['top_categories_str'] for e in engine_res]
 
     net_yoy_col = "#10b981" if network_lfl_growth >= 0 else "#ef4444"
+    store_meta_map = {}
     store_table_rows = ""
     decision_cards_html = ""
-    store_meta_map = {}
 
     for idx, row in store_summary.iterrows():
         st_code = row['clean_code']
@@ -1021,7 +1024,6 @@ def process_and_build():
         </tr>
         """
 
-    # بناء قالب الـ HTML كاملاً ومضبوطاً لتفادي أي خطأ
     html_content = f"""<!DOCTYPE html>
 <html lang="en" id="html-root">
 <head>
@@ -1069,6 +1071,7 @@ def process_and_build():
         .table-header {{ padding: 16px 20px; display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid var(--border); flex-wrap: wrap; gap: 12px; }}
         .table-header h3 {{ margin: 0; font-size: 15px; font-weight: 700; }}
         .table-search {{ padding: 8px 14px; background: #090d16; border: 1px solid var(--border); border-radius: 6px; color: #fff; outline: none; width: 220px; font-size: 13px; }}
+        .table-select {{ padding: 8px 14px; background: #090d16; border: 1px solid var(--border); border-radius: 6px; color: #38bdf8; outline: none; font-size: 13px; font-weight: 600; }}
         table {{ width: 100%; border-collapse: collapse; text-align: left; font-size: 13px; }}
         th {{ background: #0c1220; color: var(--text-muted); padding: 12px 14px; font-weight: 600; text-transform: uppercase; font-size: 11px; border-bottom: 1px solid var(--border); }}
         td {{ padding: 12px 14px; border-bottom: 1px solid var(--border); }}
@@ -1345,7 +1348,7 @@ def process_and_build():
     </div>
 </div>
 
-<!-- 2. Region-Wise Performance View (Fully Restored & Dynamic per Brand) -->
+<!-- 2. Region-Wise Performance View -->
 <div id="view-regions" style="display:none;">
     <div class="section-title"><span>🌍 REGIONAL LEADERSHIP & AREA MANAGER OVERVIEW</span></div>
     <div style="display:flex; flex-wrap:wrap; gap:16px; margin-bottom:24px;">
@@ -1355,7 +1358,7 @@ def process_and_build():
     {region_tables_html}
 </div>
 
-<!-- 3. Business-Wise View (2 Charts: Category Contribution + Gender-Wise Contribution + Drill-down) -->
+<!-- 3. Business-Wise View -->
 <div id="view-business" style="display:none;">
     <div class="section-title">
         <span id="businessViewTitle">🏷️ CATEGORY PORTFOLIO CONTRIBUTION</span>
@@ -1426,7 +1429,6 @@ def process_and_build():
         </div>
     </div>
 
-    <!-- Drill-Down Table in Business-Wise -->
     <div class="table-wrap" id="businessDrillDownSection" style="margin-top:24px;">
         <div class="table-header">
             <div>
@@ -1457,7 +1459,7 @@ def process_and_build():
     </div>
 </div>
 
-<!-- 4. Commercial Action Hub (Top 20 Shoes & Low 20 Shoes Group-Wise with SKU Drill-down) -->
+<!-- 4. Commercial Action Hub (Top 20 Shoes & Low 20 Shoes Store-Wise & Group-Wise) -->
 <div id="view-action" style="display:none;">
     <div class="section-title" style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:10px;">
         <span>⚡ PREDICTIVE AUTO-REPLENISHMENT & STOCK-OUT FORECAST (KSWH & IST)</span>
@@ -1503,9 +1505,15 @@ def process_and_build():
     </div>
 
     <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:16px; flex-wrap:wrap; gap:12px;">
-        <div style="display:flex; gap:10px;">
-            <button class="sub-tab-btn active" id="btn-top-shoes" onclick="switchDZLMovers('top')">🔥 TOP 20 SHOES (GROUP-WISE / PRODUCT GROUP)</button>
-            <button class="sub-tab-btn" id="btn-low-shoes" onclick="switchDZLMovers('low')">❄️ LOW 20 SHOES (SLOW MOVERS GROUP-WISE)</button>
+        <div style="display:flex; gap:10px; align-items:center;">
+            <button class="sub-tab-btn active" id="btn-top-shoes" onclick="switchDZLMovers('top')">🔥 TOP 20 SHOES</button>
+            <button class="sub-tab-btn" id="btn-low-shoes" onclick="switchDZLMovers('low')">❄️ LOW 20 SHOES</button>
+            <select id="moversStoreFilter" class="table-select" onchange="renderDZLShoesTable()">
+                <option value="ALL">-- All DZL Stores Combined --</option>
+                <option value="K107">DZL Riyadh Park (K107)</option>
+                <option value="K111">DZL Solitaire (K111)</option>
+                <option value="K204">DZL Redsea (K204)</option>
+            </select>
         </div>
         <div>
             <span style="color:#38bdf8; font-size:12px; font-weight:700;">💡 Click any Product Group row to open SKU / Barcode & Size-Run details</span>
@@ -1544,8 +1552,8 @@ def process_and_build():
   const STORE_DETAILS = {json.dumps(store_category_details)};
   const CATEGORY_DATA_BY_BRAND = {json.dumps(category_data_by_brand)};
   const DZL_GENDER_DATA = {json.dumps(dzl_gender_data)};
-  const DZL_TOP_20 = {json.dumps(dzl_top20_groups)};
-  const DZL_LOW_20 = {json.dumps(dzl_low20_groups)};
+  const DZL_TOP_20_STOREWISE = {json.dumps(dzl_top20_groups)};
+  const DZL_LOW_20_STOREWISE = {json.dumps(dzl_low20_groups)};
   const BUSINESS_DRILLDOWN = {json.dumps(business_drilldown_data)};
 
   let currentActiveBrand = 'ALL';
@@ -1845,7 +1853,9 @@ def process_and_build():
   }}
 
   function renderDZLShoesTable() {{
-    const data = (currentDZLMoversType === 'top') ? DZL_TOP_20 : DZL_LOW_20;
+    const storeSel = document.getElementById("moversStoreFilter").value;
+    const dataSet = (currentDZLMoversType === 'top') ? DZL_TOP_20_STOREWISE : DZL_LOW_20_STOREWISE;
+    const data = dataSet[storeSel] || dataSet['ALL'] || [];
     const tbody = document.getElementById("shoesMoversTableBody");
     let html = "";
 
@@ -1906,7 +1916,7 @@ def process_and_build():
       `;
     }});
 
-    tbody.innerHTML = html || "<tr><td colspan='11' style='text-align:center;'>No footwear data available</td></tr>";
+    tbody.innerHTML = html || "<tr><td colspan='11' style='text-align:center;'>No footwear data available for this store</td></tr>";
   }}
 
   function toggleDrawer(id) {{
