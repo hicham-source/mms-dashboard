@@ -208,7 +208,6 @@ def load_soh_data(soh_path):
         df_soh = df_soh[df_soh[code_col].notna()].copy()
         df_soh[stock_col] = pd.to_numeric(df_soh[stock_col], errors='coerce').fillna(0)
 
-        # استبعاد GWP و Shopping Bags والمواد غير التجارية
         if desc_col:
             for kw in EXCLUDED_KEYWORDS:
                 df_soh = df_soh[~df_soh[desc_col].astype(str).str.lower().str.contains(kw, regex=False)]
@@ -277,6 +276,7 @@ def process_and_build():
     region_kpi_cards = ""
     region_tables_html = ""
     repl_rows_html = ""
+    html_content = ""
 
     sales_mms_file, sales_dzl_file, soh_file, target_file, ly_file = identify_files()
     targets_map = load_targets(target_file)
@@ -647,8 +647,9 @@ def process_and_build():
             dzl_top20_groups[st_code] = t_l
             dzl_low20_groups[st_code] = l_l
 
-    # محرك التوريد التلقائي المعزول مع إعطاء الأولوية القصوى للأحذية وتفعيل IST الآلي عند نفاد المستودع
+    # محرك التوريد التلقائي الشامل مع الأولوية المطلقة للأحذية واحتساب المناقلات الآلية IST
     if not df_soh_raw.empty and stock_col_name and code_col_name and barcode_soh_col:
+        # فحص إجمالي المبيعات والمخزون على مستوى كل فرع وكل باركود
         store_sku_sales = df_clean.groupby(['clean_code', 'clean_barcode', 'clean_sku', 'clean_item_name', 'style_group', 'main_category', 'brand'], as_index=False).agg(
             sept_units=('Sales Quantity', 'sum')
         )
@@ -663,9 +664,11 @@ def process_and_build():
         )
         merged_sku.rename(columns={stock_col_name: 'store_soh'}, inplace=True)
         merged_sku['daily_rate'] = merged_sku['sept_units'] / 30.0
+        merged_sku['str_pct'] = (merged_sku['sept_units'] / (merged_sku['sept_units'] + merged_sku['store_soh']) * 100).fillna(0)
         merged_sku['days_to_stockout'] = merged_sku['store_soh'] / merged_sku['daily_rate'].replace(0, np.nan)
         
-        critical_shoes = merged_sku[(merged_sku['main_category'] == 'Shoes') & ((merged_sku['days_to_stockout'] < 12.0) | (merged_sku['store_soh'] <= 2)) & (merged_sku['sept_units'] >= 1)].copy()
+        # الأولوية رقم 1 للأحذية مع فحص نفاد المخزون وكسر المقاسات
+        critical_shoes = merged_sku[(merged_sku['main_category'] == 'Shoes') & ((merged_sku['days_to_stockout'] < 14.0) | (merged_sku['store_soh'] <= 2)) & (merged_sku['sept_units'] >= 1)].copy()
         critical_shoes['priority_rank'] = 1
         
         critical_acc = merged_sku[(merged_sku['main_category'] != 'Shoes') & (merged_sku['days_to_stockout'] < 8.0) & (merged_sku['sept_units'] >= 2)].copy()
@@ -699,17 +702,19 @@ def process_and_build():
             else:
                 urgency_str = f"⚠️ Stock-Out in {days_left}d (Vel: {daily_v:.1f}/d)"
 
-            if wh_available >= needed_qty:
+            # فحص توفر المخزون في المستودع KSWH أو التوجيه الإجباري للمناقلة بين المتاجر (IST)
+            if wh_available >= needed_qty and wh_available > 0:
                 action_type = "Predictive WH Replenishment"
                 source_route = f"Central Warehouse (KSWH - Avail: {wh_available:,})"
             else:
                 action_type = "Store Transfer (IST)"
+                # البحث عن الفروع الشقيقة التي تمتلك مخزون فائض من نفس الصنف
                 surplus_branches = df_soh_raw[
                     (df_soh_raw['clean_barcode'] == b_val) & 
                     (df_soh_raw['store_code'] != 'KSWH') & 
                     (df_soh_raw['store_code'] != st_code) & 
                     (df_soh_raw['store_code'].isin(DZL_VALID_CODES if st_brand == 'DZL' else MMS_VALID_CODES)) &
-                    (df_soh_raw[stock_col_name] > (4 if cat == 'Shoes' else 8))
+                    (df_soh_raw[stock_col_name] > (2 if cat == 'Shoes' else 6))
                 ].copy()
                 
                 if not surplus_branches.empty:
@@ -723,8 +728,8 @@ def process_and_build():
                     source_route = f"{donor_name} ({donor_code} - Surplus: {donor_qty}) [{match_type}]"
                     needed_qty = min(needed_qty, max(2, donor_qty // 2))
                 else:
-                    action_type = "Store Transfer (IST - Peer Network)"
-                    source_route = f"Peer Store Network (WH Stock: {wh_available} - Cross-Store Balance)"
+                    action_type = "Store Transfer (IST - Network Balancing)"
+                    source_route = f"Peer Store Network (WH Stock: {wh_available} - Cross-Store Balancing)"
 
             p_icon = "👟 [SHOE PRIORITY 1]" if cat == 'Shoes' else "👜 [ACCESSORY]"
             rep_item = {
@@ -785,7 +790,7 @@ def process_and_build():
         return {
             "woc_badge": woc_badge, "woc_color": woc_col,
             "diag_title": diag_title, "diag_color": diag_col,
-            "action": action, "needs": needs, "top_categories_str": st_top_cats_str
+            "action": action, "needs": needs, "top_cats_str": st_top_cats_str
         }
 
     engine_res = store_summary.apply(commercial_diagnosis_engine, axis=1)
@@ -795,7 +800,7 @@ def process_and_build():
     store_summary['diag_color'] = [e['diag_color'] for e in engine_res]
     store_summary['action'] = [e['action'] for e in engine_res]
     store_summary['needs'] = [e['needs'] for e in engine_res]
-    store_summary['top_cats_str'] = [e['top_categories_str'] for e in engine_res]
+    store_summary['top_cats_str'] = [e['top_cats_str'] for e in engine_res]
 
     net_yoy_col = "#10b981" if network_lfl_growth >= 0 else "#ef4444"
     store_meta_map = {}
@@ -913,11 +918,11 @@ def process_and_build():
                 </div>
                 <div>
                     <div style="font-size:11px; color:#94a3b8;">ATV</div>
-                    <div style="font-size:14px; font-weight:700; color:#fff;" id="{reg_id}-kpi-atv">-</div>
+                    <div style="font-size:13px; font-weight:700; color:#fff;" id="{reg_id}-kpi-atv">-</div>
                 </div>
                 <div>
                     <div style="font-size:11px; color:#94a3b8;">ASP</div>
-                    <div style="font-size:14px; font-weight:700; color:#f59e0b;" id="{reg_id}-kpi-asp">-</div>
+                    <div style="font-size:13px; font-weight:700; color:#f59e0b;" id="{reg_id}-kpi-asp">-</div>
                 </div>
             </div>
         </div>
@@ -1024,6 +1029,7 @@ def process_and_build():
         </tr>
         """
 
+    # بناء قالب الـ HTML كاملاً ومضبوطاً لتفادي أي خطأ
     html_content = f"""<!DOCTYPE html>
 <html lang="en" id="html-root">
 <head>
@@ -1283,11 +1289,6 @@ def process_and_build():
 
 <!-- 1. Store Commercial Matrix View -->
 <div id="view-stores">
-    <div class="section-title"><span>⚡ Critical Action Directives (Store Diagnostics & SOH Coverage)</span></div>
-    <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(320px, 1fr)); gap:14px; margin-bottom:24px;">
-        {decision_cards_html}
-    </div>
-
     <div class="chart-container">
         <div class="section-title">
             <span>📊 Top Stores Performance vs Target (Interactive ApexCharts)</span>
@@ -1327,7 +1328,7 @@ def process_and_build():
                 </thead>
                 <tbody>
                     {store_table_rows}
-                    <tr id="storesTableTotalRow" style="background:#0c1220; font-weight:800; border-top:3px solid #38bdf8; font-size:13px;">
+                    <tr id="storesTableTotalRow" style="background:#0c1220; font-weight:800; border-top:2px solid #38bdf8; font-size:13px;">
                         <td colspan="4" style="color:#38bdf8; text-transform:uppercase;" id="storesTotalTitle">TOTAL PORTFOLIO (ALL DOORS)</td>
                         <td style="color:#fff;" id="tot-sales">{total_sales:,}</td>
                         <td style="color:#38bdf8;" id="tot-ly">{total_ly_sales:,}</td>
@@ -2048,6 +2049,7 @@ def process_and_build():
     }} else if (viewName === 'business' && businessView) {{
         businessView.style.display = "block";
         if (btnBusiness) btnBusiness.classList.add("active");
+        // إعادة رسم الـ Charts فوراً عند إظهار التبويب لتفادي الـ 0-dimensions bug
         renderCategorySection(currentActiveBrand);
     }} else if (actionView) {{
         actionView.style.display = "block";
