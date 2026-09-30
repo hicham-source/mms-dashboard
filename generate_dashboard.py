@@ -46,7 +46,8 @@ ALL_VALID_CODES = DZL_VALID_CODES.union(MMS_VALID_CODES)
 
 EXCLUDED_KEYWORDS = [
     'gwp', 'shopping bag', 'carrier bag', 'plastic bag', 'paper bag',
-    'gift with purchase', 'non-sale', 'packaging', 'free gift', 'material'
+    'gift with purchase', 'non-sale', 'packaging', 'free gift', 'material',
+    'stationery', 'basketball', 'football', 'm&g'
 ]
 
 def identify_files():
@@ -96,20 +97,35 @@ def clean_sku_code(val):
 
 def derive_style_group_from_name(name):
     s = str(name).strip()
-    # إزالة المقاسات والألوان الشائعة في نهاية اسم الحذاء للحصول على اسم الموديل (Product Group)
-    s = re.sub(r'[\s\-]+(3[5-9]|4[0-6]|\d{2})\b.*$', '', s)
+    s = re.sub(r'[\s\-]+(2[0-9]|3[0-9]|4[0-8])\b.*$', '', s)
     s = re.sub(r'[\s\-]+(BLACK|WHITE|BEIGE|GREY|GRAY|BLUE|PINK|GREEN|BROWN|RED|YELLOW|KHAKI|OFF-WHITE|SILVER|GOLD)\b.*$', '', s, flags=re.IGNORECASE)
     return s.strip(' -_') if s.strip(' -_') else str(name)[:28]
 
-def extract_gender(name):
-    s = " " + str(name).upper().replace('-', ' ').replace('_', ' ').replace('/', ' ') + " "
+def classify_shoe_gender_by_size(name, spec=""):
+    """تصنيف الجنس الدقيق للأحذية بناءً على المقاس بدقة تامة وبدون Unisex"""
+    text = f"{name} {spec}".upper()
+    
+    # 1. فحص المقاس الرقمي أولاً (الأولوية للمقاس)
+    nums = re.findall(r'\b(2[0-9]|3[0-9]|4[0-8])\b', text)
+    if nums:
+        size = int(nums[-1])
+        if 23 <= size <= 34:
+            return 'Kids'
+        elif 35 <= size <= 39:
+            return 'Women'
+        elif 40 <= size <= 48:
+            return 'Men'
+            
+    # 2. فحص الكلمات المفتاحية
+    s = " " + text.replace('-', ' ').replace('_', ' ').replace('/', ' ') + " "
     if any(k in s for k in [' KID ', ' KIDS ', ' BOY ', ' BOYS ', ' GIRL ', ' GIRLS ', ' CHILD ', ' CHILDREN ', ' GS ']):
         return 'Kids'
     if any(k in s for k in [' WOMAN ', ' WOMEN ', ' WOMENS ', ' LADY ', ' LADIES ', ' FEMALE ', ' WMNS ']):
         return 'Women'
     if any(k in s for k in [' MAN ', ' MEN ', ' MENS ', ' MALE ']):
         return 'Men'
-    return 'Unisex'
+        
+    return 'Women'
 
 def load_ly_sales_data(ly_path):
     if not ly_path or not os.path.exists(ly_path): return {}
@@ -201,10 +217,10 @@ def load_soh_data(soh_path):
         df_soh = df_soh[df_soh[code_col].notna()].copy()
         df_soh[stock_col] = pd.to_numeric(df_soh[stock_col], errors='coerce').fillna(0)
 
-        # استبعاد GWP و Shopping Bags و Material من SOH
+        # استبعاد GWP و Shopping Bags والمواد غير التجارية
         if desc_col:
             for kw in EXCLUDED_KEYWORDS:
-                df_soh = df_soh[~df_soh[desc_col].astype(str).str.lower().str.contains(kw)]
+                df_soh = df_soh[~df_soh[desc_col].astype(str).str.lower().str.contains(kw, regex=False)]
         if cat_col:
             for kw in ['gwp', 'material', 'me+']:
                 df_soh = df_soh[~df_soh[cat_col].astype(str).str.lower().str.contains(kw, regex=False)]
@@ -213,9 +229,8 @@ def load_soh_data(soh_path):
             df_soh[price_col] = pd.to_numeric(df_soh[price_col], errors='coerce').fillna(0)
             df_soh['soh_val'] = df_soh[stock_col] * df_soh[price_col]
         else:
-            df_soh['soh_val'] = 0
+            df_soh['soh_val'] = 0.0
 
-        # بناء خرائط Product Group و Category من ملف SOH مباشرة
         if pg_col:
             if barcode_col:
                 for _, r in df_soh[[barcode_col, pg_col]].dropna().drop_duplicates().iterrows():
@@ -330,7 +345,6 @@ def process_and_build():
     barcode_col = next((c for c in df_clean.columns if any(k in str(c).lower() for k in ['barcode', 'bar code', 'upc'])), item_code_col)
     raw_subsub_col = next((c for c in df_clean.columns if str(c).lower() in ['category name', 'product_category', 'category']), None)
 
-    # إنشاء أعمدة قياسية موحدة ومستقلة تماماً لمنع أي تعارض في Pandas
     df_clean['clean_code'] = df_clean[org_code_col].apply(clean_store_code_str)
     df_clean = df_clean[df_clean['clean_code'].isin(ALL_VALID_CODES)].copy()
     df_clean['brand'] = df_clean['clean_code'].apply(lambda c: STORE_MAPPING[c]['brand'])
@@ -340,12 +354,12 @@ def process_and_build():
     df_clean['clean_item_name'] = df_clean[item_name_col].fillna("Item").astype(str).str.strip()
     df_clean['sub_subgroup'] = df_clean[raw_subsub_col].fillna("Other").astype(str).str.strip() if raw_subsub_col else "General"
 
-    # استبعاد GWP و Shopping Bags من المبيعات كلياً
+    # حذف مبيعات الصفر و GWP و الأكياس نهائياً
+    df_clean = df_clean[(df_clean['Actual Sales Amount'] > 0) & (df_clean['Sales Quantity'] > 0)].copy()
     for kw in EXCLUDED_KEYWORDS:
         df_clean = df_clean[~df_clean['clean_item_name'].str.lower().str.contains(kw, regex=False)]
         df_clean = df_clean[~df_clean['sub_subgroup'].str.lower().str.contains(kw, regex=False)]
 
-    # ربط Product Group (الموديل) لكل صنف من SOH.xlsx أو استخراجه من الاسم
     def resolve_style_group(row):
         b_c = row['clean_barcode']
         i_c = row['clean_sku']
@@ -366,7 +380,7 @@ def process_and_build():
         if row['brand'] == 'DZL':
             if 'access' in soh_cat or any(x in comb for x in ['sock', 'insole', 'foot loop', 'bag', 'hat', 'cap', 'belt', 'wallet', 'shoelace', 'cleaner', 'care']):
                 return "Accessories"
-            return "Footwear (Shoes)"
+            return "Shoes"
 
         if any(x in comb for x in ['toy', 'doll', 'clay', 'puzzle', 'baby', 'block', 'gun', 'bubble']): return "Children's Goods"
         if any(x in comb for x in ['lip', 'mask', 'cream', 'perfume', 'makeup', 'eyebrow', 'clean', 'wipe', 'bath', 'nail', 'soap']): return "Beauty & Cleaning"
@@ -380,7 +394,7 @@ def process_and_build():
         return "Variety Lifestyle"
 
     df_clean['main_category'] = df_clean.apply(map_to_main_category, axis=1)
-    df_clean['gender'] = df_clean['clean_item_name'].apply(extract_gender)
+    df_clean['gender'] = df_clean.apply(lambda r: classify_shoe_gender_by_size(r['clean_item_name']), axis=1)
 
     # إجماليات المتاجر
     txn_col = 'Receipt Number' if 'Receipt Number' in df_clean.columns else 'clean_sku'
@@ -482,7 +496,7 @@ def process_and_build():
             "upt": f"{b_upt:.2f}", "str": f"{b_str}%", "asp": f"{b_asp:,}"
         }
 
-    # تجهيز مصفوفة الفئات حسب البراند (لعزل DZL عن MMS بنسبة 100%)
+    # تجهيز مصفوفة الفئات حسب البراند
     category_data_by_brand = {}
     for b in ['ALL', 'MMS', 'DZL']:
         sub_c = df_clean if b == 'ALL' else df_clean[df_clean['brand'] == b]
@@ -496,13 +510,13 @@ def process_and_build():
         category_data_by_brand[b] = b_cat_df.to_dict(orient='records')
 
     # تجهيز Gender Contribution لـ DZL
-    dzl_sub = df_clean[df_clean['brand'] == 'DZL']
-    dzl_tot_sales = dzl_sub['Actual Sales Amount'].sum()
-    dzl_gender_df = dzl_sub.groupby('gender', as_index=False).agg(
+    dzl_shoes_only = df_clean[(df_clean['brand'] == 'DZL') & (df_clean['main_category'] == 'Shoes')]
+    dzl_shoe_sales = dzl_shoes_only['Actual Sales Amount'].sum()
+    dzl_gender_df = dzl_shoes_only.groupby('gender', as_index=False).agg(
         sales=('Actual Sales Amount', 'sum'),
         units=('Sales Quantity', 'sum')
     ).sort_values(by='sales', ascending=False).reset_index(drop=True)
-    dzl_gender_df['share'] = ((dzl_gender_df['sales'] / dzl_tot_sales) * 100).round(1) if dzl_tot_sales > 0 else 0
+    dzl_gender_df['share'] = ((dzl_gender_df['sales'] / dzl_shoe_sales) * 100).round(1) if dzl_shoe_sales > 0 else 0
     dzl_gender_df['asp'] = (dzl_gender_df['sales'] / dzl_gender_df['units'].replace(0, np.nan)).fillna(0).round().astype(int)
     dzl_gender_data = {
         "labels": dzl_gender_df['gender'].tolist(),
@@ -510,7 +524,7 @@ def process_and_build():
         "records": dzl_gender_df.to_dict(orient='records')
     }
 
-    # قراءة مخزون المستودع والمتاجر بالباركود من SOH.xlsx
+    # قراءة مخزون المستودع والمتاجر بالباركود
     wh_barcode_stock_dict = {}
     store_barcode_stock_dict = {}
     barcode_soh_col = next((c for c in df_soh_raw.columns if any(k in str(c).lower() for k in ["barcode", "bar code", "upc"])), None)
@@ -526,8 +540,8 @@ def process_and_build():
         st_grouped = df_soh_raw[df_soh_raw['store_code'].isin(ALL_VALID_CODES)].groupby('clean_barcode', as_index=False)[stock_col_name].sum()
         store_barcode_stock_dict = dict(zip(st_grouped['clean_barcode'], st_grouped[stock_col_name]))
 
-    # بناء قائمة Top 20 Shoes و Low 20 Shoes لـ DZL (Product Group -> SKU Level Drill-down)
-    dzl_shoes_df = df_clean[(df_clean['brand'] == 'DZL') & (df_clean['main_category'] == 'Footwear (Shoes)') & (df_clean['Sales Quantity'] > 0)].copy()
+    # بناء قائمة Top 20 Shoes و Low 20 Shoes لـ DZL
+    dzl_shoes_df = df_clean[(df_clean['brand'] == 'DZL') & (df_clean['main_category'] == 'Shoes') & (df_clean['Actual Sales Amount'] > 0)].copy()
     dzl_top20_groups = []
     dzl_low20_groups = []
 
@@ -553,7 +567,7 @@ def process_and_build():
                 child_list = []
                 tot_wh_stock = 0
                 tot_st_stock = 0
-                gender_val = child_skus['gender'].iloc[0] if not child_skus.empty else "Unisex"
+                gender_val = child_skus['gender'].iloc[0] if not child_skus.empty else "Women"
                 for _, cr in child_skus.iterrows():
                     b_code = str(cr['clean_barcode'])
                     wh_s = int(wh_barcode_stock_dict.get(b_code, 0))
@@ -687,7 +701,7 @@ def process_and_build():
         if excel_export_dzl:
             pd.DataFrame(excel_export_dzl).to_excel(os.path.join(REPORTS_DIR, "Auto_Replenishment_DZL.xlsx"), index=False)
     except Exception as e:
-        print(f"[!] Warning: Could not overwrite Excel files (Close Excel if open): {e}")
+        print(f"[!] Warning: Could not overwrite Excel files (File might be open): {e}")
 
     send_telegram_alert(total_sales, overall_ach, wh_total_stock, replenishment_recommendations)
 
@@ -798,6 +812,158 @@ def process_and_build():
             <td>{diag_badge}</td>
             <td style="color:#f59e0b;font-weight:600;">{row['asp']:,}</td>
         </tr>
+        """
+
+    # تجهيز كروت وجداول المناطق (Region-Wise)
+    region_kpi_cards = ""
+    region_tables_html = ""
+
+    for reg_name, grp in [("Riyadh Central Region", store_summary[store_summary['region'] == "Riyadh Central Region"]),
+                          ("Western Region", store_summary[store_summary['region'] == "Western Region"])]:
+        reg_mgr = "Sultan" if "Riyadh" in reg_name else "Rajib"
+        r_sales = round(grp['sales'].sum())
+        r_target = round(grp['target'].fillna(0).sum())
+        r_ach = (r_sales / r_target * 100) if r_target > 0 else 0
+        r_units = int(grp['units'].sum())
+        r_txns = int(grp['txns'].sum())
+        r_atv = round(r_sales / r_txns) if r_txns > 0 else 0
+        r_upt = (r_units / r_txns) if r_txns > 0 else 0
+        r_asp = round(r_sales / r_units) if r_units > 0 else 0
+
+        reg_lfl = grp[grp['ly_sales'].notna()]
+        reg_cur_lfl = reg_lfl['sales'].sum()
+        reg_ly_tot = round(reg_lfl['ly_sales'].sum())
+        reg_yoy = ((reg_cur_lfl - reg_ly_tot) / reg_ly_tot * 100) if reg_ly_tot > 0 else None
+
+        ach_col = "#10b981" if r_ach >= 100 else ("#f59e0b" if r_ach >= 80 else "#ef4444")
+        yoy_col = "#10b981" if (reg_yoy and reg_yoy >= 0) else "#ef4444"
+        yoy_badge = f'<span style="color:{yoy_col}; font-weight:700;">{reg_yoy:+.1f}%</span>' if reg_yoy is not None else '<span style="color:#64748b;">N/A</span>'
+
+        region_kpi_cards += f"""
+        <div class="region-block" data-region="{reg_name}" style="background:var(--card); border:1px solid var(--border); border-top:4px solid {'#38bdf8' if 'Riyadh' in reg_name else '#818cf8'}; border-radius:12px; padding:20px; flex:1; min-width:320px;">
+            <div style="display:flex; justify-content:space-between; align-items:flex-start; margin-bottom:12px;">
+                <div>
+                    <h3 style="margin:0; font-size:17px; color:#fff;">{reg_name}</h3>
+                    <span style="font-size:12px; color:#38bdf8; font-weight:600;">Area Manager: {reg_mgr}</span>
+                </div>
+                <div style="text-align:right;">
+                    <span class="badge" style="background:{ach_col}22; color:{ach_col}; border:1px solid {ach_col}55; font-size:12px; font-weight:700;">{r_ach:.1f}% Ach</span>
+                    <div style="font-size:11px; margin-top:4px;">YoY: {yoy_badge}</div>
+                </div>
+            </div>
+            <div style="display:grid; grid-template-columns: repeat(3, 1fr); gap:10px; margin-top:14px; background:#090d16; padding:12px; border-radius:8px; border:1px solid #1e293b;">
+                <div>
+                    <div style="font-size:11px; color:#94a3b8;">CURRENT SALES</div>
+                    <div style="font-size:14px; font-weight:700; color:#fff;">{r_sales:,} <span style="font-size:9px;">SAR</span></div>
+                </div>
+                <div>
+                    <div style="font-size:11px; color:#94a3b8;">QTY SOLD</div>
+                    <div style="font-size:14px; font-weight:700; color:#38bdf8;">{r_units:,}</div>
+                </div>
+                <div>
+                    <div style="font-size:11px; color:#94a3b8;">TRANSACTIONS</div>
+                    <div style="font-size:14px; font-weight:700; color:#fff;">{r_txns:,}</div>
+                </div>
+                <div>
+                    <div style="font-size:11px; color:#94a3b8;">UPT</div>
+                    <div style="font-size:13px; font-weight:700; color:#10b981;">{r_upt:.2f}</div>
+                </div>
+                <div>
+                    <div style="font-size:11px; color:#94a3b8;">ATV</div>
+                    <div style="font-size:13px; font-weight:700; color:#fff;">{r_atv:,} SAR</div>
+                </div>
+                <div>
+                    <div style="font-size:11px; color:#94a3b8;">ASP</div>
+                    <div style="font-size:13px; font-weight:700; color:#f59e0b;">{r_asp:,}</div>
+                </div>
+            </div>
+        </div>
+        """
+
+        reg_rows = ""
+        for idx, r in grp.reset_index(drop=True).iterrows():
+            t_str = f"{round(r['target']):,}" if pd.notna(r['target']) else "-"
+            ach_v = r['ach_pct'] if pd.notna(r['ach_pct']) else None
+            ach_cell = f"""
+            <div style="display:flex;align-items:center;gap:6px;">
+                <span style="color:{'#10b981' if ach_v>=100 else ('#f59e0b' if ach_v>=80 else '#ef4444')};font-weight:700;min-width:42px;">{ach_v:.1f}%</span>
+                <div style="flex:1;background:#1e293b;border-radius:4px;height:5px;overflow:hidden;">
+                    <div style="width:{min(ach_v,100):.1f}%;background:{'#10b981' if ach_v>=100 else ('#f59e0b' if ach_v>=80 else '#ef4444')};height:100%;"></div>
+                </div>
+            </div>
+            """ if ach_v is not None else '<span style="color:#64748b;">-</span>'
+
+            ly_str = f"{round(r['ly_sales']):,}" if pd.notna(r['ly_sales']) else '<span style="color:#64748b;">New Store</span>'
+            yoy_badge_cell = f'<span style="color:{"#10b981" if r["yoy_growth"]>=0 else "#ef4444"}; font-weight:700;">{r["yoy_growth"]:+.1f}%</span>' if pd.notna(r['yoy_growth']) else '<span style="color:#64748b;">-</span>'
+            brand_pill = f'<span class="badge" style="background:{"#ef444422" if r["brand"]=="DZL" else "#38bdf822"}; color:{"#ef4444" if r["brand"]=="DZL" else "#38bdf8"}; margin-right:4px;">{r["brand"]}</span>'
+
+            reg_rows += f"""
+            <tr class="store-row" data-brand="{r['brand']}">
+                <td style="color:#64748b;">{idx+1}</td>
+                <td style="color:#38bdf8;font-weight:600;">{r['clean_code']}</td>
+                <td style="font-weight:600;color:#fff;">{brand_pill} {r['full_name']}</td>
+                <td style="font-weight:700;color:#f8fafc;">{round(r['sales']):,}</td>
+                <td style="color:#38bdf8;font-weight:600;">{ly_str}</td>
+                <td>{yoy_badge_cell}</td>
+                <td style="color:#94a3b8;">{t_str}</td>
+                <td style="min-width:120px;">{ach_cell}</td>
+                <td style="font-weight:700;color:#38bdf8;">{int(r['units']):,}</td>
+                <td style="font-weight:700;color:#fff;">{int(r['txns']):,}</td>
+                <td style="font-weight:700;color:#10b981;">{r['upt']:.2f}</td>
+                <td style="font-weight:700;color:#38bdf8;">{r['atv']:,}</td>
+                <td>{r['str_pct']}%</td>
+                <td style="color:#f59e0b;font-weight:600;">{r['asp']:,}</td>
+            </tr>
+            """
+
+        region_tables_html += f"""
+        <div class="table-wrap region-table-wrap" data-region="{reg_name}" style="margin-bottom:30px;">
+            <div class="table-header">
+                <div>
+                    <h3 style="color:#38bdf8; font-size:16px;">🏢 {reg_name.upper()}</h3>
+                    <span style="color:var(--text-muted);font-size:12px;">Area Manager: <strong style="color:#fff;">{reg_mgr}</strong> | Stores: {len(grp)} Doors</span>
+                </div>
+            </div>
+            <div style="overflow-x:auto;">
+                <table>
+                    <thead>
+                        <tr>
+                            <th>#</th>
+                            <th>Code</th>
+                            <th>Full Store Name</th>
+                            <th>Current Sales (SAR)</th>
+                            <th>LY Gross Sales (SAR)</th>
+                            <th>YoY Growth</th>
+                            <th>Target (SAR)</th>
+                            <th>% Ach</th>
+                            <th>QTY Sold</th>
+                            <th>Transactions</th>
+                            <th>UPT</th>
+                            <th>ATV (SAR)</th>
+                            <th>STR%</th>
+                            <th>ASP</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {reg_rows}
+                        <tr style="background:#0c1220; font-weight:700; border-top:2px solid #38bdf8;">
+                            <td colspan="3" style="color:#38bdf8; font-size:13px;">TOTAL {reg_name.upper()} ({reg_mgr})</td>
+                            <td style="color:#fff; font-size:14px;">{r_sales:,}</td>
+                            <td style="color:#38bdf8; font-size:14px;">{reg_ly_tot:,}</td>
+                            <td>{yoy_badge}</td>
+                            <td style="color:#94a3b8;">{r_target:,}</td>
+                            <td style="color:{ach_col};">{r_ach:.1f}%</td>
+                            <td style="color:#38bdf8;">{r_units:,}</td>
+                            <td style="color:#fff;">{r_txns:,}</td>
+                            <td style="color:#10b981;">{r_upt:.2f}</td>
+                            <td style="color:#38bdf8;">{r_atv:,}</td>
+                            <td>-</td>
+                            <td style="color:#f59e0b;">{r_asp:,}</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
         """
 
     repl_rows_html = ""
@@ -995,6 +1161,7 @@ def process_and_build():
 
 <div class="view-toggle-bar">
     <button class="view-btn active" id="btn-stores" onclick="switchView('stores')">🏢 Store Commercial Matrix</button>
+    <button class="view-btn" id="btn-regions" onclick="switchView('regions')">🌍 Region-Wise Performance</button>
     <button class="view-btn" id="btn-business" onclick="switchView('business')">📦 Business-Wise & Gender Mix</button>
     <button class="view-btn" id="btn-action" onclick="switchView('action')" style="border-left:2px solid #38bdf8;">⚡ Commercial Action Hub (Top/Low 20 Shoes & Replenishment)</button>
 </div>
@@ -1066,7 +1233,17 @@ def process_and_build():
     </div>
 </div>
 
-<!-- 2. Business-Wise View (2 Charts: Category Contribution + Gender-Wise Contribution) -->
+<!-- 2. Region-Wise Performance View (Restored & Dynamic) -->
+<div id="view-regions" style="display:none;">
+    <div class="section-title"><span>🌍 REGIONAL LEADERSHIP & AREA MANAGER OVERVIEW</span></div>
+    <div style="display:flex; flex-wrap:wrap; gap:16px; margin-bottom:24px;">
+        {region_kpi_cards}
+    </div>
+
+    {region_tables_html}
+</div>
+
+<!-- 3. Business-Wise View (2 Charts: Category Contribution + Gender-Wise Contribution) -->
 <div id="view-business" style="display:none;">
     <div class="section-title">
         <span id="businessViewTitle">🏷️ CATEGORY PORTFOLIO CONTRIBUTION</span>
@@ -1085,7 +1262,7 @@ def process_and_build():
 
         <div class="chart-container" id="genderChartWrapper" style="flex:1; min-width:320px;">
             <div class="section-title">
-                <span>👟 DZL Footwear & Accessories Gender Mix Share</span>
+                <span>👟 DZL Footwear Gender Mix Share (By Shoe Size Runs)</span>
             </div>
             <div id="apexGenderDonut" style="min-height: 330px;"></div>
         </div>
@@ -1103,7 +1280,7 @@ def process_and_build():
                             <th>#</th>
                             <th>Category Name</th>
                             <th>Sales Revenue (SAR)</th>
-                            <th>Units Sold</th>
+                            <th>Sales Units</th>
                             <th>Mix Share (%)</th>
                             <th>ASP (SAR)</th>
                         </tr>
@@ -1136,7 +1313,7 @@ def process_and_build():
     </div>
 </div>
 
-<!-- 3. Commercial Action Hub (Top 20 Shoes & Low 20 Shoes Group-Wise with SKU Drill-down) -->
+<!-- 4. Commercial Action Hub (Top 20 Shoes & Low 20 Shoes Group-Wise with SKU Drill-down) -->
 <div id="view-action" style="display:none;">
     <div class="section-title" style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:10px;">
         <span>⚡ PREDICTIVE AUTO-REPLENISHMENT & STOCK-OUT FORECAST (KSWH & IST)</span>
@@ -1339,17 +1516,26 @@ def process_and_build():
     }});
     donutChart.render();
 
-    // 5. Gender Donut Chart
-    if (genderChart) genderChart.destroy();
-    genderChart = new ApexCharts(document.querySelector("#apexGenderDonut"), {{
-      series: DZL_GENDER_DATA.series,
-      labels: DZL_GENDER_DATA.labels,
-      chart: {{ type: 'donut', height: 330, background: 'transparent' }},
-      theme: {{ mode: 'dark' }},
-      colors: ['#ec4899', '#38bdf8', '#f59e0b', '#10b981'],
-      legend: {{ position: 'bottom', labels: {{ colors: '#cbd5e1' }} }}
-    }});
-    genderChart.render();
+    // 5. Gender Donut Chart (Shown for DZL or Consolidated)
+    const genderWrapper = document.getElementById("genderChartWrapper");
+    const genderTableWrap = document.getElementById("genderTableWrap");
+    if (brand === 'DZL' || brand === 'ALL') {{
+      genderWrapper.style.display = "block";
+      genderTableWrap.style.display = "block";
+      if (genderChart) genderChart.destroy();
+      genderChart = new ApexCharts(document.querySelector("#apexGenderDonut"), {{
+        series: DZL_GENDER_DATA.series,
+        labels: DZL_GENDER_DATA.labels,
+        chart: {{ type: 'donut', height: 330, background: 'transparent' }},
+        theme: {{ mode: 'dark' }},
+        colors: ['#ec4899', '#38bdf8', '#10b981'],
+        legend: {{ position: 'bottom', labels: {{ colors: '#cbd5e1' }} }}
+      }});
+      genderChart.render();
+    }} else {{
+      genderWrapper.style.display = "none";
+      genderTableWrap.style.display = "none";
+    }}
   }}
 
   function switchDZLMovers(type) {{
@@ -1514,22 +1700,29 @@ def process_and_build():
 
   function switchView(viewName) {{
     const storesView = document.getElementById("view-stores");
+    const regionsView = document.getElementById("view-regions");
     const businessView = document.getElementById("view-business");
     const actionView = document.getElementById("view-action");
     const btnStores = document.getElementById("btn-stores");
+    const btnRegions = document.getElementById("btn-regions");
     const btnBusiness = document.getElementById("btn-business");
     const btnAction = document.getElementById("btn-action");
 
     if (storesView) storesView.style.display = "none";
+    if (regionsView) regionsView.style.display = "none";
     if (businessView) businessView.style.display = "none";
     if (actionView) actionView.style.display = "none";
     if (btnStores) btnStores.classList.remove("active");
+    if (btnRegions) btnRegions.classList.remove("active");
     if (btnBusiness) btnBusiness.classList.remove("active");
     if (btnAction) btnAction.classList.remove("active");
 
     if (viewName === 'stores' && storesView) {{
         storesView.style.display = "block";
         if (btnStores) btnStores.classList.add("active");
+    }} else if (viewName === 'regions' && regionsView) {{
+        regionsView.style.display = "block";
+        if (btnRegions) btnRegions.classList.add("active");
     }} else if (viewName === 'business' && businessView) {{
         businessView.style.display = "block";
         if (btnBusiness) btnBusiness.classList.add("active");
