@@ -331,7 +331,6 @@ def process_and_build():
     df_clean['clean_item_name'] = df_clean[item_name_col].fillna("Item").astype(str).str.strip()
     df_clean['sub_subgroup'] = df_clean[raw_subsub_col].fillna("Other").astype(str).str.strip() if raw_subsub_col else "General"
 
-    # حذف مبيعات الصفر و GWP والأكياس نهائياً
     df_clean = df_clean[(df_clean['Actual Sales Amount'] > 0) & (df_clean['Sales Quantity'] > 0)].copy()
     for kw in EXCLUDED_KEYWORDS:
         df_clean = df_clean[~df_clean['clean_item_name'].str.lower().str.contains(kw, regex=False)]
@@ -649,7 +648,6 @@ def process_and_build():
 
     # محرك التوريد التلقائي الشامل مع الأولوية المطلقة للأحذية واحتساب المناقلات الآلية IST
     if not df_soh_raw.empty and stock_col_name and code_col_name and barcode_soh_col:
-        # فحص إجمالي المبيعات والمخزون على مستوى كل فرع وكل باركود
         store_sku_sales = df_clean.groupby(['clean_code', 'clean_barcode', 'clean_sku', 'clean_item_name', 'style_group', 'main_category', 'brand'], as_index=False).agg(
             sept_units=('Sales Quantity', 'sum')
         )
@@ -1029,7 +1027,11 @@ def process_and_build():
         </tr>
         """
 
-    # بناء قالب الـ HTML كاملاً ومضبوطاً لتفادي أي خطأ
+    store_options_movers = '<option value="ALL">-- All DZL Stores Combined --</option>'
+    for st_code in DZL_VALID_CODES:
+        st_name = STORE_MAPPING[st_code]['full_name']
+        store_options_movers += f'<option value="{st_code}">{st_name} ({st_code})</option>'
+
     html_content = f"""<!DOCTYPE html>
 <html lang="en" id="html-root">
 <head>
@@ -2049,8 +2051,9 @@ def process_and_build():
     }} else if (viewName === 'business' && businessView) {{
         businessView.style.display = "block";
         if (btnBusiness) btnBusiness.classList.add("active");
-        // إعادة رسم الـ Charts فوراً عند إظهار التبويب لتفادي الـ 0-dimensions bug
-        renderCategorySection(currentActiveBrand);
+        setTimeout(function() {{
+            renderCategorySection(currentActiveBrand);
+        }}, 50);
     }} else if (actionView) {{
         actionView.style.display = "block";
         if (btnAction) btnAction.classList.add("active");
