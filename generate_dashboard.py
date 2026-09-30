@@ -208,6 +208,7 @@ def load_soh_data(soh_path):
         df_soh = df_soh[df_soh[code_col].notna()].copy()
         df_soh[stock_col] = pd.to_numeric(df_soh[stock_col], errors='coerce').fillna(0)
 
+        # استبعاد GWP و Shopping Bags والمواد غير التجارية
         if desc_col:
             for kw in EXCLUDED_KEYWORDS:
                 df_soh = df_soh[~df_soh[desc_col].astype(str).str.lower().str.contains(kw, regex=False)]
@@ -268,7 +269,6 @@ def load_soh_data(soh_path):
         return {}, {}, {}, {}, pd.DataFrame(), 0
 
 def process_and_build():
-    # تهيئة جميع المتغيرات مسبقاً لمنع أي NameError بشكل نهائي
     replenishment_recommendations = []
     excel_export_mms = []
     excel_export_dzl = []
@@ -277,7 +277,6 @@ def process_and_build():
     region_kpi_cards = ""
     region_tables_html = ""
     repl_rows_html = ""
-    html_content = ""
 
     sales_mms_file, sales_dzl_file, soh_file, target_file, ly_file = identify_files()
     targets_map = load_targets(target_file)
@@ -655,7 +654,7 @@ def process_and_build():
         dzl_top20_groups = build_group_data(dzl_pg_summary.sort_values(by=['units', 'sales'], ascending=[False, False]).head(20))
         dzl_low20_groups = build_group_data(dzl_pg_summary.sort_values(by=['units', 'sales'], ascending=[True, True]).head(20))
 
-    # محرك التوريد التلقائي مع إعطاء الأولوية المطلقة للأحذية (Shoes Priority 1)
+    # محرك التوريد التلقائي مع الأولوية المطلقة للأحذية وضمان توجيه IST في حال نفاد المستودع المركزي
     if not df_soh_raw.empty and stock_col_name and code_col_name and barcode_soh_col:
         store_sku_sales = df_clean.groupby(['clean_code', 'clean_barcode', 'clean_sku', 'clean_item_name', 'style_group', 'main_category', 'brand'], as_index=False).agg(
             sept_units=('Sales Quantity', 'sum')
@@ -707,6 +706,7 @@ def process_and_build():
             else:
                 urgency_str = f"⚠️ Stock-Out in {days_left}d (Vel: {daily_v:.1f}/d)"
 
+            # فحص إن كان الصنف متوفراً في المستودع المركزي أم لا، وإذا لم يتوفر يُخطط IST فوراً
             if wh_available >= needed_qty:
                 action_type = "Predictive WH Replenishment"
                 source_route = f"Central Warehouse (KSWH - Avail: {wh_available:,})"
@@ -731,8 +731,8 @@ def process_and_build():
                     source_route = f"{donor_name} ({donor_code} - Surplus: {donor_qty}) [{match_type}]"
                     needed_qty = min(needed_qty, max(2, donor_qty // 2))
                 else:
-                    action_type = "Predictive WH Replenishment"
-                    source_route = f"Central Warehouse (KSWH - Limited: {wh_available})"
+                    action_type = "Store Transfer (IST - Peer Network)"
+                    source_route = f"Peer Store Network (WH Stock: {wh_available} - Cross-Store Balance)"
 
             p_icon = "👟 [SHOE PRIORITY 1]" if cat == 'Shoes' else "👜 [ACCESSORY]"
             rep_item = {
@@ -923,7 +923,7 @@ def process_and_build():
                 </div>
                 <div>
                     <div style="font-size:11px; color:#94a3b8;">ASP</div>
-                    <div style="font-size:13px; font-weight:700; color:#f59e0b;" id="{reg_id}-kpi-asp">-</div>
+                    <div style="font-size:14px; font-weight:700; color:#f59e0b;" id="{reg_id}-kpi-asp">-</div>
                 </div>
             </div>
         </div>
@@ -1030,6 +1030,7 @@ def process_and_build():
         </tr>
         """
 
+    # بناء قالب الـ HTML كاملاً بعد حساب كافة المتغيرات بدون أي نقص
     html_content = f"""<!DOCTYPE html>
 <html lang="en" id="html-root">
 <head>
@@ -1058,7 +1059,7 @@ def process_and_build():
         .brand-btn {{ background: transparent; border: none; color: #94a3b8; padding: 6px 14px; border-radius: 6px; font-size: 13px; font-weight: 700; cursor: pointer; transition: 0.2s; }}
         .brand-btn.active {{ background: #2563eb; color: #fff; }}
 
-        .logout-btn {{ background: #ef444422; border: 1px solid #ef444455; color: #ef4444; padding: 8px 14px; border-radius: 8px; font-weight: 700; cursor: pointer; font-size: 12px; }}
+        .logout-btn {{ background: #ef444422; border: 1px solid #ef444455; color: #ef4444; padding: 8px 14px; border-radius: 8px; font-weight: 700; cursor: pointer; transition: 0.2s; font-size: 12px; }}
 
         .view-toggle-bar {{ display: flex; background: #0c1220; padding: 4px; border-radius: 10px; border: 1px solid var(--border); margin-bottom: 24px; width: fit-content; gap: 4px; flex-wrap: wrap; }}
         .view-btn {{ background: transparent; border: none; color: var(--text-muted); padding: 10px 22px; border-radius: 8px; font-size: 14px; font-weight: 700; cursor: pointer; transition: 0.2s; }}
