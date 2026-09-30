@@ -208,7 +208,6 @@ def load_soh_data(soh_path):
         df_soh = df_soh[df_soh[code_col].notna()].copy()
         df_soh[stock_col] = pd.to_numeric(df_soh[stock_col], errors='coerce').fillna(0)
 
-        # استبعاد GWP و Shopping Bags والمواد غير التجارية
         if desc_col:
             for kw in EXCLUDED_KEYWORDS:
                 df_soh = df_soh[~df_soh[desc_col].astype(str).str.lower().str.contains(kw, regex=False)]
@@ -471,7 +470,6 @@ def process_and_build():
             "upt": f"{b_upt:.2f}", "str": f"{b_str}%", "asp": f"{b_asp:,}"
         }
 
-    # بيانات مخطط Top Stores لكل براند لتحديث المخطط ديناميكياً
     store_chart_data = {}
     for b in ['ALL', 'MMS', 'DZL']:
         sub_st = store_summary if b == 'ALL' else store_summary[store_summary['brand'] == b]
@@ -483,7 +481,6 @@ def process_and_build():
             "targets": [round(float(r['target'])) if pd.notna(r['target']) else 0 for _, r in sub_chart.iterrows()]
         }
 
-    # إعداد إحصائيات المناطق المعزولة بالكامل لكل براند (Region KPIs per Brand)
     region_kpis_by_brand = {}
     for b in ['ALL', 'MMS', 'DZL']:
         sub_st = store_summary if b == 'ALL' else store_summary[store_summary['brand'] == b]
@@ -512,7 +509,6 @@ def process_and_build():
                 "upt": f"{r_upt:.2f}", "asp": f"{r_asp:,}", "stores_count": len(grp)
             }
 
-    # تجهيز مصفوفة الفئات حسب البراند
     category_data_by_brand = {}
     for b in ['ALL', 'MMS', 'DZL']:
         sub_c = df_clean if b == 'ALL' else df_clean[df_clean['brand'] == b]
@@ -525,7 +521,6 @@ def process_and_build():
         b_cat_df['asp'] = (b_cat_df['sales'] / b_cat_df['units'].replace(0, np.nan)).fillna(0).round().astype(int)
         category_data_by_brand[b] = b_cat_df.to_dict(orient='records')
 
-    # تجهيز Gender Contribution لـ DZL
     dzl_shoes_only = df_clean[(df_clean['brand'] == 'DZL') & (df_clean['main_category'] == 'Shoes')]
     dzl_shoe_sales = dzl_shoes_only['Actual Sales Amount'].sum()
     dzl_gender_df = dzl_shoes_only.groupby('gender', as_index=False).agg(
@@ -540,7 +535,6 @@ def process_and_build():
         "records": dzl_gender_df.to_dict(orient='records')
     }
 
-    # قراءة مخزون المستودع والمتاجر بالباركود
     wh_barcode_stock_dict = {}
     store_barcode_stock_dict = {}
     barcode_soh_col = next((c for c in df_soh_raw.columns if any(k in str(c).lower() for k in ["barcode", "bar code", "upc"])), None)
@@ -556,7 +550,6 @@ def process_and_build():
         st_grouped = df_soh_raw[df_soh_raw['store_code'].isin(ALL_VALID_CODES)].groupby('clean_barcode', as_index=False)[stock_col_name].sum()
         store_barcode_stock_dict = dict(zip(st_grouped['clean_barcode'], st_grouped[stock_col_name]))
 
-    # تفاصيل كل متجر (Store Category Contribution for Modal)
     store_category_details = {}
     for code, grp in df_clean.groupby('clean_code'):
         st_c = clean_store_code_str(code)
@@ -580,7 +573,6 @@ def process_and_build():
             })
         store_category_details[st_c] = cats_list
 
-    # مصفوفة الـ Drill-down للأصناف في قسم Business-Wise
     drilldown_items = df_clean.groupby(['brand', 'main_category', 'gender', 'style_group', 'clean_barcode', 'clean_item_name'], as_index=False).agg(
         sales=('Actual Sales Amount', 'sum'),
         units=('Sales Quantity', 'sum')
@@ -590,7 +582,6 @@ def process_and_build():
     drilldown_items['asp'] = (drilldown_items['sales'] / drilldown_items['units'].replace(0, np.nan)).fillna(0).round().astype(int)
     business_drilldown_data = drilldown_items.to_dict(orient='records')
 
-    # بناء قائمة Top 20 Shoes و Low 20 Shoes لـ DZL
     dzl_shoes_df = df_clean[(df_clean['brand'] == 'DZL') & (df_clean['main_category'] == 'Shoes') & (df_clean['Actual Sales Amount'] > 0)].copy()
     dzl_top20_groups = []
     dzl_low20_groups = []
@@ -654,7 +645,6 @@ def process_and_build():
         dzl_top20_groups = build_group_data(dzl_pg_summary.sort_values(by=['units', 'sales'], ascending=[False, False]).head(20))
         dzl_low20_groups = build_group_data(dzl_pg_summary.sort_values(by=['units', 'sales'], ascending=[True, True]).head(20))
 
-    # محرك التوريد التلقائي مع الأولوية المطلقة للأحذية وضمان توجيه IST في حال نفاد المستودع المركزي
     if not df_soh_raw.empty and stock_col_name and code_col_name and barcode_soh_col:
         store_sku_sales = df_clean.groupby(['clean_code', 'clean_barcode', 'clean_sku', 'clean_item_name', 'style_group', 'main_category', 'brand'], as_index=False).agg(
             sept_units=('Sales Quantity', 'sum')
@@ -706,7 +696,6 @@ def process_and_build():
             else:
                 urgency_str = f"⚠️ Stock-Out in {days_left}d (Vel: {daily_v:.1f}/d)"
 
-            # فحص إن كان الصنف متوفراً في المستودع المركزي أم لا، وإذا لم يتوفر يُخطط IST فوراً
             if wh_available >= needed_qty:
                 action_type = "Predictive WH Replenishment"
                 source_route = f"Central Warehouse (KSWH - Avail: {wh_available:,})"
@@ -731,8 +720,8 @@ def process_and_build():
                     source_route = f"{donor_name} ({donor_code} - Surplus: {donor_qty}) [{match_type}]"
                     needed_qty = min(needed_qty, max(2, donor_qty // 2))
                 else:
-                    action_type = "Store Transfer (IST - Peer Network)"
-                    source_route = f"Peer Store Network (WH Stock: {wh_available} - Cross-Store Balance)"
+                    action_type = "Predictive WH Replenishment"
+                    source_route = f"Central Warehouse (KSWH - Limited: {wh_available})"
 
             p_icon = "👟 [SHOE PRIORITY 1]" if cat == 'Shoes' else "👜 [ACCESSORY]"
             rep_item = {
@@ -806,6 +795,8 @@ def process_and_build():
     store_summary['top_cats_str'] = [e['top_categories_str'] for e in engine_res]
 
     net_yoy_col = "#10b981" if network_lfl_growth >= 0 else "#ef4444"
+    store_table_rows = ""
+    decision_cards_html = ""
     store_meta_map = {}
 
     for idx, row in store_summary.iterrows():
@@ -919,7 +910,7 @@ def process_and_build():
                 </div>
                 <div>
                     <div style="font-size:11px; color:#94a3b8;">ATV</div>
-                    <div style="font-size:13px; font-weight:700; color:#fff;" id="{reg_id}-kpi-atv">-</div>
+                    <div style="font-size:14px; font-weight:700; color:#fff;" id="{reg_id}-kpi-atv">-</div>
                 </div>
                 <div>
                     <div style="font-size:11px; color:#94a3b8;">ASP</div>
@@ -1030,7 +1021,7 @@ def process_and_build():
         </tr>
         """
 
-    # بناء قالب الـ HTML كاملاً بعد حساب كافة المتغيرات بدون أي نقص
+    # بناء قالب الـ HTML كاملاً ومضبوطاً لتفادي أي خطأ
     html_content = f"""<!DOCTYPE html>
 <html lang="en" id="html-root">
 <head>
