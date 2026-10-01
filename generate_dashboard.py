@@ -145,8 +145,6 @@ def load_targets(target_path):
         df_t = pd.read_excel(target_path)
         df_t.columns = [str(c).strip() for c in df_t.columns]
         store_col = [c for c in df_t.columns if any(k in c.lower() for k in ["profit", "cost", "store", "organization", "code"])][0]
-        
-        # دعم قراءة الأهداف للشهر المعني (سبتمبر أو الشهور اللاحقة) بديناميكية تامة
         sep_col = next((c for c in df_t.columns if any(k in c.lower() for k in ["oct", "sep", "target", "val"])), df_t.columns[-1])
         df_t = df_t[~df_t[store_col].astype(str).str.lower().str.contains("total")].copy()
         df_t[sep_col] = pd.to_numeric(df_t[sep_col].astype(str).str.replace(",", "").str.strip(), errors='coerce')
@@ -865,6 +863,70 @@ def process_and_build():
 </head>
 <body>
 
+<div id="auth-overlay" style="position:fixed;top:0;left:0;width:100%;height:100%;background:#090d16;z-index:99999999;display:flex;align-items:center;justify-content:center;">
+  <div style="background:#131b2e;padding:32px;border-radius:12px;box-shadow:0 15px 30px rgba(0,0,0,0.6);text-align:center;width:90%;max-width:380px;border:1px solid #1e293b;">
+    <h3 style="color:#fff;margin:0 0 8px 0;font-size:20px;">🔒 Executive Secure Access</h3>
+    <p style="color:#94a3b8;font-size:13px;margin:0 0 20px 0;">Enter authorization PIN to unlock dashboard</p>
+    <input type="password" id="access-pass" placeholder="PIN Code" style="width:100%;padding:12px;border-radius:6px;border:1px solid #334155;background:#090d16;color:#fff;font-size:16px;text-align:center;outline:none;box-sizing:border-box;margin-bottom:14px;">
+    <button onclick="checkAccess()" style="width:100%;padding:12px;border-radius:6px;border:none;background:#2563eb;color:#fff;font-weight:700;font-size:15px;cursor:pointer;">Unlock Dashboard</button>
+    <p id="error-msg" style="color:#ef4444;font-size:13px;margin:12px 0 0 0;display:none;">Invalid authorization credentials</p>
+  </div>
+</div>
+
+<script>
+  const USER_ROLES = {{
+    "MMS2026": {{ role: "ADMIN", name: "Executive & Merchandising (Full Access)", region: "ALL" }},
+    "SULTAN2026": {{ role: "AREA_MGR", name: "Sultan", region: "Riyadh Central Region" }},
+    "RAJIB2026": {{ role: "AREA_MGR", name: "Rajib", region: "Western Region" }}
+  }};
+
+  function checkAccess() {{
+    var input = document.getElementById("access-pass");
+    var val = input ? input.value.trim().toUpperCase() : "";
+    var user = USER_ROLES[val];
+
+    if (user) {{
+      sessionStorage.setItem("mms_user", JSON.stringify(user));
+      applyUserPermissions(user);
+      var overlay = document.getElementById("auth-overlay");
+      if (overlay) overlay.style.display = "none";
+    }} else {{
+      var errMsg = document.getElementById("error-msg");
+      if (errMsg) errMsg.style.display = "block";
+    }}
+  }}
+
+  function applyUserPermissions(user) {{
+    var userBadge = document.getElementById("current-user-badge");
+    if (userBadge) {{
+      userBadge.innerHTML = "👤 " + user.name;
+    }}
+  }}
+
+  function logout() {{
+    sessionStorage.removeItem("mms_user");
+    location.reload();
+  }}
+
+  document.addEventListener("DOMContentLoaded", function() {{
+    var passInput = document.getElementById("access-pass");
+    if (passInput) {{
+      passInput.addEventListener("keypress", function(e) {{
+        if (e.key === "Enter") checkAccess();
+      }});
+    }}
+    var savedUser = sessionStorage.getItem("mms_user");
+    if (savedUser) {{
+      try {{
+        var u = JSON.parse(savedUser);
+        applyUserPermissions(u);
+        var overlay = document.getElementById("auth-overlay");
+        if (overlay) overlay.style.display = "none";
+      }} catch(e) {{}}
+    }}
+  }});
+</script>
+
 <div id="store-modal" class="app-modal">
   <div class="modal-content">
     <div class="modal-header">
@@ -1179,7 +1241,7 @@ def process_and_build():
 
   function renderMMSMoversTable() {{
     const data = (currentMMSMoversType === 'top') ? MMS_TOP500_DATA : MMS_LOW500_DATA;
-    const searchVal = document.getElementById("mmsMoversSearch").value.toLowerCase();
+    const searchVal = (document.getElementById("mmsMoversSearch").value || "").toLowerCase();
     const tbody = document.getElementById("mmsMoversTableBody");
     let filtered = data.filter(r => r.code.toLowerCase().includes(searchVal) || r.name.toLowerCase().includes(searchVal));
     let html = "";
@@ -1276,7 +1338,7 @@ def process_and_build():
     else if (viewName === 'regions' && regionsView) {{ regionsView.style.display = "block"; document.getElementById("btn-regions").classList.add("active"); }}
     else if (viewName === 'business' && businessView) {{
         businessView.style.display = "block"; document.getElementById("btn-business").classList.add("active");
-        setTimeout(function() {{ renderCategorySection(currentActiveBrand); window.dispatchEvent(new Event('resize')); }}, 60);
+        setTimeout(function() {{ renderCategorySection(currentActiveBrand); window.dispatchEvent(new Event('resize')); }}, 50);
     }}
     else if (actionView) {{ actionView.style.display = "block"; document.getElementById("btn-action").classList.add("active"); renderDZLShoesTable(); renderMMSMoversTable(); }}
   }}
