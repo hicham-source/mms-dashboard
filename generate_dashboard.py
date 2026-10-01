@@ -582,7 +582,6 @@ def process_and_build():
     drilldown_items['asp'] = (drilldown_items['sales'] / drilldown_items['units'].replace(0, np.nan)).fillna(0).round().astype(int)
     business_drilldown_data = drilldown_items.to_dict(orient='records')
 
-    # بناء قائمة Top 20 Shoes و Low 20 Shoes لـ DZL (Portfolio + Store-wise)
     dzl_shoes_df = df_clean[(df_clean['brand'] == 'DZL') & (df_clean['main_category'] == 'Shoes') & (df_clean['Actual Sales Amount'] > 0)].copy()
     dzl_top20_groups = {}
     dzl_low20_groups = {}
@@ -646,7 +645,6 @@ def process_and_build():
             dzl_top20_groups[st_code] = t_l
             dzl_low20_groups[st_code] = l_l
 
-    # محرك التوريد التلقائي الشامل مع الأولوية المطلقة للأحذية واحتساب المناقلات الآلية IST
     if not df_soh_raw.empty and stock_col_name and code_col_name and barcode_soh_col:
         store_sku_sales = df_clean.groupby(['clean_code', 'clean_barcode', 'clean_sku', 'clean_item_name', 'style_group', 'main_category', 'brand'], as_index=False).agg(
             sept_units=('Sales Quantity', 'sum')
@@ -665,7 +663,6 @@ def process_and_build():
         merged_sku['str_pct'] = (merged_sku['sept_units'] / (merged_sku['sept_units'] + merged_sku['store_soh']) * 100).fillna(0)
         merged_sku['days_to_stockout'] = merged_sku['store_soh'] / merged_sku['daily_rate'].replace(0, np.nan)
         
-        # الأولوية رقم 1 للأحذية مع فحص نفاد المخزون وكسر المقاسات
         critical_shoes = merged_sku[(merged_sku['main_category'] == 'Shoes') & ((merged_sku['days_to_stockout'] < 14.0) | (merged_sku['store_soh'] <= 2)) & (merged_sku['sept_units'] >= 1)].copy()
         critical_shoes['priority_rank'] = 1
         
@@ -700,13 +697,11 @@ def process_and_build():
             else:
                 urgency_str = f"⚠️ Stock-Out in {days_left}d (Vel: {daily_v:.1f}/d)"
 
-            # فحص توفر المخزون في المستودع KSWH أو التوجيه الإجباري للمناقلة بين المتاجر (IST)
             if wh_available >= needed_qty and wh_available > 0:
                 action_type = "Predictive WH Replenishment"
                 source_route = f"Central Warehouse (KSWH - Avail: {wh_available:,})"
             else:
                 action_type = "Store Transfer (IST)"
-                # البحث عن الفروع الشقيقة التي تمتلك مخزون فائض من نفس الصنف
                 surplus_branches = df_soh_raw[
                     (df_soh_raw['clean_barcode'] == b_val) & 
                     (df_soh_raw['store_code'] != 'KSWH') & 
@@ -1027,11 +1022,6 @@ def process_and_build():
         </tr>
         """
 
-    store_options_movers = '<option value="ALL">-- All DZL Stores Combined --</option>'
-    for st_code in DZL_VALID_CODES:
-        st_name = STORE_MAPPING[st_code]['full_name']
-        store_options_movers += f'<option value="{st_code}">{st_name} ({st_code})</option>'
-
     html_content = f"""<!DOCTYPE html>
 <html lang="en" id="html-root">
 <head>
@@ -1291,6 +1281,11 @@ def process_and_build():
 
 <!-- 1. Store Commercial Matrix View -->
 <div id="view-stores">
+    <div class="section-title"><span>⚡ Critical Action Directives (Store Diagnostics & SOH Coverage)</span></div>
+    <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(320px, 1fr)); gap:14px; margin-bottom:24px;">
+        {decision_cards_html}
+    </div>
+
     <div class="chart-container">
         <div class="section-title">
             <span>📊 Top Stores Performance vs Target (Interactive ApexCharts)</span>
@@ -1330,7 +1325,7 @@ def process_and_build():
                 </thead>
                 <tbody>
                     {store_table_rows}
-                    <tr id="storesTableTotalRow" style="background:#0c1220; font-weight:800; border-top:2px solid #38bdf8; font-size:13px;">
+                    <tr id="storesTableTotalRow" style="background:#0c1220; font-weight:800; border-top:3px solid #38bdf8; font-size:13px;">
                         <td colspan="4" style="color:#38bdf8; text-transform:uppercase;" id="storesTotalTitle">TOTAL PORTFOLIO (ALL DOORS)</td>
                         <td style="color:#fff;" id="tot-sales">{total_sales:,}</td>
                         <td style="color:#38bdf8;" id="tot-ly">{total_ly_sales:,}</td>
@@ -2053,7 +2048,8 @@ def process_and_build():
         if (btnBusiness) btnBusiness.classList.add("active");
         setTimeout(function() {{
             renderCategorySection(currentActiveBrand);
-        }}, 50);
+            window.dispatchEvent(new Event('resize'));
+        }}, 60);
     }} else if (actionView) {{
         actionView.style.display = "block";
         if (btnAction) btnAction.classList.add("active");
