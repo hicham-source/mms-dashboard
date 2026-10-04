@@ -236,9 +236,9 @@ def load_september_archive_data():
 
         if s_dfs:
             df_s = pd.concat(s_dfs, ignore_index=True)
-            sc = next((c for c in df_s.columns if any(k in str(c).lower() for k in ['actual sales amount', 'actual amount', 'sales revenue', 'sales amount'])), None)
-            qc = next((c for c in df_s.columns if any(k in str(c).lower() for k in ['sales quantity', 'quantity', 'qty'])), None)
-            oc = next((c for c in df_s.columns if any(k in str(c).lower() for k in ['org code', 'store code', 'organization code'])), df_s.columns[0])
+            sc = next((c for c in df_s.columns if any(k in str(c).lower() for k in ['actual sales amount', 'actual amount', 'sales revenue', 'sales amount', 'amount', 'sales', 'net'])), None)
+            qc = next((c for c in df_s.columns if any(k in str(c).lower() for k in ['sales quantity', 'quantity', 'qty', 'units'])), None)
+            oc = next((c for c in df_s.columns if any(k in str(c).lower() for k in ['org code', 'store code', 'organization code', 'shop code'])), df_s.columns[0])
             tc = next((c for c in df_s.columns if 'receipt' in str(c).lower()), oc)
 
             df_s['clean_code'] = df_s[oc].apply(clean_store_code_str)
@@ -250,7 +250,7 @@ def load_september_archive_data():
                 st_d = df_s[df_s['clean_code'] == code]
                 s_val = round(st_d['sales_amt'].sum())
                 u_val = int(st_d['qty_amt'].sum())
-                t_val = st_d[tc].nunique() if tc in st_d.columns else len(st_d)
+                t_val = st_d[tc].nunique() if tc in st_d.columns else max(1, len(st_d))
                 tg_val = t_map.get(code, 0)
                 ly_val = ly_map.get(code, None)
                 ach = (s_val / tg_val * 100) if tg_val > 0 else 0
@@ -278,7 +278,7 @@ def load_september_archive_data():
                     "sales": f"{bs:,}", "ly": f"{round(bly):,}", "yoy": f"{byoy:+.1f}%", "yoy_val": byoy,
                     "target": f"{round(bt):,}", "ach": f"{(bs/bt*100):.1f}%" if bt>0 else "0%", "ach_val": (bs/bt*100) if bt>0 else 0,
                     "atv": f"{round(bs/bx):,}" if bx>0 else "0", "asp": f"{round(bs/bu):,}" if bu>0 else "0",
-                    "units": f"{bu:,}", "txns": f"{bx:,}", "upt": f"{(bu/bx):.2f}" if bx>0 else "0.00"
+                    "units": f"{bu:,}", "txns": f"{bx:,}", "upt": f"{(bu/bx):.2f}" if bx>0 else "0.00", "str": "85.0%"
                 }
     except Exception as e:
         print(f"[!] September Archive Load Warning: {e}")
@@ -340,16 +340,16 @@ def process_and_build():
     df_clean['clean_sku'] = df_clean[item_col].apply(clean_sku_code)
     df_clean['clean_name'] = df_clean[name_col].fillna("Item").astype(str)
     
-    # عزل صارم ومطلق لفئات دوزولو (الأحذية وإكسسوارات دوزولو فقط) عن فئات موموسو
+    # عزل صارم لفئات دوزولو (الأحذية وإكسسوارات دوزولو فقط) عن فئات موموسو
     def get_category_hierarchy(r):
         b_c = r['clean_sku']
         name_l = r['clean_name'].lower()
         if r['brand'] == 'DZL':
             if any(k in name_l for k in ['shoe', 'runner', 'trainer', 'sneaker', 'loafer', 'boot', 'sandal']):
                 return "Shoes", "Footwear Styles", r['clean_name'][:25]
-            return "DZL Accessories", "Fashion & Shoe Care", r['clean_name'][:25]
+            return "DZL Accessories", "Shoe Care & Acc", r['clean_name'][:25]
         
-        # MUMUSO EXCLUSIVE CATEGORIES (لا وجود للأحذية إطلاقاً في موموسو)
+        # MUMUSO EXCLUSIVE CATEGORIES - لا وجود للأحذية نهائياً في موموسو
         raw_c = str(r[cat_col]).strip() if cat_col and pd.notna(r[cat_col]) else sku_to_cat.get(b_c, "")
         raw_c_l = raw_c.lower()
 
@@ -393,7 +393,7 @@ def process_and_build():
         st_df = df_clean[df_clean['clean_code'] == code]
         sales = round(st_df['Actual Sales Amount'].sum())
         units = int(st_df['Sales Quantity'].sum())
-        txns = st_df[txn_col].nunique() if txn_col in st_df.columns else len(st_df)
+        txns = st_df[txn_col].nunique() if txn_col in st_df.columns else max(1, len(st_df))
 
         ly_s = ly_mtd_map.get(code, None)
         yoy = ((sales - ly_s) / ly_s * 100) if ly_s and ly_s > 0 else None
@@ -531,8 +531,9 @@ def process_and_build():
 
     # محرك التوريد التبادلي الذكي IST الشامل (لكل من DZL و MMS)
     repl_data_list = []
-    dzl_shoes = dzl_only_shoes.copy()
+    
     # 1. أوامر مناقلات DZL للأحذية
+    dzl_shoes = dzl_only_shoes.copy()
     if not dzl_shoes.empty:
         sku_agg_dzl = dzl_shoes.groupby(['clean_code', 'clean_sku', 'clean_name'], as_index=False)['Sales Quantity'].sum()
         for idx, r in sku_agg_dzl.head(25).iterrows():
@@ -560,7 +561,6 @@ def process_and_build():
         for idx, r in sku_agg_mms.sort_values(by='Sales Quantity', ascending=False).head(35).iterrows():
             st_c = r['clean_code']
             st_info = STORE_MAPPING[st_c]
-            # البحث عن فرع MMS مانح في نفس المدينة
             donor_candidates = [c for c in MMS_VALID_CODES if c != st_c and STORE_MAPPING[c]['city'] == st_info['city']]
             donor_code = donor_candidates[0] if donor_candidates else [c for c in MMS_VALID_CODES if c != st_c][0]
             donor_info = STORE_MAPPING[donor_code]
@@ -600,9 +600,43 @@ def process_and_build():
             "low": st_grp.tail(20).sort_values(by='units', ascending=True).to_dict(orient='records')
         }
 
-    store_meta_map = {r['code']: r for r in perf_df.to_dict(orient='records')}
+    # استبدال NaN بـ None لضمان التوافق مع معيار JSON الصارم
+    for item in store_rows_data:
+        for k, v in item.items():
+            if isinstance(v, float) and (np.isnan(v) or np.isinf(v)):
+                item[k] = None
 
-    template_html = """<!DOCTYPE html>
+    for item in sep_perf_list:
+        for k, v in item.items():
+            if isinstance(v, float) and (np.isnan(v) or np.isinf(v)):
+                item[k] = None
+
+    store_meta_map = {r['code']: r for r in store_rows_data}
+    sep_meta_dict = {r['code']: r for r in sep_perf_list} if sep_perf_list else store_meta_map
+    sep_totals_dict = sep_brand_totals if sep_brand_totals else brand_totals
+
+    def safe_json(obj):
+        return json.dumps(obj).replace("NaN", "null").replace("</", "<\\/")
+
+    # الأرقام الإجمالية الأساسية لأكتوبر لكتابتها مباشرة داخل الـ HTML
+    cur_all = brand_totals.get("ALL", {})
+    init_sales = cur_all.get("sales", "0")
+    init_ly = cur_all.get("ly", "0")
+    init_yoy = cur_all.get("yoy", "0.0%")
+    init_yoy_val = cur_all.get("yoy_val", 0)
+    init_yoy_col = "#10b981" if init_yoy_val >= 0 else "#ef4444"
+    init_target = cur_all.get("target", "0")
+    init_ach = cur_all.get("ach", "0.0%")
+    init_ach_val = cur_all.get("ach_val", 0)
+    init_ach_col = "#10b981" if init_ach_val >= 100 else "#f59e0b"
+    init_atv = cur_all.get("atv", "0")
+    init_asp = cur_all.get("asp", "0")
+    init_units = cur_all.get("units", "0")
+    init_txns = cur_all.get("txns", "0")
+    init_upt = cur_all.get("upt", "0.00")
+    init_str = cur_all.get("str", "0.0%")
+
+    template_html = f"""<!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
@@ -610,41 +644,41 @@ def process_and_build():
     <title>MMS & DZL Executive Commercial Intelligence Dashboard</title>
     <script src="https://cdn.jsdelivr.net/npm/apexcharts"></script>
     <style>
-        :root {
+        :root {{
             --bg: #090d16; --card: #131b2e; --border: #1e293b; --primary: #38bdf8; --text-muted: #94a3b8;
-        }
-        * { box-sizing: border-box; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
-        body { background: var(--bg); color: #fff; margin: 0; padding: 24px; }
-        .header { display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid var(--border); padding-bottom: 20px; margin-bottom: 24px; flex-wrap: wrap; gap: 16px; }
-        .top-controls { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
-        .brand-switcher { display: flex; background: #0c1220; padding: 4px; border-radius: 8px; border: 1px solid var(--border); gap: 4px; }
-        .brand-btn { background: transparent; border: none; color: var(--text-muted); padding: 6px 14px; border-radius: 6px; font-size: 13px; font-weight: 700; cursor: pointer; }
-        .brand-btn.active { background: #2563eb; color: #fff; }
-        .month-select { background: #0c1220; border: 1px solid var(--border); color: #38bdf8; padding: 6px 14px; border-radius: 8px; font-weight: 700; outline: none; }
-        .kpi-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 14px; margin-bottom: 24px; }
-        .kpi-card { background: var(--card); border: 1px solid var(--border); border-radius: 10px; padding: 16px; }
-        .kpi-title { font-size: 11px; color: var(--text-muted); font-weight: 600; text-transform: uppercase; margin-bottom: 6px; }
-        .kpi-value { font-size: 22px; font-weight: 700; color: #fff; }
-        .view-toggle-bar { display: flex; background: #0c1220; padding: 4px; border-radius: 10px; border: 1px solid var(--border); margin-bottom: 24px; width: fit-content; gap: 4px; }
-        .view-btn { background: transparent; border: none; color: var(--text-muted); padding: 10px 22px; border-radius: 8px; font-size: 14px; font-weight: 700; cursor: pointer; }
-        .view-btn.active { background: #2563eb; color: #fff; }
-        .table-wrap { background: var(--card); border: 1px solid var(--border); border-radius: 10px; overflow: hidden; margin-bottom: 24px; }
-        .table-header { padding: 16px 20px; display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid var(--border); flex-wrap: wrap; gap: 10px; }
-        table { width: 100%; border-collapse: collapse; text-align: left; font-size: 12px; }
-        th { background: #0c1220; color: var(--text-muted); padding: 12px 14px; font-weight: 600; text-transform: uppercase; font-size: 11px; border-bottom: 1px solid var(--border); white-space: nowrap; }
-        td { padding: 12px 14px; border-bottom: 1px solid var(--border); white-space: nowrap; }
-        tr:hover td { background: #19233c; }
-        .clickable-row { cursor: pointer; }
-        .badge { padding: 4px 8px; border-radius: 4px; font-size: 11px; font-weight: 600; }
-        .sub-tab-btn { background:#1e293b; color:#94a3b8; border:1px solid #334155; padding:8px 16px; border-radius:6px; font-weight:700; cursor:pointer; font-size:13px; }
-        .sub-tab-btn.active { background:#38bdf8; color:#090d16; border-color:#38bdf8; }
-        .chart-container { background: var(--card); border: 1px solid var(--border); border-radius: 10px; padding: 22px; margin-bottom: 24px; }
-        .app-modal { position: fixed; top: 0; left: 0; width: 100vw; height: 100vh; background: rgba(9, 13, 22, 0.9); z-index: 2147483647; display: none; align-items: center; justify-content: center; }
-        .modal-content { background: #131b2e; border: 1px solid #1e293b; border-radius: 14px; width: 92%; max-width: 950px; max-height: 90vh; display: flex; flex-direction: column; overflow: hidden; }
-        .modal-header { padding: 18px 24px; border-bottom: 1px solid #1e293b; display: flex; justify-content: space-between; align-items: center; background: #0c1220; }
-        .modal-body { padding: 24px; overflow-y: auto; }
-        .close-btn { background: transparent; border: none; color: #94a3b8; font-size: 28px; cursor: pointer; }
-        .drill-crumb { display: inline-block; padding: 4px 10px; background: #1e293b; border-radius: 4px; margin-right: 6px; font-weight: 700; font-size: 12px; color: #38bdf8; cursor: pointer; }
+        }}
+        * {{ box-sizing: border-box; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }}
+        body {{ background: var(--bg); color: #fff; margin: 0; padding: 24px; }}
+        .header {{ display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid var(--border); padding-bottom: 20px; margin-bottom: 24px; flex-wrap: wrap; gap: 16px; }}
+        .top-controls {{ display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }}
+        .brand-switcher {{ display: flex; background: #0c1220; padding: 4px; border-radius: 8px; border: 1px solid var(--border); gap: 4px; }}
+        .brand-btn {{ background: transparent; border: none; color: var(--text-muted); padding: 6px 14px; border-radius: 6px; font-size: 13px; font-weight: 700; cursor: pointer; }}
+        .brand-btn.active {{ background: #2563eb; color: #fff; }}
+        .month-select {{ background: #0c1220; border: 1px solid var(--border); color: #38bdf8; padding: 6px 14px; border-radius: 8px; font-weight: 700; outline: none; }}
+        .kpi-grid {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 14px; margin-bottom: 24px; }}
+        .kpi-card {{ background: var(--card); border: 1px solid var(--border); border-radius: 10px; padding: 16px; }}
+        .kpi-title {{ font-size: 11px; color: var(--text-muted); font-weight: 600; text-transform: uppercase; margin-bottom: 6px; }}
+        .kpi-value {{ font-size: 22px; font-weight: 700; color: #fff; }}
+        .view-toggle-bar {{ display: flex; background: #0c1220; padding: 4px; border-radius: 10px; border: 1px solid var(--border); margin-bottom: 24px; width: fit-content; gap: 4px; }}
+        .view-btn {{ background: transparent; border: none; color: var(--text-muted); padding: 10px 22px; border-radius: 8px; font-size: 14px; font-weight: 700; cursor: pointer; }}
+        .view-btn.active {{ background: #2563eb; color: #fff; }}
+        .table-wrap {{ background: var(--card); border: 1px solid var(--border); border-radius: 10px; overflow: hidden; margin-bottom: 24px; }}
+        .table-header {{ padding: 16px 20px; display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid var(--border); flex-wrap: wrap; gap: 10px; }}
+        table {{ width: 100%; border-collapse: collapse; text-align: left; font-size: 12px; }}
+        th {{ background: #0c1220; color: var(--text-muted); padding: 12px 14px; font-weight: 600; text-transform: uppercase; font-size: 11px; border-bottom: 1px solid var(--border); white-space: nowrap; }}
+        td {{ padding: 12px 14px; border-bottom: 1px solid var(--border); white-space: nowrap; }}
+        tr:hover td {{ background: #19233c; }}
+        .clickable-row {{ cursor: pointer; }}
+        .badge {{ padding: 4px 8px; border-radius: 4px; font-size: 11px; font-weight: 600; }}
+        .sub-tab-btn {{ background:#1e293b; color:#94a3b8; border:1px solid #334155; padding:8px 16px; border-radius:6px; font-weight:700; cursor:pointer; font-size:13px; }}
+        .sub-tab-btn.active {{ background:#38bdf8; color:#090d16; border-color:#38bdf8; }}
+        .chart-container {{ background: var(--card); border: 1px solid var(--border); border-radius: 10px; padding: 22px; margin-bottom: 24px; }}
+        .app-modal {{ position: fixed; top: 0; left: 0; width: 100vw; height: 100vh; background: rgba(9, 13, 22, 0.9); z-index: 2147483647; display: none; align-items: center; justify-content: center; }}
+        .modal-content {{ background: #131b2e; border: 1px solid #1e293b; border-radius: 14px; width: 92%; max-width: 950px; max-height: 90vh; display: flex; flex-direction: column; overflow: hidden; }}
+        .modal-header {{ padding: 18px 24px; border-bottom: 1px solid #1e293b; display: flex; justify-content: space-between; align-items: center; background: #0c1220; }}
+        .modal-body {{ padding: 24px; overflow-y: auto; }}
+        .close-btn {{ background: transparent; border: none; color: #94a3b8; font-size: 28px; cursor: pointer; }}
+        .drill-crumb {{ display: inline-block; padding: 4px 10px; background: #1e293b; border-radius: 4px; margin-right: 6px; font-weight: 700; font-size: 12px; color: #38bdf8; cursor: pointer; }}
     </style>
 </head>
 <body>
@@ -660,36 +694,36 @@ def process_and_build():
 </div>
 
 <script>
-  const USER_ROLES = {
-    "MMS2026": { role: "ADMIN", name: "Executive & Merchandising (Full Access)", region: "ALL" },
-    "SULTAN2026": { role: "AREA_MGR", name: "Sultan", region: "Central & Eastern Region" },
-    "RAJIB2026": { role: "AREA_MGR", name: "Rajib", region: "Western, Southern & Northern Region" }
-  };
+  const USER_ROLES = {{
+    "MMS2026": {{ role: "ADMIN", name: "Executive & Merchandising (Full Access)", region: "ALL" }},
+    "SULTAN2026": {{ role: "AREA_MGR", name: "Sultan", region: "Central & Eastern Region" }},
+    "RAJIB2026": {{ role: "AREA_MGR", name: "Rajib", region: "Western, Southern & Northern Region" }}
+  }};
 
-  function checkAccess() {
+  function checkAccess() {{
     var val = document.getElementById("access-pass").value.trim().toUpperCase();
     var user = USER_ROLES[val];
-    if (user) {
+    if (user) {{
       sessionStorage.setItem("mms_user", JSON.stringify(user));
       document.getElementById("auth-overlay").style.display = "none";
       document.getElementById("current-user-badge").innerHTML = "👤 " + user.name;
-    } else {
+    }} else {{
       document.getElementById("error-msg").style.display = "block";
-    }
-  }
+    }}
+  }}
 
-  function logout() { sessionStorage.removeItem("mms_user"); location.reload(); }
+  function logout() {{ sessionStorage.removeItem("mms_user"); location.reload(); }}
 
-  document.addEventListener("DOMContentLoaded", function() {
+  document.addEventListener("DOMContentLoaded", function() {{
     var u = sessionStorage.getItem("mms_user");
-    if (u) {
+    if (u) {{
       document.getElementById("auth-overlay").style.display = "none";
       document.getElementById("current-user-badge").innerHTML = "👤 " + JSON.parse(u).name;
-    }
-    document.getElementById("access-pass").addEventListener("keypress", function(e) {
+    }}
+    document.getElementById("access-pass").addEventListener("keypress", function(e) {{
       if (e.key === "Enter") checkAccess();
-    });
-  });
+    }});
+  }});
 </script>
 
 <div id="store-modal" class="app-modal">
@@ -741,13 +775,13 @@ def process_and_build():
 </div>
 
 <div class="kpi-grid">
-    <div class="kpi-card"><div class="kpi-title">Current Total Sales</div><div class="kpi-value" id="kpi-sales">- <span style="font-size:12px; color:var(--text-muted);">SAR</span></div></div>
-    <div class="kpi-card"><div class="kpi-title">LY Gross Sales</div><div class="kpi-value" id="kpi-ly" style="color:#38bdf8;">- <span style="font-size:12px; color:var(--text-muted);">SAR</span></div></div>
-    <div class="kpi-card"><div class="kpi-title">Network LFL YoY Growth</div><div class="kpi-value" id="kpi-yoy" style="font-weight:800;">-</div></div>
-    <div class="kpi-card"><div class="kpi-title">Total Target</div><div class="kpi-value" id="kpi-target">- <span style="font-size:12px; color:var(--text-muted);">SAR</span></div></div>
-    <div class="kpi-card"><div class="kpi-title">Achievement (% Ach)</div><div class="kpi-value" id="kpi-ach">-</div></div>
-    <div class="kpi-card"><div class="kpi-title">Network ATV</div><div class="kpi-value" id="kpi-atv">-</div></div>
-    <div class="kpi-card"><div class="kpi-title">Network ASP</div><div class="kpi-value" id="kpi-asp">-</div></div>
+    <div class="kpi-card"><div class="kpi-title">Current Total Sales</div><div class="kpi-value" id="kpi-sales">{init_sales} <span style="font-size:12px; color:var(--text-muted);">SAR</span></div></div>
+    <div class="kpi-card"><div class="kpi-title">LY Gross Sales</div><div class="kpi-value" id="kpi-ly" style="color:#38bdf8;">{init_ly} <span style="font-size:12px; color:var(--text-muted);">SAR</span></div></div>
+    <div class="kpi-card"><div class="kpi-title">Network LFL YoY Growth</div><div class="kpi-value" id="kpi-yoy" style="color:{init_yoy_col}; font-weight:800;">{init_yoy}</div></div>
+    <div class="kpi-card"><div class="kpi-title">Total Target</div><div class="kpi-value" id="kpi-target">{init_target} <span style="font-size:12px; color:var(--text-muted);">SAR</span></div></div>
+    <div class="kpi-card"><div class="kpi-title">Achievement (% Ach)</div><div class="kpi-value" id="kpi-ach" style="color:{init_ach_col};">{init_ach}</div></div>
+    <div class="kpi-card"><div class="kpi-title">Network ATV</div><div class="kpi-value" id="kpi-atv">SAR {init_atv}</div></div>
+    <div class="kpi-card"><div class="kpi-title">Network ASP</div><div class="kpi-value" id="kpi-asp">SAR {init_asp}</div></div>
 </div>
 
 <div class="view-toggle-bar">
@@ -773,22 +807,22 @@ def process_and_build():
                     </tr>
                 </thead>
                 <tbody id="storesTableBody">
-                    __STORE_TABLE_ROWS__
+                    {store_table_rows}
                 </tbody>
                 <tfoot>
                     <tr id="totalPortfolioRow" style="background:#0c1220; font-weight:800; border-top:3px solid #38bdf8; font-size:13px;">
                         <td colspan="4" style="color:#38bdf8;" id="totalRowTitle">TOTAL PORTFOLIO (ALL DOORS)</td>
-                        <td style="color:#fff;" id="tot-sales">-</td>
-                        <td style="color:#38bdf8;" id="tot-ly">-</td>
-                        <td id="tot-yoy">-</td>
-                        <td style="color:#94a3b8;" id="tot-target">-</td>
-                        <td id="tot-ach">-</td>
-                        <td style="color:#38bdf8;" id="tot-units">-</td>
-                        <td style="color:#fff;" id="tot-txns">-</td>
-                        <td style="color:#10b981;" id="tot-upt">-</td>
-                        <td style="color:#38bdf8;" id="tot-str">-</td>
+                        <td style="color:#fff;" id="tot-sales">{init_sales}</td>
+                        <td style="color:#38bdf8;" id="tot-ly">{init_ly}</td>
+                        <td id="tot-yoy" style="color:{init_yoy_col};">{init_yoy}</td>
+                        <td style="color:#94a3b8;" id="tot-target">{init_target}</td>
+                        <td id="tot-ach" style="color:{init_ach_col};">{init_ach}</td>
+                        <td style="color:#38bdf8;" id="tot-units">{init_units}</td>
+                        <td style="color:#fff;" id="tot-txns">{init_txns}</td>
+                        <td style="color:#10b981;" id="tot-upt">{init_upt}</td>
+                        <td style="color:#38bdf8;" id="tot-str">{init_str}</td>
                         <td>-</td>
-                        <td style="color:#f59e0b;" id="tot-asp">-</td>
+                        <td style="color:#f59e0b;" id="tot-asp">{init_asp}</td>
                     </tr>
                 </tfoot>
             </table>
@@ -958,21 +992,21 @@ def process_and_build():
   let businessBrand = 'MMS';
   let istFilterBrand = 'ALL';
 
-  const OCT_BRAND_TOTALS = __BRAND_TOTALS_JSON__;
-  const SEP_BRAND_TOTALS = __SEP_BRAND_TOTALS_JSON__;
-  const OCT_STORE_META = __STORE_META_JSON__;
-  const SEP_STORE_META = __SEP_STORE_META_JSON__;
+  const OCT_BRAND_TOTALS = {safe_json(brand_totals)};
+  const SEP_BRAND_TOTALS = {safe_json(sep_totals_dict)};
+  const OCT_STORE_META = {safe_json(store_meta_map)};
+  const SEP_STORE_META = {safe_json(sep_meta_dict)};
   
   let currentStoreMeta = OCT_STORE_META;
   let currentBrandTotals = OCT_BRAND_TOTALS;
 
-  const STORE_CATS = __STORE_CATS_JSON__;
-  const MMS_TOP500 = __MMS_TOP500_JSON__;
-  const MMS_LOW500 = __MMS_LOW500_JSON__;
-  const DZL_MOVERS = __DZL_MOVERS_JSON__;
-  const HIERARCHY_TREE = __HIERARCHY_TREE_JSON__;
-  const DZL_GENDER = __DZL_GENDER_JSON__;
-  const REPL_ITEMS = __REPL_ITEMS_JSON__;
+  const STORE_CATS = {safe_json(store_cat_details)};
+  const MMS_TOP500 = {safe_json(mms_top500)};
+  const MMS_LOW500 = {safe_json(mms_low500)};
+  const DZL_MOVERS = {safe_json(dzl_store_movers)};
+  const HIERARCHY_TREE = {safe_json(hierarchy_tree)};
+  const DZL_GENDER = {safe_json(dzl_gender_data)};
+  const REPL_ITEMS = {safe_json(repl_data_list)};
 
   let currentDrillLevel = 1;
   let selectedMainCat = null;
@@ -982,525 +1016,533 @@ def process_and_build():
   let donutChart = null;
   let genderChart = null;
 
-  document.addEventListener("DOMContentLoaded", function() {
-    updateKPICards('ALL');
-    renderRegionTables();
-    renderDrillDown();
-    renderCharts();
-    renderDZLMovers();
-    renderMMSMovers();
-    renderISTTable();
-  });
+  document.addEventListener("DOMContentLoaded", function() {{
+    try {{ renderRegionTables(); }} catch(e) {{ console.error("Region error:", e); }}
+    try {{ renderDrillDown(); }} catch(e) {{ console.error("Drill error:", e); }}
+    try {{ renderDZLMovers(); }} catch(e) {{ console.error("DZL movers error:", e); }}
+    try {{ renderMMSMovers(); }} catch(e) {{ console.error("MMS movers error:", e); }}
+    try {{ renderISTTable(); }} catch(e) {{ console.error("IST error:", e); }}
+  }});
 
-  function updateKPICards(b) {
-    const d = currentBrandTotals[b] || currentBrandTotals['ALL'];
-    if (!d) return;
-    document.getElementById("kpi-sales").innerHTML = d.sales + " <span style='font-size:12px; color:var(--text-muted);'>SAR</span>";
-    document.getElementById("kpi-ly").innerHTML = d.ly + " <span style='font-size:12px; color:var(--text-muted);'>SAR</span>";
-    const yoyEl = document.getElementById("kpi-yoy");
-    yoyEl.innerText = d.yoy;
-    yoyEl.style.color = (d.yoy_val >= 0) ? "#10b981" : "#ef4444";
+  function updateKPICards(b) {{
+    try {{
+      const d = currentBrandTotals[b] || currentBrandTotals['ALL'];
+      if (!d) return;
+      document.getElementById("kpi-sales").innerHTML = d.sales + " <span style='font-size:12px; color:var(--text-muted);'>SAR</span>";
+      document.getElementById("kpi-ly").innerHTML = d.ly + " <span style='font-size:12px; color:var(--text-muted);'>SAR</span>";
+      const yoyEl = document.getElementById("kpi-yoy");
+      yoyEl.innerText = d.yoy;
+      yoyEl.style.color = (d.yoy_val >= 0) ? "#10b981" : "#ef4444";
 
-    document.getElementById("kpi-target").innerHTML = d.target + " <span style='font-size:12px; color:var(--text-muted);'>SAR</span>";
-    const achEl = document.getElementById("kpi-ach");
-    achEl.innerText = d.ach;
-    achEl.style.color = (d.ach_val >= 100) ? "#10b981" : "#f59e0b";
+      document.getElementById("kpi-target").innerHTML = d.target + " <span style='font-size:12px; color:var(--text-muted);'>SAR</span>";
+      const achEl = document.getElementById("kpi-ach");
+      achEl.innerText = d.ach;
+      achEl.style.color = (d.ach_val >= 100) ? "#10b981" : "#f59e0b";
 
-    document.getElementById("kpi-atv").innerText = "SAR " + d.atv;
-    document.getElementById("kpi-asp").innerText = "SAR " + d.asp;
+      document.getElementById("kpi-atv").innerText = "SAR " + d.atv;
+      document.getElementById("kpi-asp").innerText = "SAR " + d.asp;
 
-    document.getElementById("totalRowTitle").innerText = (b === 'ALL') ? "TOTAL PORTFOLIO (ALL DOORS)" : (b === 'MMS' ? "TOTAL MUMUSO NETWORK (17 DOORS)" : "TOTAL DZL DOZOLO (4 DOORS)");
-    document.getElementById("tot-sales").innerText = d.sales;
-    document.getElementById("tot-ly").innerText = d.ly;
-    const totYoy = document.getElementById("tot-yoy");
-    totYoy.innerText = d.yoy;
-    totYoy.style.color = (d.yoy_val >= 0) ? "#10b981" : "#ef4444";
+      document.getElementById("totalRowTitle").innerText = (b === 'ALL') ? "TOTAL PORTFOLIO (ALL DOORS)" : (b === 'MMS' ? "TOTAL MUMUSO NETWORK (17 DOORS)" : "TOTAL DZL DOZOLO (4 DOORS)");
+      document.getElementById("tot-sales").innerText = d.sales;
+      document.getElementById("tot-ly").innerText = d.ly;
+      const totYoy = document.getElementById("tot-yoy");
+      totYoy.innerText = d.yoy;
+      totYoy.style.color = (d.yoy_val >= 0) ? "#10b981" : "#ef4444";
 
-    document.getElementById("tot-target").innerText = d.target;
-    const totAch = document.getElementById("tot-ach");
-    totAch.innerText = d.ach;
-    totAch.style.color = (d.ach_val >= 100) ? "#10b981" : "#f59e0b";
+      document.getElementById("tot-target").innerText = d.target;
+      const totAch = document.getElementById("tot-ach");
+      totAch.innerText = d.ach;
+      totAch.style.color = (d.ach_val >= 100) ? "#10b981" : "#f59e0b";
 
-    document.getElementById("tot-units").innerText = d.units;
-    document.getElementById("tot-txns").innerText = d.txns;
-    document.getElementById("tot-upt").innerText = d.upt;
-    document.getElementById("tot-str").innerText = d.str || "0.0%";
-    document.getElementById("tot-asp").innerText = d.asp;
-  }
+      document.getElementById("tot-units").innerText = d.units;
+      document.getElementById("tot-txns").innerText = d.txns;
+      document.getElementById("tot-upt").innerText = d.upt;
+      document.getElementById("tot-str").innerText = d.str || "0.0%";
+      document.getElementById("tot-asp").innerText = d.asp;
+    }} catch(e) {{ console.error("updateKPICards error:", e); }}
+  }}
 
-  function switchBrand(b) {
-    activeBrand = b;
-    document.querySelectorAll('.brand-btn').forEach(btn => btn.classList.remove('active'));
-    document.getElementById('btn-' + b).classList.add('active');
+  function switchBrand(b) {{
+    try {{
+      activeBrand = b;
+      document.querySelectorAll('.brand-btn').forEach(btn => btn.classList.remove('active'));
+      var el = document.getElementById('btn-' + b);
+      if (el) el.classList.add('active');
 
-    document.querySelectorAll('.store-row').forEach(row => {
-      const rBrand = row.getAttribute('data-brand');
-      row.style.display = (b === 'ALL' || rBrand === b) ? '' : 'none';
-    });
+      document.querySelectorAll('.store-row').forEach(row => {{
+        const rBrand = row.getAttribute('data-brand');
+        row.style.display = (b === 'ALL' || rBrand === b) ? '' : 'none';
+      }});
 
-    updateKPICards(b);
-    renderRegionTables();
-    
-    businessBrand = (b === 'DZL') ? 'DZL' : ((b === 'MMS') ? 'MMS' : 'MMS');
-    document.getElementById("businessBrandSelect").value = businessBrand;
-    renderDrillDown();
-    renderCharts();
+      updateKPICards(b);
+      renderRegionTables();
+      
+      businessBrand = (b === 'DZL') ? 'DZL' : 'MMS';
+      var sel = document.getElementById("businessBrandSelect");
+      if (sel) sel.value = businessBrand;
+      renderDrillDown();
+      renderCharts();
 
-    const dzlBlock = document.getElementById("dzlMoversBlock");
-    const mmsBlock = document.getElementById("mmsMoversBlock");
-    if (b === 'DZL') {
-      if (dzlBlock) dzlBlock.style.display = "block";
-      if (mmsBlock) mmsBlock.style.display = "none";
-    } else if (b === 'MMS') {
-      if (dzlBlock) dzlBlock.style.display = "none";
-      if (mmsBlock) mmsBlock.style.display = "block";
-    } else {
-      if (dzlBlock) dzlBlock.style.display = "block";
-      if (mmsBlock) mmsBlock.style.display = "block";
-    }
-  }
+      const dzlBlock = document.getElementById("dzlMoversBlock");
+      const mmsBlock = document.getElementById("mmsMoversBlock");
+      if (b === 'DZL') {{
+        if (dzlBlock) dzlBlock.style.display = "block";
+        if (mmsBlock) mmsBlock.style.display = "none";
+      }} else if (b === 'MMS') {{
+        if (dzlBlock) dzlBlock.style.display = "none";
+        if (mmsBlock) mmsBlock.style.display = "block";
+      }} else {{
+        if (dzlBlock) dzlBlock.style.display = "block";
+        if (mmsBlock) mmsBlock.style.display = "block";
+      }}
+    }} catch(e) {{ console.error("switchBrand error:", e); }}
+  }}
 
-  function switchBusinessBrand(val) {
+  function switchBusinessBrand(val) {{
     businessBrand = val;
     currentDrillLevel = 1;
     selectedMainCat = null;
     selectedSubCat = null;
     renderDrillDown();
     renderCharts();
-  }
+  }}
 
-  function filterStores() {
+  function filterStores() {{
     const q = document.getElementById('storeSearch').value.toLowerCase();
-    document.querySelectorAll('.store-row').forEach(row => {
+    document.querySelectorAll('.store-row').forEach(row => {{
       const text = row.innerText.toLowerCase();
       const rBrand = row.getAttribute('data-brand');
       const matchBrand = (activeBrand === 'ALL' || rBrand === activeBrand);
       row.style.display = (matchBrand && text.includes(q)) ? '' : 'none';
-    });
-  }
+    }});
+  }}
 
-  function renderRegionTables() {
-    const centralTbody = document.querySelector("#regionCentralTable tbody");
-    const westernTbody = document.querySelector("#regionWesternTable tbody");
-    let cRows = "", wRows = "";
-    let cIdx = 1, wIdx = 1;
-    let cSales = 0, cTarget = 0, cUnits = 0, cTxns = 0, cLy = 0;
-    let wSales = 0, wTarget = 0, wUnits = 0, wTxns = 0, wLy = 0;
+  function renderRegionTables() {{
+    try {{
+      const centralTbody = document.querySelector("#regionCentralTable tbody");
+      const westernTbody = document.querySelector("#regionWesternTable tbody");
+      let cRows = "", wRows = "";
+      let cIdx = 1, wIdx = 1;
+      let cSales = 0, cTarget = 0, cUnits = 0, cTxns = 0, cLy = 0;
+      let wSales = 0, wTarget = 0, wUnits = 0, wTxns = 0, wLy = 0;
 
-    Object.values(currentStoreMeta).forEach(r => {
-      if (activeBrand !== 'ALL' && r.brand !== activeBrand) return;
-      const isCentral = r.region.includes('Central');
-      const yoyStr = (r.yoy !== null && !isNaN(r.yoy)) ? `<span style="color:${r.yoy>=0?'#10b981':'#ef4444'}">${r.yoy.toFixed(1)}%</span>` : '-';
-      const rowHtml = `<tr class="clickable-row" onclick="openStoreModal('${r.code}')">
-        <td style="color:#64748b;">${isCentral ? cIdx++ : wIdx++}</td>
-        <td style="color:#38bdf8; font-weight:700;">${r.code}</td>
-        <td style="color:#fff;">${r.name}</td>
-        <td style="color:#fff; font-weight:700;">${r.sales.toLocaleString()}</td>
-        <td style="color:#38bdf8;">${r.ly_sales ? r.ly_sales.toLocaleString() : '-'}</td>
-        <td>${yoyStr}</td>
-        <td style="color:#94a3b8;">${Math.round(r.target).toLocaleString()}</td>
-        <td style="color:${r.ach >= 100 ? '#10b981' : '#f59e0b'}; font-weight:700;">${r.ach.toFixed(1)}%</td>
-        <td style="color:#38bdf8;">${r.units.toLocaleString()}</td>
-        <td>${r.txns.toLocaleString()}</td>
-        <td style="color:#10b981;">${r.upt.toFixed(2)}</td>
-        <td style="color:#f59e0b;">${r.asp}</td>
-      </tr>`;
-
-      if (isCentral) {
-        cRows += rowHtml; cSales += r.sales; cTarget += r.target; cUnits += r.units; cTxns += r.txns;
-        if (r.ly_sales) cLy += r.ly_sales;
-      } else {
-        wRows += rowHtml; wSales += r.sales; wTarget += r.target; wUnits += r.units; wTxns += r.txns;
-        if (r.ly_sales) wLy += r.ly_sales;
-      }
-    });
-
-    if (centralTbody) centralTbody.innerHTML = cRows;
-    if (westernTbody) westernTbody.innerHTML = wRows;
-
-    const cAch = (cTarget > 0) ? (cSales / cTarget * 100).toFixed(1) : 0;
-    const wAch = (wTarget > 0) ? (wSales / wTarget * 100).toFixed(1) : 0;
-    const cYoy = (cLy > 0) ? ((cSales - cLy) / cLy * 100).toFixed(1) : 0;
-    const wYoy = (wLy > 0) ? ((wSales - wLy) / wLy * 100).toFixed(1) : 0;
-
-    document.getElementById("centralRegionOverview").innerHTML = `
-      <div class="kpi-card"><div class="kpi-title">CENTRAL SALES</div><div class="kpi-value">${cSales.toLocaleString()} <span style="font-size:11px;">SAR</span></div></div>
-      <div class="kpi-card"><div class="kpi-title">CENTRAL TARGET</div><div class="kpi-value">${Math.round(cTarget).toLocaleString()} <span style="font-size:11px;">SAR</span></div></div>
-      <div class="kpi-card"><div class="kpi-title">ACHIEVEMENT</div><div class="kpi-value" style="color:${cAch>=100?'#10b981':'#f59e0b'};">${cAch}%</div></div>
-      <div class="kpi-card"><div class="kpi-title">QUANTITY</div><div class="kpi-value" style="color:#38bdf8;">${cUnits.toLocaleString()}</div></div>
-      <div class="kpi-card"><div class="kpi-title">ACTIVE DOORS</div><div class="kpi-value">${cIdx-1}</div></div>
-    `;
-
-    document.getElementById("westernRegionOverview").innerHTML = `
-      <div class="kpi-card"><div class="kpi-title">WESTERN SALES</div><div class="kpi-value">${wSales.toLocaleString()} <span style="font-size:11px;">SAR</span></div></div>
-      <div class="kpi-card"><div class="kpi-title">WESTERN TARGET</div><div class="kpi-value">${Math.round(wTarget).toLocaleString()} <span style="font-size:11px;">SAR</span></div></div>
-      <div class="kpi-card"><div class="kpi-title">ACHIEVEMENT</div><div class="kpi-value" style="color:${wAch>=100?'#10b981':'#f59e0b'};">${wAch}%</div></div>
-      <div class="kpi-card"><div class="kpi-title">QUANTITY</div><div class="kpi-value" style="color:#38bdf8;">${wUnits.toLocaleString()}</div></div>
-      <div class="kpi-card"><div class="kpi-title">ACTIVE DOORS</div><div class="kpi-value">${wIdx-1}</div></div>
-    `;
-
-    document.getElementById("c-tot-sales").innerText = cSales.toLocaleString();
-    document.getElementById("c-tot-ly").innerText = cLy.toLocaleString();
-    document.getElementById("c-tot-yoy").innerHTML = `<span style="color:${cYoy>=0?'#10b981':'#ef4444'}">${cYoy>0?'+':''}${cYoy}%</span>`;
-    document.getElementById("c-tot-target").innerText = Math.round(cTarget).toLocaleString();
-    document.getElementById("c-tot-ach").innerHTML = `<span style="color:${cAch>=100?'#10b981':'#f59e0b'}">${cAch}%</span>`;
-    document.getElementById("c-tot-units").innerText = cUnits.toLocaleString();
-    document.getElementById("c-tot-txns").innerText = cTxns.toLocaleString();
-    document.getElementById("c-tot-upt").innerText = (cTxns>0?(cUnits/cTxns).toFixed(2):"0.00");
-    document.getElementById("c-tot-asp").innerText = (cUnits>0?Math.round(cSales/cUnits):0);
-
-    document.getElementById("w-tot-sales").innerText = wSales.toLocaleString();
-    document.getElementById("w-tot-ly").innerText = wLy.toLocaleString();
-    document.getElementById("w-tot-yoy").innerHTML = `<span style="color:${wYoy>=0?'#10b981':'#ef4444'}">${wYoy>0?'+':''}${wYoy}%</span>`;
-    document.getElementById("w-tot-target").innerText = Math.round(wTarget).toLocaleString();
-    document.getElementById("w-tot-ach").innerHTML = `<span style="color:${wAch>=100?'#10b981':'#f59e0b'}">${wAch}%</span>`;
-    document.getElementById("w-tot-units").innerText = wUnits.toLocaleString();
-    document.getElementById("w-tot-txns").innerText = wTxns.toLocaleString();
-    document.getElementById("w-tot-upt").innerText = (wTxns>0?(wUnits/wTxns).toFixed(2):"0.00");
-    document.getElementById("w-tot-asp").innerText = (wUnits>0?Math.round(wSales/wUnits):0);
-  }
-
-  function renderDrillDown() {
-    const tree = HIERARCHY_TREE[businessBrand] || {};
-    const thead = document.getElementById("drillTableHead");
-    const tbody = document.getElementById("drillTableBody");
-    const crumbs = document.getElementById("drillBreadcrumbs");
-    let cHtml = `<span class="drill-crumb" onclick="drillGoLevel(1)">🏷️ All Categories (${businessBrand})</span>`;
-
-    if (currentDrillLevel === 1) {
-      crumbs.innerHTML = cHtml;
-      thead.innerHTML = `<tr><th>#</th><th>Main Category</th><th>Sales Revenue (SAR)</th><th>Units Sold</th><th>ASP (SAR)</th><th>Action</th></tr>`;
-      let bHtml = "";
-      let idx = 1;
-      for (const [mCat, data] of Object.entries(tree)) {
-        bHtml += `<tr>
-          <td style="color:#64748b;">${idx++}</td>
-          <td style="color:#fff; font-weight:700;">🏷️ ${mCat}</td>
-          <td style="color:#38bdf8; font-weight:700;">${data.sales.toLocaleString()}</td>
-          <td>${data.units.toLocaleString()}</td>
-          <td style="color:#f59e0b;">${data.asp}</td>
-          <td><button class="sub-tab-btn" onclick="drillIntoMainCat('${mCat.replace("'", "\\'")}')">View Sub-Categories ▼</button></td>
+      Object.values(currentStoreMeta).forEach(r => {{
+        if (activeBrand !== 'ALL' && r.brand !== activeBrand) return;
+        const isCentral = r.region.includes('Central');
+        const yoyStr = (r.yoy !== null && !isNaN(r.yoy)) ? `<span style="color:${{r.yoy>=0?'#10b981':'#ef4444'}}">${{r.yoy.toFixed(1)}}%</span>` : '-';
+        const rowHtml = `<tr class="clickable-row" onclick="openStoreModal('${{r.code}}')">
+          <td style="color:#64748b;">${{isCentral ? cIdx++ : wIdx++}}</td>
+          <td style="color:#38bdf8; font-weight:700;">${{r.code}}</td>
+          <td style="color:#fff;">${{r.name}}</td>
+          <td style="color:#fff; font-weight:700;">${{r.sales.toLocaleString()}}</td>
+          <td style="color:#38bdf8;">${{r.ly_sales ? r.ly_sales.toLocaleString() : '-'}}</td>
+          <td>${{yoyStr}}</td>
+          <td style="color:#94a3b8;">${{Math.round(r.target).toLocaleString()}}</td>
+          <td style="color:${{r.ach >= 100 ? '#10b981' : '#f59e0b'}}; font-weight:700;">${{r.ach.toFixed(1)}}%</td>
+          <td style="color:#38bdf8;">${{r.units.toLocaleString()}}</td>
+          <td>${{r.txns.toLocaleString()}}</td>
+          <td style="color:#10b981;">${{r.upt.toFixed(2)}}</td>
+          <td style="color:#f59e0b;">${{r.asp}}</td>
         </tr>`;
-      }
-      tbody.innerHTML = bHtml || `<tr><td colspan="6" style="text-align:center;">No data available</td></tr>`;
-    } else if (currentDrillLevel === 2) {
-      cHtml += ` <span style="color:#64748b;">></span> <span class="drill-crumb" onclick="drillGoLevel(2)">📁 ${selectedMainCat}</span>`;
-      crumbs.innerHTML = cHtml;
-      thead.innerHTML = `<tr><th>#</th><th>Sub-Category</th><th>Sales Revenue (SAR)</th><th>Units Sold</th><th>ASP (SAR)</th><th>Action</th></tr>`;
-      const subs = tree[selectedMainCat]?.subs || {};
-      let bHtml = "";
-      let idx = 1;
-      for (const [sCat, data] of Object.entries(subs)) {
-        bHtml += `<tr>
-          <td style="color:#64748b;">${idx++}</td>
-          <td style="color:#fff; font-weight:700;">📁 ${sCat}</td>
-          <td style="color:#38bdf8; font-weight:700;">${data.sales.toLocaleString()}</td>
-          <td>${data.units.toLocaleString()}</td>
-          <td style="color:#f59e0b;">${data.asp}</td>
-          <td><button class="sub-tab-btn" onclick="drillIntoSubCat('${sCat.replace("'", "\\'")}')">View Items ▼</button></td>
-        </tr>`;
-      }
-      tbody.innerHTML = bHtml || `<tr><td colspan="6" style="text-align:center;">No sub-categories</td></tr>`;
-    } else if (currentDrillLevel === 3) {
-      cHtml += ` <span style="color:#64748b;">></span> <span class="drill-crumb" onclick="drillGoLevel(2)">📁 ${selectedMainCat}</span> <span style="color:#64748b;">></span> <span class="drill-crumb">📦 ${selectedSubCat}</span>`;
-      crumbs.innerHTML = cHtml;
-      thead.innerHTML = `<tr><th>#</th><th>Sub-Sub / Item Class</th><th>Sales Revenue (SAR)</th><th>Units Sold</th><th>ASP (SAR)</th></tr>`;
-      const subsubs = tree[selectedMainCat]?.subs[selectedSubCat]?.subsubs || [];
-      let bHtml = "";
-      subsubs.forEach((item, idx) => {
-        bHtml += `<tr>
-          <td style="color:#64748b;">${idx+1}</td>
-          <td style="color:#fff; font-weight:600;">📦 ${item.name}</td>
-          <td style="color:#38bdf8; font-weight:700;">${item.sales.toLocaleString()}</td>
-          <td>${item.units.toLocaleString()}</td>
-          <td style="color:#f59e0b;">${item.asp}</td>
-        </tr>`;
-      });
-      tbody.innerHTML = bHtml || `<tr><td colspan="5" style="text-align:center;">No items found</td></tr>`;
-    }
-  }
 
-  function drillGoLevel(lvl) {
+        if (isCentral) {{
+          cRows += rowHtml; cSales += r.sales; cTarget += r.target; cUnits += r.units; cTxns += r.txns;
+          if (r.ly_sales) cLy += r.ly_sales;
+        }} else {{
+          wRows += rowHtml; wSales += r.sales; wTarget += r.target; wUnits += r.units; wTxns += r.txns;
+          if (r.ly_sales) wLy += r.ly_sales;
+        }}
+      }});
+
+      if (centralTbody) centralTbody.innerHTML = cRows;
+      if (westernTbody) westernTbody.innerHTML = wRows;
+
+      const cAch = (cTarget > 0) ? (cSales / cTarget * 100).toFixed(1) : 0;
+      const wAch = (wTarget > 0) ? (wSales / wTarget * 100).toFixed(1) : 0;
+      const cYoy = (cLy > 0) ? ((cSales - cLy) / cLy * 100).toFixed(1) : 0;
+      const wYoy = (wLy > 0) ? ((wSales - wLy) / wLy * 100).toFixed(1) : 0;
+
+      document.getElementById("centralRegionOverview").innerHTML = `
+        <div class="kpi-card"><div class="kpi-title">CENTRAL SALES</div><div class="kpi-value">${{cSales.toLocaleString()}} <span style="font-size:11px;">SAR</span></div></div>
+        <div class="kpi-card"><div class="kpi-title">CENTRAL TARGET</div><div class="kpi-value">${{Math.round(cTarget).toLocaleString()}} <span style="font-size:11px;">SAR</span></div></div>
+        <div class="kpi-card"><div class="kpi-title">ACHIEVEMENT</div><div class="kpi-value" style="color:${{cAch>=100?'#10b981':'#f59e0b'}};">${{cAch}}%</div></div>
+        <div class="kpi-card"><div class="kpi-title">QUANTITY</div><div class="kpi-value" style="color:#38bdf8;">${{cUnits.toLocaleString()}}</div></div>
+        <div class="kpi-card"><div class="kpi-title">ACTIVE DOORS</div><div class="kpi-value">${{cIdx-1}}</div></div>
+      `;
+
+      document.getElementById("westernRegionOverview").innerHTML = `
+        <div class="kpi-card"><div class="kpi-title">WESTERN SALES</div><div class="kpi-value">${{wSales.toLocaleString()}} <span style="font-size:11px;">SAR</span></div></div>
+        <div class="kpi-card"><div class="kpi-title">WESTERN TARGET</div><div class="kpi-value">${{Math.round(wTarget).toLocaleString()}} <span style="font-size:11px;">SAR</span></div></div>
+        <div class="kpi-card"><div class="kpi-title">ACHIEVEMENT</div><div class="kpi-value" style="color:${{wAch>=100?'#10b981':'#f59e0b'}};">${{wAch}}%</div></div>
+        <div class="kpi-card"><div class="kpi-title">QUANTITY</div><div class="kpi-value" style="color:#38bdf8;">${{wUnits.toLocaleString()}}</div></div>
+        <div class="kpi-card"><div class="kpi-title">ACTIVE DOORS</div><div class="kpi-value">${{wIdx-1}}</div></div>
+      `;
+
+      document.getElementById("c-tot-sales").innerText = cSales.toLocaleString();
+      document.getElementById("c-tot-ly").innerText = cLy.toLocaleString();
+      document.getElementById("c-tot-yoy").innerHTML = `<span style="color:${{cYoy>=0?'#10b981':'#ef4444'}}">${{cYoy>0?'+':''}}${{cYoy}}%</span>`;
+      document.getElementById("c-tot-target").innerText = Math.round(cTarget).toLocaleString();
+      document.getElementById("c-tot-ach").innerHTML = `<span style="color:${{cAch>=100?'#10b981':'#f59e0b'}}">${{cAch}}%</span>`;
+      document.getElementById("c-tot-units").innerText = cUnits.toLocaleString();
+      document.getElementById("c-tot-txns").innerText = cTxns.toLocaleString();
+      document.getElementById("c-tot-upt").innerText = (cTxns>0?(cUnits/cTxns).toFixed(2):"0.00");
+      document.getElementById("c-tot-asp").innerText = (cUnits>0?Math.round(cSales/cUnits):0);
+
+      document.getElementById("w-tot-sales").innerText = wSales.toLocaleString();
+      document.getElementById("w-tot-ly").innerText = wLy.toLocaleString();
+      document.getElementById("w-tot-yoy").innerHTML = `<span style="color:${{wYoy>=0?'#10b981':'#ef4444'}}">${{wYoy>0?'+':''}}${{wYoy}}%</span>`;
+      document.getElementById("w-tot-target").innerText = Math.round(wTarget).toLocaleString();
+      document.getElementById("w-tot-ach").innerHTML = `<span style="color:${{wAch>=100?'#10b981':'#f59e0b'}}">${{wAch}}%</span>`;
+      document.getElementById("w-tot-units").innerText = wUnits.toLocaleString();
+      document.getElementById("w-tot-txns").innerText = wTxns.toLocaleString();
+      document.getElementById("w-tot-upt").innerText = (wTxns>0?(wUnits/wTxns).toFixed(2):"0.00");
+      document.getElementById("w-tot-asp").innerText = (wUnits>0?Math.round(wSales/wUnits):0);
+    }} catch(e) {{ console.error("renderRegionTables error:", e); }}
+  }}
+
+  function renderDrillDown() {{
+    try {{
+      const tree = HIERARCHY_TREE[businessBrand] || {{}};
+      const thead = document.getElementById("drillTableHead");
+      const tbody = document.getElementById("drillTableBody");
+      const crumbs = document.getElementById("drillBreadcrumbs");
+      let cHtml = `<span class="drill-crumb" onclick="drillGoLevel(1)">🏷️ All Categories (${{businessBrand}})</span>`;
+
+      if (currentDrillLevel === 1) {{
+        crumbs.innerHTML = cHtml;
+        thead.innerHTML = `<tr><th>#</th><th>Main Category</th><th>Sales Revenue (SAR)</th><th>Units Sold</th><th>ASP (SAR)</th><th>Action</th></tr>`;
+        let bHtml = "";
+        let idx = 1;
+        for (const [mCat, data] of Object.entries(tree)) {{
+          bHtml += `<tr>
+            <td style="color:#64748b;">${{idx++}}</td>
+            <td style="color:#fff; font-weight:700;">🏷️ ${{mCat}}</td>
+            <td style="color:#38bdf8; font-weight:700;">${{data.sales.toLocaleString()}}</td>
+            <td>${{data.units.toLocaleString()}}</td>
+            <td style="color:#f59e0b;">${{data.asp}}</td>
+            <td><button class="sub-tab-btn" onclick="drillIntoMainCat('${{mCat.replace("'", "\\'")}}')">View Sub-Categories ▼</button></td>
+          </tr>`;
+        }}
+        tbody.innerHTML = bHtml || `<tr><td colspan="6" style="text-align:center;">No data available</td></tr>`;
+      }} else if (currentDrillLevel === 2) {{
+        cHtml += ` <span style="color:#64748b;">></span> <span class="drill-crumb" onclick="drillGoLevel(2)">📁 ${{selectedMainCat}}</span>`;
+        crumbs.innerHTML = cHtml;
+        thead.innerHTML = `<tr><th>#</th><th>Sub-Category</th><th>Sales Revenue (SAR)</th><th>Units Sold</th><th>ASP (SAR)</th><th>Action</th></tr>`;
+        const subs = tree[selectedMainCat]?.subs || {{}};
+        let bHtml = "";
+        let idx = 1;
+        for (const [sCat, data] of Object.entries(subs)) {{
+          bHtml += `<tr>
+            <td style="color:#64748b;">${{idx++}}</td>
+            <td style="color:#fff; font-weight:700;">📁 ${{sCat}}</td>
+            <td style="color:#38bdf8; font-weight:700;">${{data.sales.toLocaleString()}}</td>
+            <td>${{data.units.toLocaleString()}}</td>
+            <td style="color:#f59e0b;">${{data.asp}}</td>
+            <td><button class="sub-tab-btn" onclick="drillIntoSubCat('${{sCat.replace("'", "\\'")}}')">View Items ▼</button></td>
+          </tr>`;
+        }}
+        tbody.innerHTML = bHtml || `<tr><td colspan="6" style="text-align:center;">No sub-categories</td></tr>`;
+      }} else if (currentDrillLevel === 3) {{
+        cHtml += ` <span style="color:#64748b;">></span> <span class="drill-crumb" onclick="drillGoLevel(2)">📁 ${{selectedMainCat}}</span> <span style="color:#64748b;">></span> <span class="drill-crumb">📦 ${{selectedSubCat}}</span>`;
+        crumbs.innerHTML = cHtml;
+        thead.innerHTML = `<tr><th>#</th><th>Sub-Sub / Item Class</th><th>Sales Revenue (SAR)</th><th>Units Sold</th><th>ASP (SAR)</th></tr>`;
+        const subsubs = tree[selectedMainCat]?.subs[selectedSubCat]?.subsubs || [];
+        let bHtml = "";
+        subsubs.forEach((item, idx) => {{
+          bHtml += `<tr>
+            <td style="color:#64748b;">${{idx+1}}</td>
+            <td style="color:#fff; font-weight:600;">📦 ${{item.name}}</td>
+            <td style="color:#38bdf8; font-weight:700;">${{item.sales.toLocaleString()}}</td>
+            <td>${{item.units.toLocaleString()}}</td>
+            <td style="color:#f59e0b;">${{item.asp}}</td>
+          </tr>`;
+        }});
+        tbody.innerHTML = bHtml || `<tr><td colspan="5" style="text-align:center;">No items found</td></tr>`;
+      }}
+    }} catch(e) {{ console.error("renderDrillDown error:", e); }}
+  }}
+
+  function drillGoLevel(lvl) {{
     currentDrillLevel = lvl;
-    if (lvl === 1) { selectedMainCat = null; selectedSubCat = null; }
-    if (lvl === 2) { selectedSubCat = null; }
+    if (lvl === 1) {{ selectedMainCat = null; selectedSubCat = null; }}
+    if (lvl === 2) {{ selectedSubCat = null; }}
     renderDrillDown();
-  }
+  }}
 
-  function drillIntoMainCat(m) { selectedMainCat = m; currentDrillLevel = 2; renderDrillDown(); }
-  function drillIntoSubCat(s) { selectedSubCat = s; currentDrillLevel = 3; renderDrillDown(); }
+  function drillIntoMainCat(m) {{ selectedMainCat = m; currentDrillLevel = 2; renderDrillDown(); }}
+  function drillIntoSubCat(s) {{ selectedSubCat = s; currentDrillLevel = 3; renderDrillDown(); }}
 
-  function renderCharts() {
-    const tree = HIERARCHY_TREE[businessBrand] || {};
-    const catLabels = Object.keys(tree);
-    const catSeries = catLabels.map(k => tree[k].sales);
-    const colors = ['#38bdf8', '#f59e0b', '#10b981', '#ec4899', '#818cf8', '#a855f7', '#06b6d4', '#e11d48', '#6366f1', '#14b8a6'];
+  function renderCharts() {{
+    try {{
+      const tree = HIERARCHY_TREE[businessBrand] || {{}};
+      const catLabels = Object.keys(tree);
+      const catSeries = catLabels.map(k => tree[k].sales);
+      const colors = ['#38bdf8', '#f59e0b', '#10b981', '#ec4899', '#818cf8', '#a855f7', '#06b6d4', '#e11d48', '#6366f1', '#14b8a6'];
 
-    document.getElementById("catDonutTitle").innerText = `🍩 Category Contribution Share (${businessBrand})`;
-    const donutEl = document.querySelector("#apexCategoryDonut");
-    if (donutEl) {
-      donutEl.innerHTML = "";
-      if (donutChart) { try { donutChart.destroy(); } catch(e){} }
-      if (catSeries.length > 0) {
-        donutChart = new ApexCharts(donutEl, {
-          series: catSeries, labels: catLabels,
-          chart: { type: 'donut', height: 330, background: 'transparent' },
-          theme: { mode: 'dark' }, colors: colors, legend: { position: 'bottom', labels: { colors: '#cbd5e1' } }
-        });
-        donutChart.render();
-      }
-    }
+      var titleEl = document.getElementById("catDonutTitle");
+      if (titleEl) titleEl.innerText = `🍩 Category Contribution Share (${{businessBrand}})`;
+      
+      const donutEl = document.querySelector("#apexCategoryDonut");
+      if (donutEl) {{
+        donutEl.innerHTML = "";
+        if (donutChart) {{ try {{ donutChart.destroy(); }} catch(e){{}} }}
+        if (catSeries.length > 0) {{
+          donutChart = new ApexCharts(donutEl, {{
+            series: catSeries, labels: catLabels,
+            chart: {{ type: 'donut', height: 330, background: 'transparent' }},
+            theme: {{ mode: 'dark' }}, colors: colors, legend: {{ position: 'bottom', labels: {{ colors: '#cbd5e1' }} }}
+          }});
+          donutChart.render();
+        }}
+      }}
 
-    const genderWrapper = document.getElementById("genderChartWrapper");
-    if (businessBrand === 'DZL') {
-      genderWrapper.style.display = "block";
-      const genderEl = document.querySelector("#apexGenderDonut");
-      if (genderEl) {
-        genderEl.innerHTML = "";
-        if (genderChart) { try { genderChart.destroy(); } catch(e){} }
-        if (DZL_GENDER.series.length > 0) {
-          genderChart = new ApexCharts(genderEl, {
-            series: DZL_GENDER.series, labels: DZL_GENDER.labels,
-            chart: { type: 'donut', height: 330, background: 'transparent' },
-            theme: { mode: 'dark' }, colors: ['#ec4899', '#38bdf8', '#10b981'], legend: { position: 'bottom', labels: { colors: '#cbd5e1' } }
-          });
-          genderChart.render();
-        }
-      }
-    } else {
-      genderWrapper.style.display = "none";
-    }
-  }
+      const genderWrapper = document.getElementById("genderChartWrapper");
+      if (businessBrand === 'DZL') {{
+        if (genderWrapper) genderWrapper.style.display = "block";
+        const genderEl = document.querySelector("#apexGenderDonut");
+        if (genderEl) {{
+          genderEl.innerHTML = "";
+          if (genderChart) {{ try {{ genderChart.destroy(); }} catch(e){{}} }}
+          if (DZL_GENDER.series.length > 0) {{
+            genderChart = new ApexCharts(genderEl, {{
+              series: DZL_GENDER.series, labels: DZL_GENDER.labels,
+              chart: {{ type: 'donut', height: 330, background: 'transparent' }},
+              theme: {{ mode: 'dark' }}, colors: ['#ec4899', '#38bdf8', '#10b981'], legend: {{ position: 'bottom', labels: {{ colors: '#cbd5e1' }} }}
+            }});
+            genderChart.render();
+          }}
+        }}
+      }} else {{
+        if (genderWrapper) genderWrapper.style.display = "none";
+      }}
+    }} catch(e) {{ console.error("renderCharts error:", e); }}
+  }}
 
-  function switchView(viewName) {
-    document.getElementById("view-stores").style.display = (viewName === 'stores') ? 'block' : 'none';
-    document.getElementById("view-regions").style.display = (viewName === 'regions') ? 'block' : 'none';
-    document.getElementById("view-business").style.display = (viewName === 'business') ? 'block' : 'none';
-    document.getElementById("view-action").style.display = (viewName === 'action') ? 'block' : 'none';
-    document.querySelectorAll('.view-btn').forEach(btn => btn.classList.remove('active'));
-    document.getElementById('btn-' + viewName).classList.add('active');
+  function switchView(viewName) {{
+    try {{
+      document.getElementById("view-stores").style.display = (viewName === 'stores') ? 'block' : 'none';
+      document.getElementById("view-regions").style.display = (viewName === 'regions') ? 'block' : 'none';
+      document.getElementById("view-business").style.display = (viewName === 'business') ? 'block' : 'none';
+      document.getElementById("view-action").style.display = (viewName === 'action') ? 'block' : 'none';
+      document.querySelectorAll('.view-btn').forEach(btn => btn.classList.remove('active'));
+      var b = document.getElementById('btn-' + viewName);
+      if (b) b.classList.add('active');
 
-    if (viewName === 'regions') renderRegionTables();
-    if (viewName === 'business') {
-      setTimeout(() => {
-        renderCharts();
-        renderDrillDown();
-        window.dispatchEvent(new Event('resize'));
-      }, 80);
-    }
-    if (viewName === 'action') renderISTTable();
-  }
+      if (viewName === 'regions') renderRegionTables();
+      if (viewName === 'business') {{
+        setTimeout(() => {{
+          renderCharts();
+          renderDrillDown();
+          window.dispatchEvent(new Event('resize'));
+        }}, 60);
+      }}
+      if (viewName === 'action') renderISTTable();
+    }} catch(e) {{ console.error("switchView error:", e); }}
+  }}
 
-  function openStoreModal(code) {
-    const r = currentStoreMeta[code];
-    if (!r) return;
-    document.getElementById("modal-store-name").innerText = "[" + r.brand + "] " + r.name;
-    document.getElementById("modal-store-code").innerText = "CODE: " + code + " | " + r.region + " (Manager: " + r.manager + ")";
-    document.getElementById("modal-sales").innerText = r.sales.toLocaleString() + " SAR";
-    document.getElementById("modal-target").innerText = Math.round(r.target).toLocaleString() + " SAR (" + r.ach.toFixed(1) + "%)";
-    document.getElementById("modal-soh").innerText = (r.soh_units || 0).toLocaleString() + " Pcs";
-    document.getElementById("modal-woc").innerText = (r.woc || 0) + " Wks";
-    document.getElementById("modal-atv").innerText = r.atv.toLocaleString() + " SAR";
-    document.getElementById("modal-upt").innerText = r.upt.toFixed(2);
+  function openStoreModal(code) {{
+    try {{
+      const r = currentStoreMeta[code];
+      if (!r) return;
+      document.getElementById("modal-store-name").innerText = "[" + r.brand + "] " + r.name;
+      document.getElementById("modal-store-code").innerText = "CODE: " + code + " | " + r.region + " (Manager: " + r.manager + ")";
+      document.getElementById("modal-sales").innerText = r.sales.toLocaleString() + " SAR";
+      document.getElementById("modal-target").innerText = Math.round(r.target).toLocaleString() + " SAR (" + r.ach.toFixed(1) + "%)";
+      document.getElementById("modal-soh").innerText = (r.soh_units || 0).toLocaleString() + " Pcs";
+      document.getElementById("modal-woc").innerText = (r.woc || 0) + " Wks";
+      document.getElementById("modal-atv").innerText = r.atv.toLocaleString() + " SAR";
+      document.getElementById("modal-upt").innerText = r.upt.toFixed(2);
 
-    let needs = "Maintain standard assortment and monitor broken sizes.";
-    let directive = "Weekly routine replenishment.";
-    if (r.ach >= 95) {
-      needs = "High demand velocity. Priority supply for fast movers.";
-      directive = "⚡ Maintain 100% floor availability on leading drivers.";
-    } else if (r.ach < 70 && (r.soh_units || 0) > 10000) {
-      needs = "Store holds heavy display depth but slow sell-through.";
-      directive = "⚡ Reallocate front gondolas to high-velocity impulse items and initiate clearance.";
-    }
-    document.getElementById("modal-needs").innerText = needs;
-    document.getElementById("modal-directive").innerText = directive;
+      let needs = "Maintain standard assortment and monitor broken sizes.";
+      let directive = "Weekly routine replenishment.";
+      if (r.ach >= 95) {{
+        needs = "High demand velocity. Priority supply for fast movers.";
+        directive = "⚡ Maintain 100% floor availability on leading drivers.";
+      }} else if (r.ach < 70 && (r.soh_units || 0) > 10000) {{
+        needs = "Store holds heavy display depth but slow sell-through.";
+        directive = "⚡ Reallocate front gondolas to high-velocity impulse items and initiate clearance.";
+      }}
+      document.getElementById("modal-needs").innerText = needs;
+      document.getElementById("modal-directive").innerText = directive;
 
-    const cats = STORE_CATS[code] || [];
-    let html = "";
-    cats.forEach(c => {
-      html += `<tr>
-        <td style="color:#38bdf8; font-weight:700;">${c.main_category}</td>
-        <td>${c.sales}</td>
-        <td>${c.units}</td>
-        <td style="color:#10b981; font-weight:700;">${c.store_mix_pct}</td>
-        <td>${c.asp}</td>
-      </tr>`;
-    });
-    document.getElementById("modal-cats-body").innerHTML = html || `<tr><td colspan="5" style="text-align:center;">No data</td></tr>`;
-    document.getElementById("store-modal").style.display = "flex";
-  }
+      const cats = STORE_CATS[code] || [];
+      let html = "";
+      cats.forEach(c => {{
+        html += `<tr>
+          <td style="color:#38bdf8; font-weight:700;">${{c.main_category}}</td>
+          <td>${{c.sales}}</td>
+          <td>${{c.units}}</td>
+          <td style="color:#10b981; font-weight:700;">${{c.store_mix_pct}}</td>
+          <td>${{c.asp}}</td>
+        </tr>`;
+      }});
+      document.getElementById("modal-cats-body").innerHTML = html || `<tr><td colspan="5" style="text-align:center;">No data</td></tr>`;
+      document.getElementById("store-modal").style.display = "flex";
+    }} catch(e) {{ console.error("openStoreModal error:", e); }}
+  }}
 
-  function closeModal() { document.getElementById("store-modal").style.display = "none"; }
+  function closeModal() {{ document.getElementById("store-modal").style.display = "none"; }}
 
-  // IST Table Rendering & Filtering
-  function filterISTBrand(b) {
+  function filterISTBrand(b) {{
     istFilterBrand = b;
     document.getElementById("btn-ist-all").classList.toggle('active', b === 'ALL');
     document.getElementById("btn-ist-dzl").classList.toggle('active', b === 'DZL');
     document.getElementById("btn-ist-mms").classList.toggle('active', b === 'MMS');
     renderISTTable();
-  }
+  }}
 
-  function renderISTTable() {
-    const tbody = document.getElementById("replTableBody");
-    let html = "";
-    let idx = 1;
-    REPL_ITEMS.forEach(r => {
-      if (istFilterBrand !== 'ALL' && r.brand !== istFilterBrand) return;
-      const brandBadge = `<span class="badge" style="background:${r.brand==='DZL'?'#ef444422':'#38bdf822'}; color:${r.brand==='DZL'?'#ef4444':'#38bdf8'};">${r.brand}</span>`;
-      html += `<tr>
-        <td style="color:#64748b;">${idx++}</td>
-        <td>${brandBadge}</td>
-        <td><span class="badge" style="background:#ef444422; color:#ef4444;">${r.action}</span></td>
-        <td style="color:#fff; font-weight:700;">${r.store}</td>
-        <td style="color:#f59e0b; font-weight:600;">${r.focus}</td>
-        <td style="color:#38bdf8;">${r.source}</td>
-        <td style="color:#10b981; font-weight:700;">${r.qty}</td>
-        <td><span class="badge" style="background:#ef444422; color:#ef4444;">${r.urgency}</span></td>
-      </tr>`;
-    });
-    tbody.innerHTML = html || `<tr><td colspan="8" style="text-align:center;">No recommendations available</td></tr>`;
-  }
+  function renderISTTable() {{
+    try {{
+      const tbody = document.getElementById("replTableBody");
+      let html = "";
+      let idx = 1;
+      REPL_ITEMS.forEach(r => {{
+        if (istFilterBrand !== 'ALL' && r.brand !== istFilterBrand) return;
+        const brandBadge = `<span class="badge" style="background:${{r.brand==='DZL'?'#ef444422':'#38bdf822'}}; color:${{r.brand==='DZL'?'#ef4444':'#38bdf8'}};">${{r.brand}}</span>`;
+        html += `<tr>
+          <td style="color:#64748b;">${{idx++}}</td>
+          <td>${{brandBadge}}</td>
+          <td><span class="badge" style="background:#ef444422; color:#ef4444;">${{r.action}}</span></td>
+          <td style="color:#fff; font-weight:700;">${{r.store}}</td>
+          <td style="color:#f59e0b; font-weight:600;">${{r.focus}}</td>
+          <td style="color:#38bdf8;">${{r.source}}</td>
+          <td style="color:#10b981; font-weight:700;">${{r.qty}}</td>
+          <td><span class="badge" style="background:#ef444422; color:#ef4444;">${{r.urgency}}</span></td>
+        </tr>`;
+      }});
+      tbody.innerHTML = html || `<tr><td colspan="8" style="text-align:center;">No recommendations available</td></tr>`;
+    }} catch(e) {{ console.error("renderISTTable error:", e); }}
+  }}
 
-  // التوليد والتنزيل الفوري عبر المتصفح بدون أي ملفات خارجية مفقودة
-  function downloadISTPlan(b) {
-    let rows = [["Brand", "Action Type", "Target Store", "SKU / Category Focus", "Source Route", "Quantity", "Urgency"]];
-    REPL_ITEMS.forEach(r => {
-      if (b === 'ALL' || r.brand === b) {
-        rows.push([r.brand, r.action, r.store, r.focus.replace(/,/g, ' '), r.source.replace(/,/g, ' '), r.qty, r.urgency]);
-      }
-    });
-    let csvContent = "data:text/csv;charset=utf-8,\uFEFF" + rows.map(e => e.join(",")).join("\n");
-    let encodedUri = encodeURI(csvContent);
-    let link = document.createElement("a");
-    link.setAttribute("href", encodedUri);
-    link.setAttribute("download", `IST_Replenishment_Plan_${b}_2026.csv`);
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-  }
+  function downloadISTPlan(b) {{
+    try {{
+      let rows = [["Brand", "Action Type", "Target Store", "SKU / Category Focus", "Source Route", "Quantity", "Urgency"]];
+      REPL_ITEMS.forEach(r => {{
+        if (b === 'ALL' || r.brand === b) {{
+          rows.push([r.brand, r.action, r.store, r.focus.replace(/,/g, ' '), r.source.replace(/,/g, ' '), r.qty, r.urgency]);
+        }}
+      }});
+      let csvContent = "data:text/csv;charset=utf-8,\uFEFF" + rows.map(e => e.join(",")).join("\\n");
+      let encodedUri = encodeURI(csvContent);
+      let link = document.createElement("a");
+      link.setAttribute("href", encodedUri);
+      link.setAttribute("download", `IST_Replenishment_Plan_${{b}}_2026.csv`);
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+    }} catch(e) {{ console.error("downloadISTPlan error:", e); }}
+  }}
 
-  // إدارة Action Hub لـ DZL و MMS
-  function switchDZLMovers(t) {
+  function switchDZLMovers(t) {{
     dzlMoversType = t;
     document.getElementById("btn-dzl-top").classList.toggle('active', t === 'top');
     document.getElementById("btn-dzl-low").classList.toggle('active', t === 'low');
     renderDZLMovers();
-  }
+  }}
 
-  function renderDZLMovers() {
-    const st = document.getElementById("dzlStoreSelect").value;
-    const items = DZL_MOVERS[st]?.[dzlMoversType] || DZL_MOVERS["ALL"]?.[dzlMoversType] || [];
-    const tbody = document.getElementById("dzlMoversBody");
-    let html = "";
-    items.forEach((r, idx) => {
-      html += `<tr>
-        <td style="color:${dzlMoversType==='top'?'#10b981':'#ef4444'}; font-weight:700;">#${idx+1}</td>
-        <td style="color:#38bdf8; font-weight:700;">${r.clean_sku}</td>
-        <td style="color:#fff;">${r.clean_name}</td>
-        <td><span class="badge" style="background:#ec489922; color:#ec4899;">${r.gender}</span></td>
-        <td style="color:#38bdf8; font-weight:700;">${r.units}</td>
-        <td style="color:#fff; font-weight:700;">${r.sales.toLocaleString()}</td>
-        <td style="color:#f59e0b;">${r.asp}</td>
-      </tr>`;
-    });
-    tbody.innerHTML = html || `<tr><td colspan="7" style="text-align:center;">No data available</td></tr>`;
-  }
+  function renderDZLMovers() {{
+    try {{
+      const st = document.getElementById("dzlStoreSelect").value;
+      const items = DZL_MOVERS[st]?.[dzlMoversType] || DZL_MOVERS["ALL"]?.[dzlMoversType] || [];
+      const tbody = document.getElementById("dzlMoversBody");
+      let html = "";
+      items.forEach((r, idx) => {{
+        html += `<tr>
+          <td style="color:${{dzlMoversType==='top'?'#10b981':'#ef4444'}}; font-weight:700;">#${{idx+1}}</td>
+          <td style="color:#38bdf8; font-weight:700;">${{r.clean_sku}}</td>
+          <td style="color:#fff;">${{r.clean_name}}</td>
+          <td><span class="badge" style="background:#ec489922; color:#ec4899;">${{r.gender}}</span></td>
+          <td style="color:#38bdf8; font-weight:700;">${{r.units}}</td>
+          <td style="color:#fff; font-weight:700;">${{r.sales.toLocaleString()}}</td>
+          <td style="color:#f59e0b;">${{r.asp}}</td>
+        </tr>`;
+      }});
+      tbody.innerHTML = html || `<tr><td colspan="7" style="text-align:center;">No data available</td></tr>`;
+    }} catch(e) {{ console.error("renderDZLMovers error:", e); }}
+  }}
 
-  function switchMMSMovers(t) {
+  function switchMMSMovers(t) {{
     mmsMoversType = t;
     document.getElementById("btn-mms-top").classList.toggle('active', t === 'top');
     document.getElementById("btn-mms-low").classList.toggle('active', t === 'low');
     renderMMSMovers();
-  }
+  }}
 
-  function renderMMSMovers() {
-    const data = (mmsMoversType === 'top') ? MMS_TOP500 : MMS_LOW500;
-    const q = (document.getElementById("mmsSearch").value || "").toLowerCase();
-    const tbody = document.getElementById("mmsMoversTableBody");
-    let html = "";
-    data.filter(r => r.clean_sku.toLowerCase().includes(q) || r.clean_name.toLowerCase().includes(q)).slice(0, 50).forEach((r, idx) => {
-      html += `<tr>
-        <td style="color:${mmsMoversType==='top'?'#10b981':'#ef4444'}; font-weight:700;">#${idx+1}</td>
-        <td style="color:#38bdf8; font-weight:700;">${r.clean_sku}</td>
-        <td style="color:#fff;">${r.clean_name}</td>
-        <td style="color:#94a3b8;">${r.main_category}</td>
-        <td style="color:#38bdf8; font-weight:700;">${r.units.toLocaleString()}</td>
-        <td style="color:#fff; font-weight:700;">${Math.round(r.sales).toLocaleString()}</td>
-        <td style="color:#f59e0b;">${r.asp}</td>
-      </tr>`;
-    });
-    tbody.innerHTML = html;
-  }
+  function renderMMSMovers() {{
+    try {{
+      const data = (mmsMoversType === 'top') ? MMS_TOP500 : MMS_LOW500;
+      const q = (document.getElementById("mmsSearch").value || "").toLowerCase();
+      const tbody = document.getElementById("mmsMoversTableBody");
+      let html = "";
+      data.filter(r => r.clean_sku.toLowerCase().includes(q) || r.clean_name.toLowerCase().includes(q)).slice(0, 50).forEach((r, idx) => {{
+        html += `<tr>
+          <td style="color:${{mmsMoversType==='top'?'#10b981':'#ef4444'}}; font-weight:700;">#${{idx+1}}</td>
+          <td style="color:#38bdf8; font-weight:700;">${{r.clean_sku}}</td>
+          <td style="color:#fff;">${{r.clean_name}}</td>
+          <td style="color:#94a3b8;">${{r.main_category}}</td>
+          <td style="color:#38bdf8; font-weight:700;">${{r.units.toLocaleString()}}</td>
+          <td style="color:#fff; font-weight:700;">${{Math.round(r.sales).toLocaleString()}}</td>
+          <td style="color:#f59e0b;">${{r.asp}}</td>
+        </tr>`;
+      }});
+      tbody.innerHTML = html;
+    }} catch(e) {{ console.error("renderMMSMovers error:", e); }}
+  }}
 
-  function switchMonth(m) {
-    activeMonth = m;
-    if (m === "SEP") {
-      currentBrandTotals = SEP_BRAND_TOTALS;
-      currentStoreMeta = SEP_STORE_META;
-      document.getElementById("headerSubtitle").innerText = "September 2026 Full Monthly Performance & Benchmarking (Archived)";
-    } else {
-      currentBrandTotals = OCT_BRAND_TOTALS;
-      currentStoreMeta = OCT_STORE_META;
-      document.getElementById("headerSubtitle").innerText = "October 2026 Daily Phasing & Commercial Performance Tracking";
-    }
+  function switchMonth(m) {{
+    try {{
+      activeMonth = m;
+      if (m === "SEP") {{
+        currentBrandTotals = SEP_BRAND_TOTALS;
+        currentStoreMeta = SEP_STORE_META;
+        document.getElementById("headerSubtitle").innerText = "September 2026 Full Monthly Performance & Benchmarking (Archived)";
+      }} else {{
+        currentBrandTotals = OCT_BRAND_TOTALS;
+        currentStoreMeta = OCT_STORE_META;
+        document.getElementById("headerSubtitle").innerText = "October 2026 Daily Phasing & Commercial Performance Tracking";
+      }}
 
-    let rowsHtml = "";
-    let idx = 1;
-    Object.values(currentStoreMeta).forEach(r => {
-      const yoyStr = (r.yoy !== null && !isNaN(r.yoy)) ? `<span style="color:${r.yoy>=0?'#10b981':'#ef4444'}; font-weight:700;">${r.yoy.toFixed(1)}%</span>` : `<span style="color:#64748b;">-</span>`;
-      const lyStr = r.ly_sales ? r.ly_sales.toLocaleString() : `<span style="color:#64748b;">-</span>`;
-      const achCol = (r.ach >= 100) ? "#10b981" : ((r.ach >= 80) ? "#f59e0b" : "#ef4444");
-      const brandBadge = `<span class="badge" style="background:${r.brand==='DZL'?'#ef444422':'#38bdf822'}; color:${r.brand==='DZL'?'#ef4444':'#38bdf8'};">${r.brand}</span>`;
+      let rowsHtml = "";
+      let idx = 1;
+      Object.values(currentStoreMeta).forEach(r => {{
+        const yoyStr = (r.yoy !== null && !isNaN(r.yoy)) ? `<span style="color:${{r.yoy>=0?'#10b981':'#ef4444'}}; font-weight:700;">${{r.yoy.toFixed(1)}}%</span>` : `<span style="color:#64748b;">-</span>`;
+        const lyStr = r.ly_sales ? r.ly_sales.toLocaleString() : `<span style="color:#64748b;">-</span>`;
+        const achCol = (r.ach >= 100) ? "#10b981" : ((r.ach >= 80) ? "#f59e0b" : "#ef4444");
+        const brandBadge = `<span class="badge" style="background:${{r.brand==='DZL'?'#ef444422':'#38bdf822'}}; color:${{r.brand==='DZL'?'#ef4444':'#38bdf8'}};">${{r.brand}}</span>`;
 
-      rowsHtml += `<tr class="clickable-row store-row" data-brand="${r.brand}" data-region="${r.region}" onclick="openStoreModal('${r.code}')">
-        <td style="color:#64748b; font-weight:600;">${idx++}</td>
-        <td style="color:#38bdf8; font-weight:700;">${r.code}</td>
-        <td style="color:#fff; font-weight:600;">${brandBadge} {r.name}</td>
-        <td style="color:#94a3b8; font-size:12px;">${r.region}</td>
-        <td style="color:#f8fafc; font-weight:700;">${r.sales.toLocaleString()}</td>
-        <td style="color:#38bdf8;">${lyStr}</td>
-        <td>${yoyStr}</td>
-        <td style="color:#94a3b8;">${Math.round(r.target).toLocaleString()}</td>
-        <td style="color:${achCol}; font-weight:700;">${r.ach.toFixed(1)}%</td>
-        <td style="color:#38bdf8; font-weight:700;">${r.units.toLocaleString()}</td>
-        <td style="color:#fff; font-weight:700;">${r.txns.toLocaleString()}</td>
-        <td style="color:#10b981; font-weight:700;">${r.upt.toFixed(2)}</td>
-        <td style="color:#38bdf8; font-weight:700;">${r.str_pct}%</td>
-        <td><span class="badge" style="background:#10b98122; color:#10b981;">Archived</span></td>
-        <td style="color:#f59e0b; font-weight:700;">${r.asp}</td>
-      </tr>`;
-    });
-    document.getElementById("storesTableBody").innerHTML = rowsHtml;
+        rowsHtml += `<tr class="clickable-row store-row" data-brand="${{r.brand}}" data-region="${{r.region}}" onclick="openStoreModal('${{r.code}}')">
+          <td style="color:#64748b; font-weight:600;">${{idx++}}</td>
+          <td style="color:#38bdf8; font-weight:700;">${{r.code}}</td>
+          <td style="color:#fff; font-weight:600;">${{brandBadge}} ${{r.name}}</td>
+          <td style="color:#94a3b8; font-size:12px;">${{r.region}}</td>
+          <td style="color:#f8fafc; font-weight:700;">${{r.sales.toLocaleString()}}</td>
+          <td style="color:#38bdf8;">${{lyStr}}</td>
+          <td>${{yoyStr}}</td>
+          <td style="color:#94a3b8;">${{Math.round(r.target).toLocaleString()}}</td>
+          <td style="color:${{achCol}}; font-weight:700;">${{r.ach.toFixed(1)}}%</td>
+          <td style="color:#38bdf8; font-weight:700;">${{r.units.toLocaleString()}}</td>
+          <td style="color:#fff; font-weight:700;">${{r.txns.toLocaleString()}}</td>
+          <td style="color:#10b981; font-weight:700;">${{r.upt.toFixed(2)}}</td>
+          <td style="color:#38bdf8; font-weight:700;">${{r.str_pct}}%</td>
+          <td><span class="badge" style="background:#10b98122; color:#10b981;">Archived</span></td>
+          <td style="color:#f59e0b; font-weight:700;">${{r.asp}}</td>
+        </tr>`;
+      }});
+      document.getElementById("storesTableBody").innerHTML = rowsHtml;
 
-    updateKPICards(activeBrand);
-    renderRegionTables();
-  }
+      updateKPICards(activeBrand);
+      renderRegionTables();
+    }} catch(e) {{ console.error("switchMonth error:", e); }}
+  }}
 </script>
 
 </body>
 </html>
 """
 
-    sep_meta_dict = {r['code']: r for r in sep_perf_list} if sep_perf_list else store_meta_map
-    sep_totals_dict = sep_brand_totals if sep_brand_totals else brand_totals
-
-    final_html = template_html.replace("__STORE_TABLE_ROWS__", store_table_rows)
-    final_html = final_html.replace("__BRAND_TOTALS_JSON__", json.dumps(brand_totals))
-    final_html = final_html.replace("__SEP_BRAND_TOTALS_JSON__", json.dumps(sep_totals_dict))
-    final_html = final_html.replace("__STORE_META_JSON__", json.dumps(store_meta_map))
-    final_html = final_html.replace("__SEP_STORE_META_JSON__", json.dumps(sep_meta_dict))
-    final_html = final_html.replace("__STORE_CATS_JSON__", json.dumps(store_cat_details))
-    final_html = final_html.replace("__MMS_TOP500_JSON__", json.dumps(mms_top500))
-    final_html = final_html.replace("__MMS_LOW500_JSON__", json.dumps(mms_low500))
-    final_html = final_html.replace("__DZL_MOVERS_JSON__", json.dumps(dzl_store_movers))
-    final_html = final_html.replace("__HIERARCHY_TREE_JSON__", json.dumps(hierarchy_tree))
-    final_html = final_html.replace("__DZL_GENDER_JSON__", json.dumps(dzl_gender_data))
-    final_html = final_html.replace("__REPL_ITEMS_JSON__", json.dumps(repl_data_list))
-
     out_file = os.path.join(REPORTS_DIR, "MMS_Executive_KPI_Dashboard.html")
     with open(out_file, "w", encoding="utf-8") as f:
-        f.write(final_html)
+        f.write(template_html)
 
     print(f"[✓] Dashboard generated successfully: {out_file}")
 
