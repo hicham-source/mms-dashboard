@@ -152,8 +152,10 @@ def load_ly_sales_data(target_date_str="2026-10-03"):
 
 def load_soh_data():
     soh_files = glob.glob(os.path.join(REPORTS_DIR, "*SOH*.xlsx")) + glob.glob("*SOH*.xlsx")
-    if not soh_files: return {}, {}, pd.DataFrame(), 0
+    if not soh_files: return {}, {}, pd.DataFrame(), 0, {}, {}
     soh_store_summary, sku_to_cat_map = {}, {}
+    wh_sku_soh = {}
+    store_sku_soh = {}
     wh_total_stock = 0
     try:
         soh_path = soh_files[0]
@@ -172,7 +174,7 @@ def load_soh_data():
         cat_col = next((c for c in df_soh.columns if str(c).lower() in ["category", "cat", "product_category"]), None)
 
         if not code_col or not stock_col: 
-            return {}, {}, pd.DataFrame(), 0
+            return {}, {}, pd.DataFrame(), 0, {}, {}
 
         df_soh[stock_col] = pd.to_numeric(df_soh[stock_col], errors='coerce').fillna(0)
         df_soh['clean_code'] = df_soh[code_col].apply(lambda v: "KSWH" if "KSWH" in str(v).upper() or str(v).upper() == "WH" else clean_store_code_str(v))
@@ -183,6 +185,16 @@ def load_soh_data():
                 for _, r in df_soh[[barcode_col, cat_col]].dropna().drop_duplicates().iterrows():
                     sku_to_cat_map[clean_sku_code(r[barcode_col])] = str(r[cat_col]).strip()
 
+            # خريطة أرصدة المستودع المركزي والفروع لكل SKU
+            for _, r in df_soh.iterrows():
+                b_code = r['clean_barcode']
+                c_code = r['clean_code']
+                qty = int(r[stock_col])
+                if c_code == 'KSWH':
+                    wh_sku_soh[b_code] = wh_sku_soh.get(b_code, 0) + qty
+                else:
+                    store_sku_soh[(c_code, b_code)] = store_sku_soh.get((c_code, b_code), 0) + qty
+
         wh_df = df_soh[df_soh['clean_code'] == 'KSWH']
         wh_total_stock = int(wh_df[stock_col].sum()) if not wh_df.empty else 0
 
@@ -190,11 +202,12 @@ def load_soh_data():
         grouped = stores_df.groupby('clean_code')[stock_col].sum()
         soh_store_summary = grouped.to_dict()
 
-        return soh_store_summary, sku_to_cat_map, df_soh, wh_total_stock
+        return soh_store_summary, sku_to_cat_map, df_soh, wh_total_stock, wh_sku_soh, store_sku_soh
     except Exception as e:
         print(f"[!] SOH Load Exception: {e}")
-        return {}, {}, pd.DataFrame(), 0
+        return {}, {}, pd.DataFrame(), 0, {}, {}
 
+# دالة قراءة مبيعات سبتمبر بدقة صارمة لمنع التقاط أرقام الباركود والإيصالات
 def load_september_archive_data():
     sep_perf_list = []
     sep_totals = {}
@@ -236,8 +249,16 @@ def load_september_archive_data():
 
         if s_dfs:
             df_s = pd.concat(s_dfs, ignore_index=True)
-            sc = next((c for c in df_s.columns if any(k in str(c).lower() for k in ['actual sales amount', 'actual amount', 'sales revenue', 'sales amount', 'amount', 'sales', 'net'])), None)
-            qc = next((c for c in df_s.columns if any(k in str(c).lower() for k in ['sales quantity', 'quantity', 'qty', 'units'])), None)
+            
+            # استبعاد صارم لأعمدة الباركود والإيصالات والأرقام التسلسلية
+            def is_valid_sales_col(c_name):
+                c_l = str(c_name).lower()
+                if any(bad in c_l for bad in ['no', 'id', 'num', 'code', 'barcode', 'receipt', 'order', 'date', 'time', 'qty', 'quantity']):
+                    return False
+                return any(good in c_l for good in ['actual sales amount', 'actual amount', 'sales amount', 'actual_sales_amount', 'actual sales', 'amount'])
+
+            sc = next((c for c in df_s.columns if is_valid_sales_col(c)), None)
+            qc = next((c for c in df_s.columns if any(k in str(c).lower() for k in ['sales quantity', 'quantity', 'qty']) and not any(bad in str(c).lower() for bad in ['id', 'no', 'code'])), None)
             oc = next((c for c in df_s.columns if any(k in str(c).lower() for k in ['org code', 'store code', 'organization code', 'shop code'])), df_s.columns[0])
             tc = next((c for c in df_s.columns if 'receipt' in str(c).lower()), oc)
 
@@ -287,7 +308,7 @@ def load_september_archive_data():
 def process_and_build():
     oct_targets, oct_mtd_targets, oct_today_targets = load_october_phasing()
     ly_mtd_map, ly_today_map = load_ly_sales_data("2026-10-03")
-    soh_map, sku_to_cat, df_soh_raw, wh_total_stock = load_soh_data()
+    soh_map, sku_to_cat, df_soh_raw, wh_total_stock, wh_sku_soh, store_sku_soh = load_soh_data()
     sep_perf_list, sep_brand_totals = load_september_archive_data()
 
     sales_candidates = glob.glob(os.path.join(REPORTS_DIR, "*.xlsx")) + glob.glob("*.xlsx")
@@ -313,8 +334,8 @@ def process_and_build():
 
     df_clean = pd.concat(dfs, ignore_index=True) if dfs else pd.DataFrame()
     
-    col_sales_match = next((c for c in df_clean.columns if any(k in str(c).lower() for k in ['actual sales amount', 'actual sales', 'actual amount', 'sales amount', 'amount', 'revenue'])), None)
-    col_qty_match = next((c for c in df_clean.columns if any(k in str(c).lower() for k in ['sales quantity', 'quantity', 'qty', 'units'])), None)
+    col_sales_match = next((c for c in df_clean.columns if any(k in str(c).lower() for k in ['actual sales amount', 'actual amount', 'sales amount', 'amount']) and not any(bad in str(c).lower() for bad in ['no', 'id', 'num', 'code', 'barcode'])), None)
+    col_qty_match = next((c for c in df_clean.columns if any(k in str(c).lower() for k in ['sales quantity', 'quantity', 'qty', 'units']) and not any(bad in str(c).lower() for bad in ['id', 'no', 'code'])), None)
 
     if col_sales_match:
         df_clean['Actual Sales Amount'] = pd.to_numeric(df_clean[col_sales_match], errors='coerce').fillna(0)
@@ -529,51 +550,114 @@ def process_and_build():
         "records": dzl_g_sales.to_dict(orient='records')
     }
 
-    # محرك التوريد التبادلي الذكي IST الشامل (لكل من DZL و MMS)
+    # =========================================================================
+    # محرك التوريد الآلي المتطور (Auto-Replenishment Engine with WH vs IST logic)
+    # =========================================================================
     repl_data_list = []
     
-    # 1. أوامر مناقلات DZL للأحذية
+    # 1. أوامر توريد ومناقلات DZL للأحذية
     dzl_shoes = dzl_only_shoes.copy()
     if not dzl_shoes.empty:
         sku_agg_dzl = dzl_shoes.groupby(['clean_code', 'clean_sku', 'clean_name'], as_index=False)['Sales Quantity'].sum()
-        for idx, r in sku_agg_dzl.head(25).iterrows():
+        for idx, r in sku_agg_dzl.head(30).iterrows():
             st_c = r['clean_code']
+            sku = r['clean_sku']
+            name = r['clean_name']
+            sold_qty = int(r['Sales Quantity'])
             st_info = STORE_MAPPING[st_c]
-            other_dzl = [c for c in DZL_VALID_CODES if c != st_c]
-            donor_code = other_dzl[0] if other_dzl else "KSWH"
-            donor_info = STORE_MAPPING.get(donor_code, {"full_name": "Central Warehouse", "city": "Riyadh"})
-            match_type = "🏙️ Same City" if donor_info.get('city') == st_info['city'] else "🚛 Inter-City"
+
+            wh_qty = int(wh_sku_soh.get(sku, 0))
+            st_soh = int(store_sku_soh.get((st_c, sku), 0))
+            sugg_qty = max(4, sold_qty * 2)
+
+            if wh_qty > 0:
+                action_type = "Warehouse Push (WH -> Store)"
+                source_route = f"🏭 Central WH (KSWH) [Avail: {wh_qty} Pcs]"
+                urgency = "⚡ WH Replenish (Immediate)"
+                actual_qty = min(sugg_qty, wh_qty)
+            else:
+                action_type = "Store Transfer (IST - Opportunity)"
+                # البحث عن متجر مانح يملك رصيداً
+                donor_candidates = []
+                for other_c in DZL_VALID_CODES:
+                    if other_c != st_c:
+                        d_stock = store_sku_soh.get((other_c, sku), 0)
+                        donor_candidates.append((other_c, d_stock))
+                
+                donor_candidates.sort(key=lambda x: x[1], reverse=True)
+                donor_code = donor_candidates[0][0] if donor_candidates else [c for c in DZL_VALID_CODES if c != st_c][0]
+                donor_stock = donor_candidates[0][1] if donor_candidates else 0
+                donor_info = STORE_MAPPING[donor_code]
+                match_type = "🏙️ Same City" if donor_info['city'] == st_info['city'] else "🚛 Inter-City"
+
+                source_route = f"{donor_info['full_name']} ({donor_code}) [{match_type}] [SOH: {donor_stock} Pcs]"
+                urgency = "🚨 Broken Size Recovery (IST)"
+                actual_qty = sugg_qty
 
             repl_data_list.append({
                 "brand": "DZL",
-                "action": "Store Transfer (IST - Opportunity)",
+                "action": action_type,
                 "store": f"{st_info['full_name']} ({st_c})",
-                "focus": f"👟 [SHOE PRIORITY 1] {r['clean_name'][:30]} (SKU: {r['clean_sku']})",
-                "source": f"{donor_info['full_name']} ({donor_code}) [{match_type}]",
-                "qty": f"{int(r['Sales Quantity'] * 2)} Pcs",
-                "urgency": "🚨 Broken Size Recovery"
+                "focus": f"👟 [SHOE] {name[:28]} (SKU: {sku})",
+                "sold_qty": sold_qty,
+                "store_soh": st_soh,
+                "wh_soh": wh_qty,
+                "qty": f"{actual_qty} Pcs",
+                "source": source_route,
+                "urgency": urgency
             })
 
-    # 2. أوامر مناقلات MMS للأصناف عالية السرعة (MMS IST)
+    # 2. أوامر توريد ومناقلات MMS للأصناف سريعة الحركة
     mms_only_items = df_clean[df_clean['brand'] == 'MMS']
     if not mms_only_items.empty:
         sku_agg_mms = mms_only_items.groupby(['clean_code', 'clean_sku', 'clean_name', 'main_category'], as_index=False)['Sales Quantity'].sum()
-        for idx, r in sku_agg_mms.sort_values(by='Sales Quantity', ascending=False).head(35).iterrows():
+        for idx, r in sku_agg_mms.sort_values(by='Sales Quantity', ascending=False).head(40).iterrows():
             st_c = r['clean_code']
+            sku = r['clean_sku']
+            name = r['clean_name']
+            cat = r['main_category']
+            sold_qty = int(r['Sales Quantity'])
             st_info = STORE_MAPPING[st_c]
-            donor_candidates = [c for c in MMS_VALID_CODES if c != st_c and STORE_MAPPING[c]['city'] == st_info['city']]
-            donor_code = donor_candidates[0] if donor_candidates else [c for c in MMS_VALID_CODES if c != st_c][0]
-            donor_info = STORE_MAPPING[donor_code]
-            match_type = "🏙️ Same City" if donor_info['city'] == st_info['city'] else "🚛 Inter-City"
+
+            wh_qty = int(wh_sku_soh.get(sku, 0))
+            st_soh = int(store_sku_soh.get((st_c, sku), 0))
+            sugg_qty = max(6, sold_qty)
+
+            if wh_qty > 0:
+                action_type = "Warehouse Push (WH -> Store)"
+                source_route = f"🏭 Central WH (KSWH) [Avail: {wh_qty} Pcs]"
+                urgency = "⚡ WH Replenish (Fast Sell)"
+                actual_qty = min(sugg_qty, wh_qty)
+            else:
+                action_type = "Store Transfer (IST - Opportunity)"
+                # البحث عن متجر MMS مانح
+                donor_candidates = []
+                for other_c in MMS_VALID_CODES:
+                    if other_c != st_c:
+                        d_stock = store_sku_soh.get((other_c, sku), 0)
+                        donor_candidates.append((other_c, d_stock))
+                
+                donor_candidates.sort(key=lambda x: (STORE_MAPPING[x[0]]['city'] == st_info['city'], x[1]), reverse=True)
+                donor_code = donor_candidates[0][0] if donor_candidates else [c for c in MMS_VALID_CODES if c != st_c][0]
+                donor_stock = donor_candidates[0][1] if donor_candidates else 0
+                donor_info = STORE_MAPPING[donor_code]
+                match_type = "🏙️ Same City" if donor_info['city'] == st_info['city'] else "🚛 Inter-City"
+
+                source_route = f"{donor_info['full_name']} ({donor_code}) [{match_type}] [SOH: {donor_stock} Pcs]"
+                urgency = "🚨 Out-of-Stock Risk (IST)"
+                actual_qty = sugg_qty
 
             repl_data_list.append({
                 "brand": "MMS",
-                "action": "Store Transfer (IST - Opportunity)",
+                "action": action_type,
                 "store": f"{st_info['full_name']} ({st_c})",
-                "focus": f"📦 [MMS FAST MOVER] {r['main_category']} | {r['clean_name'][:25]} (SKU: {r['clean_sku']})",
-                "source": f"{donor_info['full_name']} ({donor_code}) [{match_type}]",
-                "qty": f"{max(6, int(r['Sales Quantity']))} Pcs",
-                "urgency": "⚡ Fast Sell-Through Replenish"
+                "focus": f"📦 [{cat}] {name[:24]} (SKU: {sku})",
+                "sold_qty": sold_qty,
+                "store_soh": st_soh,
+                "wh_soh": wh_qty,
+                "qty": f"{actual_qty} Pcs",
+                "source": source_route,
+                "urgency": urgency
             })
 
     # قوائم MMS Top/Low 500
@@ -618,7 +702,6 @@ def process_and_build():
     def safe_json(obj):
         return json.dumps(obj).replace("NaN", "null").replace("</", "<\\/")
 
-    # الأرقام الإجمالية الأساسية لأكتوبر لكتابتها مباشرة داخل الـ HTML
     cur_all = brand_totals.get("ALL", {})
     init_sales = cur_all.get("sales", "0")
     init_ly = cur_all.get("ly", "0")
@@ -922,24 +1005,38 @@ def process_and_build():
     </div>
 </div>
 
-<!-- 4. Commercial Action Hub -->
+<!-- 4. Commercial Action Hub (مع أعمدة المخزون والمبيعات الكاملة) -->
 <div id="view-action" style="display:none;">
     <div class="table-wrap" style="margin-bottom:24px;">
         <div class="table-header">
             <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap;">
-                <h3 style="margin:0; font-size:15px; color:#10b981;">⚡ PREDICTIVE AUTO-REPLENISHMENT & IST OPPORTUNITY ROUTING</h3>
-                <button class="sub-tab-btn active" id="btn-ist-all" onclick="filterISTBrand('ALL')">ALL IST</button>
-                <button class="sub-tab-btn" id="btn-ist-dzl" onclick="filterISTBrand('DZL')">DZL (Shoes IST)</button>
-                <button class="sub-tab-btn" id="btn-ist-mms" onclick="filterISTBrand('MMS')">MMS (Fast Movers IST)</button>
+                <h3 style="margin:0; font-size:15px; color:#10b981;">⚡ PREDICTIVE AUTO-REPLENISHMENT & IST ROUTING</h3>
+                <button class="sub-tab-btn active" id="btn-ist-all" onclick="filterISTBrand('ALL')">ALL REPLENISHMENT</button>
+                <button class="sub-tab-btn" id="btn-ist-dzl" onclick="filterISTBrand('DZL')">DZL (Shoes)</button>
+                <button class="sub-tab-btn" id="btn-ist-mms" onclick="filterISTBrand('MMS')">MMS (Fast Movers)</button>
             </div>
             <div style="display:flex; gap:8px;">
-                <button onclick="downloadISTPlan('DZL')" style="background:#ef4444; color:#fff; border:none; padding:8px 14px; border-radius:6px; font-weight:700; font-size:12px; cursor:pointer;">📥 Export DZL IST</button>
-                <button onclick="downloadISTPlan('MMS')" style="background:#2563eb; color:#fff; border:none; padding:8px 14px; border-radius:6px; font-weight:700; font-size:12px; cursor:pointer;">📥 Export MMS IST</button>
+                <button onclick="downloadISTPlan('DZL')" style="background:#ef4444; color:#fff; border:none; padding:8px 14px; border-radius:6px; font-weight:700; font-size:12px; cursor:pointer;">📥 Export DZL Plan</button>
+                <button onclick="downloadISTPlan('MMS')" style="background:#2563eb; color:#fff; border:none; padding:8px 14px; border-radius:6px; font-weight:700; font-size:12px; cursor:pointer;">📥 Export MMS Plan</button>
             </div>
         </div>
-        <div style="max-height:380px; overflow-y:auto;">
+        <div style="max-height:420px; overflow-y:auto;">
             <table>
-                <thead><tr><th>#</th><th>Brand</th><th>Action Type</th><th>Store Target</th><th>SKU Focus</th><th>Source Route</th><th>Quantity</th><th>Urgency</th></tr></thead>
+                <thead>
+                    <tr>
+                        <th>#</th>
+                        <th>Brand</th>
+                        <th>Action Type</th>
+                        <th>Store Target</th>
+                        <th>SKU / Style Focus</th>
+                        <th>Sold (MTD)</th>
+                        <th>Store SOH</th>
+                        <th>Central WH SOH</th>
+                        <th>Sugg Qty</th>
+                        <th>Source Route</th>
+                        <th>Urgency</th>
+                    </tr>
+                </thead>
                 <tbody id="replTableBody"></tbody>
             </table>
         </div>
@@ -1017,11 +1114,11 @@ def process_and_build():
   let genderChart = null;
 
   document.addEventListener("DOMContentLoaded", function() {{
-    try {{ renderRegionTables(); }} catch(e) {{ console.error("Region error:", e); }}
-    try {{ renderDrillDown(); }} catch(e) {{ console.error("Drill error:", e); }}
-    try {{ renderDZLMovers(); }} catch(e) {{ console.error("DZL movers error:", e); }}
-    try {{ renderMMSMovers(); }} catch(e) {{ console.error("MMS movers error:", e); }}
-    try {{ renderISTTable(); }} catch(e) {{ console.error("IST error:", e); }}
+    try {{ renderRegionTables(); }} catch(e) {{ console.error(e); }}
+    try {{ renderDrillDown(); }} catch(e) {{ console.error(e); }}
+    try {{ renderDZLMovers(); }} catch(e) {{ console.error(e); }}
+    try {{ renderMMSMovers(); }} catch(e) {{ console.error(e); }}
+    try {{ renderISTTable(); }} catch(e) {{ console.error(e); }}
   }});
 
   function updateKPICards(b) {{
@@ -1095,7 +1192,7 @@ def process_and_build():
         if (dzlBlock) dzlBlock.style.display = "block";
         if (mmsBlock) mmsBlock.style.display = "block";
       }}
-    }} catch(e) {{ console.error("switchBrand error:", e); }}
+    }} catch(e) {{ console.error(e); }}
   }}
 
   function switchBusinessBrand(val) {{
@@ -1399,34 +1496,38 @@ def process_and_build():
       REPL_ITEMS.forEach(r => {{
         if (istFilterBrand !== 'ALL' && r.brand !== istFilterBrand) return;
         const brandBadge = `<span class="badge" style="background:${{r.brand==='DZL'?'#ef444422':'#38bdf822'}}; color:${{r.brand==='DZL'?'#ef4444':'#38bdf8'}};">${{r.brand}}</span>`;
+        const actionCol = r.action.includes("Warehouse") ? "#38bdf8" : "#f59e0b";
         html += `<tr>
           <td style="color:#64748b;">${{idx++}}</td>
           <td>${{brandBadge}}</td>
-          <td><span class="badge" style="background:#ef444422; color:#ef4444;">${{r.action}}</span></td>
+          <td><span class="badge" style="background:${{actionCol}}22; color:${{actionCol}};">${{r.action}}</span></td>
           <td style="color:#fff; font-weight:700;">${{r.store}}</td>
-          <td style="color:#f59e0b; font-weight:600;">${{r.focus}}</td>
-          <td style="color:#38bdf8;">${{r.source}}</td>
+          <td style="color:#fff; font-weight:600;">${{r.focus}}</td>
+          <td style="color:#38bdf8; font-weight:700;">${{r.sold_qty}}</td>
+          <td style="color:#f59e0b; font-weight:700;">${{r.store_soh}}</td>
+          <td style="color:${{r.wh_soh>0?'#10b981':'#ef4444'}}; font-weight:700;">${{r.wh_soh}}</td>
           <td style="color:#10b981; font-weight:700;">${{r.qty}}</td>
+          <td style="color:#38bdf8; font-size:11px;">${{r.source}}</td>
           <td><span class="badge" style="background:#ef444422; color:#ef4444;">${{r.urgency}}</span></td>
         </tr>`;
       }});
-      tbody.innerHTML = html || `<tr><td colspan="8" style="text-align:center;">No recommendations available</td></tr>`;
+      tbody.innerHTML = html || `<tr><td colspan="11" style="text-align:center;">No recommendations available</td></tr>`;
     }} catch(e) {{ console.error("renderISTTable error:", e); }}
   }}
 
   function downloadISTPlan(b) {{
     try {{
-      let rows = [["Brand", "Action Type", "Target Store", "SKU / Category Focus", "Source Route", "Quantity", "Urgency"]];
+      let rows = [["Brand", "Action Type", "Target Store", "SKU / Focus", "Sold MTD", "Store SOH", "WH SOH", "Replenish Qty", "Source Route", "Urgency"]];
       REPL_ITEMS.forEach(r => {{
         if (b === 'ALL' || r.brand === b) {{
-          rows.push([r.brand, r.action, r.store, r.focus.replace(/,/g, ' '), r.source.replace(/,/g, ' '), r.qty, r.urgency]);
+          rows.push([r.brand, r.action, r.store, r.focus.replace(/,/g, ' '), r.sold_qty, r.store_soh, r.wh_soh, r.qty, r.source.replace(/,/g, ' '), r.urgency]);
         }}
       }});
       let csvContent = "data:text/csv;charset=utf-8,\uFEFF" + rows.map(e => e.join(",")).join("\\n");
       let encodedUri = encodeURI(csvContent);
       let link = document.createElement("a");
       link.setAttribute("href", encodedUri);
-      link.setAttribute("download", `IST_Replenishment_Plan_${{b}}_2026.csv`);
+      link.setAttribute("download", `Replenishment_Plan_${{b}}_2026.csv`);
       document.body.appendChild(link);
       link.click();
       document.body.removeChild(link);
