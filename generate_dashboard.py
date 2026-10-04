@@ -6,7 +6,8 @@ import html
 import pandas as pd
 import numpy as np
 
-REPORTS_DIR = "./reports"
+# تحديد مسار البحث بمرونة لتفادي أي خطأ في المجلدات
+REPORTS_DIR = "./reports" if os.path.exists("./reports") else "."
 ARCHIVE_SEP_DIR = os.path.join(REPORTS_DIR, "Archive_Sep")
 
 STORE_MAPPING = {
@@ -79,7 +80,7 @@ def classify_shoe_gender_by_size(name, spec=""):
     return 'Women'
 
 def load_october_phasing():
-    phasing_files = glob.glob(os.path.join(REPORTS_DIR, "*Phasing*.xlsx")) + glob.glob("*Phasing*.xlsx")
+    phasing_files = glob.glob(os.path.join(REPORTS_DIR, "*Phasing*.xlsx")) + glob.glob("*Phasing*.xlsx") + glob.glob("*Phasing*.xlsx")
     if not phasing_files: return {}, {}, {}
     oct_targets, oct_mtd_targets, oct_today_targets = {}, {}, {}
     try:
@@ -114,7 +115,7 @@ def load_october_phasing():
         return {}, {}, {}
 
 def load_ly_sales_data(target_date_str="2026-10-03"):
-    ly_files = glob.glob(os.path.join(REPORTS_DIR, "*LY*OCT*.xlsx")) + glob.glob(os.path.join(REPORTS_DIR, "*LY*.xlsx"))
+    ly_files = glob.glob(os.path.join(REPORTS_DIR, "*LY*OCT*.xlsx")) + glob.glob(os.path.join(REPORTS_DIR, "*LY*.xlsx")) + glob.glob("*LY*.xlsx")
     if not ly_files: return {}, {}
     ly_mtd_totals, ly_today_totals = {}, {}
     try:
@@ -151,7 +152,7 @@ def load_ly_sales_data(target_date_str="2026-10-03"):
         return {}, {}
 
 def load_soh_data():
-    soh_files = glob.glob(os.path.join(REPORTS_DIR, "*SOH*.xlsx")) + glob.glob("*SOH*.xlsx")
+    soh_files = glob.glob(os.path.join(REPORTS_DIR, "*SOH*.xlsx")) + glob.glob("*SOH*.xlsx") + glob.glob("*SOH*.xlsx")
     if not soh_files: return {}, {}, pd.DataFrame(), 0, {}, {}
     soh_store_summary, sku_to_cat_map = {}, {}
     wh_sku_soh = {}
@@ -185,7 +186,6 @@ def load_soh_data():
                 for _, r in df_soh[[barcode_col, cat_col]].dropna().drop_duplicates().iterrows():
                     sku_to_cat_map[clean_sku_code(r[barcode_col])] = str(r[cat_col]).strip()
 
-            # خريطة أرصدة المستودع المركزي والفروع لكل SKU
             for _, r in df_soh.iterrows():
                 b_code = r['clean_barcode']
                 c_code = r['clean_code']
@@ -207,15 +207,14 @@ def load_soh_data():
         print(f"[!] SOH Load Exception: {e}")
         return {}, {}, pd.DataFrame(), 0, {}, {}
 
-# دالة قراءة مبيعات سبتمبر بدقة صارمة لمنع التقاط أرقام الباركود والإيصالات
 def load_september_archive_data():
     sep_perf_list = []
     sep_totals = {}
     try:
-        sep_sales_files = glob.glob(os.path.join(ARCHIVE_SEP_DIR, "50100002*.xlsx")) + glob.glob(os.path.join(ARCHIVE_SEP_DIR, "*0928*.xlsx")) + glob.glob(os.path.join(REPORTS_DIR, "*0928*.xlsx"))
-        sep_dzl_files = glob.glob(os.path.join(ARCHIVE_SEP_DIR, "*DZL*.xlsx")) + glob.glob(os.path.join(ARCHIVE_SEP_DIR, "*dzl*.xlsx")) + glob.glob(os.path.join(REPORTS_DIR, "*DZL*Sep*.xlsx"))
-        sep_target_files = glob.glob(os.path.join(ARCHIVE_SEP_DIR, "*Target*.xlsx")) + glob.glob(os.path.join(REPORTS_DIR, "*Sep_Target*.xlsx")) + glob.glob(os.path.join(REPORTS_DIR, "*TY Sep*.xlsx"))
-        sep_ly_files = glob.glob(os.path.join(ARCHIVE_SEP_DIR, "*LY*.xlsx")) + glob.glob(os.path.join(REPORTS_DIR, "*LY*SEP*.xlsx"))
+        sep_sales_files = glob.glob(os.path.join(ARCHIVE_SEP_DIR, "50100002*.xlsx")) + glob.glob("50100002*.xlsx") + glob.glob(os.path.join(REPORTS_DIR, "*0928*.xlsx"))
+        sep_dzl_files = glob.glob(os.path.join(ARCHIVE_SEP_DIR, "*DZL*.xlsx")) + glob.glob("*DZL*.xlsx") + glob.glob(os.path.join(REPORTS_DIR, "*DZL*Sep*.xlsx"))
+        sep_target_files = glob.glob(os.path.join(ARCHIVE_SEP_DIR, "*Target*.xlsx")) + glob.glob("*Sep_Target*.xlsx") + glob.glob(os.path.join(REPORTS_DIR, "*TY Sep*.xlsx"))
+        sep_ly_files = glob.glob(os.path.join(ARCHIVE_SEP_DIR, "*LY*.xlsx")) + glob.glob("*LY*SEP*.xlsx")
 
         t_map = {}
         if sep_target_files:
@@ -249,13 +248,11 @@ def load_september_archive_data():
 
         if s_dfs:
             df_s = pd.concat(s_dfs, ignore_index=True)
-            
-            # استبعاد صارم لأعمدة الباركود والإيصالات والأرقام التسلسلية
             def is_valid_sales_col(c_name):
                 c_l = str(c_name).lower()
                 if any(bad in c_l for bad in ['no', 'id', 'num', 'code', 'barcode', 'receipt', 'order', 'date', 'time', 'qty', 'quantity']):
                     return False
-                return any(good in c_l for good in ['actual sales amount', 'actual amount', 'sales amount', 'actual_sales_amount', 'actual sales', 'amount'])
+                return any(good in c_l for good in ['actual sales amount', 'actual amount', 'sales amount', 'actual_sales_amount', 'actual sales', 'amount', 'sales', 'net'])
 
             sc = next((c for c in df_s.columns if is_valid_sales_col(c)), None)
             qc = next((c for c in df_s.columns if any(k in str(c).lower() for k in ['sales quantity', 'quantity', 'qty']) and not any(bad in str(c).lower() for bad in ['id', 'no', 'code'])), None)
@@ -311,7 +308,7 @@ def process_and_build():
     soh_map, sku_to_cat, df_soh_raw, wh_total_stock, wh_sku_soh, store_sku_soh = load_soh_data()
     sep_perf_list, sep_brand_totals = load_september_archive_data()
 
-    sales_candidates = glob.glob(os.path.join(REPORTS_DIR, "*.xlsx")) + glob.glob("*.xlsx")
+    sales_candidates = glob.glob(os.path.join(REPORTS_DIR, "*.xlsx")) + glob.glob("*.xlsx") + glob.glob("*.xlsx")
     mms_files = [f for f in sales_candidates if "50100002" in f and "ARCHIVE" not in f.upper()]
     dzl_files = [f for f in sales_candidates if "dzl" in f.lower() and "sales" in f.lower() and "ARCHIVE" not in f.upper()]
 
@@ -334,7 +331,7 @@ def process_and_build():
 
     df_clean = pd.concat(dfs, ignore_index=True) if dfs else pd.DataFrame()
     
-    col_sales_match = next((c for c in df_clean.columns if any(k in str(c).lower() for k in ['actual sales amount', 'actual amount', 'sales amount', 'amount']) and not any(bad in str(c).lower() for bad in ['no', 'id', 'num', 'code', 'barcode'])), None)
+    col_sales_match = next((c for c in df_clean.columns if any(k in str(c).lower() for k in ['actual sales amount', 'actual sales', 'actual amount', 'sales amount', 'amount', 'sales', 'net']) and not any(bad in str(c).lower() for bad in ['no', 'id', 'num', 'code', 'barcode'])), None)
     col_qty_match = next((c for c in df_clean.columns if any(k in str(c).lower() for k in ['sales quantity', 'quantity', 'qty', 'units']) and not any(bad in str(c).lower() for bad in ['id', 'no', 'code'])), None)
 
     if col_sales_match:
@@ -361,7 +358,7 @@ def process_and_build():
     df_clean['clean_sku'] = df_clean[item_col].apply(clean_sku_code)
     df_clean['clean_name'] = df_clean[name_col].fillna("Item").astype(str)
     
-    # عزل صارم لفئات دوزولو (الأحذية وإكسسوارات دوزولو فقط) عن فئات موموسو
+    # عزل صارم لفئات دوزولو (Shoes و DZL Accessories) عن موموسو
     def get_category_hierarchy(r):
         b_c = r['clean_sku']
         name_l = r['clean_name'].lower()
@@ -555,14 +552,15 @@ def process_and_build():
     # =========================================================================
     repl_data_list = []
     
-    # 1. أوامر توريد ومناقلات DZL للأحذية
-    dzl_shoes = dzl_only_shoes.copy()
-    if not dzl_shoes.empty:
-        sku_agg_dzl = dzl_shoes.groupby(['clean_code', 'clean_sku', 'clean_name'], as_index=False)['Sales Quantity'].sum()
-        for idx, r in sku_agg_dzl.head(30).iterrows():
+    # 1. أوامر توريد ومناقلات DZL للأحذية وإكسسوارات دوزولو
+    dzl_all_items = df_clean[df_clean['brand'] == 'DZL'].copy()
+    if not dzl_all_items.empty:
+        sku_agg_dzl = dzl_all_items.groupby(['clean_code', 'clean_sku', 'clean_name', 'main_category'], as_index=False)['Sales Quantity'].sum()
+        for idx, r in sku_agg_dzl.head(35).iterrows():
             st_c = r['clean_code']
             sku = r['clean_sku']
             name = r['clean_name']
+            cat = r['main_category']
             sold_qty = int(r['Sales Quantity'])
             st_info = STORE_MAPPING[st_c]
 
@@ -577,7 +575,6 @@ def process_and_build():
                 actual_qty = min(sugg_qty, wh_qty)
             else:
                 action_type = "Store Transfer (IST - Opportunity)"
-                # البحث عن متجر مانح يملك رصيداً
                 donor_candidates = []
                 for other_c in DZL_VALID_CODES:
                     if other_c != st_c:
@@ -588,7 +585,7 @@ def process_and_build():
                 donor_code = donor_candidates[0][0] if donor_candidates else [c for c in DZL_VALID_CODES if c != st_c][0]
                 donor_stock = donor_candidates[0][1] if donor_candidates else 0
                 donor_info = STORE_MAPPING[donor_code]
-                match_type = "🏙️ Same City" if donor_info['city'] == st_info['city'] else "🚛 Inter-City"
+                match_type = "🏙️️ Same City" if donor_info['city'] == st_info['city'] else "🚛 Inter-City"
 
                 source_route = f"{donor_info['full_name']} ({donor_code}) [{match_type}] [SOH: {donor_stock} Pcs]"
                 urgency = "🚨 Broken Size Recovery (IST)"
@@ -598,7 +595,7 @@ def process_and_build():
                 "brand": "DZL",
                 "action": action_type,
                 "store": f"{st_info['full_name']} ({st_c})",
-                "focus": f"👟 [SHOE] {name[:28]} (SKU: {sku})",
+                "focus": f"👟 [{cat}] {name[:28]} (SKU: {sku})",
                 "sold_qty": sold_qty,
                 "store_soh": st_soh,
                 "wh_soh": wh_qty,
@@ -630,7 +627,6 @@ def process_and_build():
                 actual_qty = min(sugg_qty, wh_qty)
             else:
                 action_type = "Store Transfer (IST - Opportunity)"
-                # البحث عن متجر MMS مانح
                 donor_candidates = []
                 for other_c in MMS_VALID_CODES:
                     if other_c != st_c:
@@ -669,6 +665,7 @@ def process_and_build():
     mms_low500 = mms_only.tail(500).sort_values(by='units', ascending=True).to_dict(orient='records')
 
     # قوائم DZL Top/Low 20 Shoes لكل متجر
+    dzl_shoes = df_clean[(df_clean['brand'] == 'DZL') & (df_clean['main_category'] == 'Shoes')].copy()
     dzl_store_movers = {}
     for st_c in ["ALL"] + list(DZL_VALID_CODES):
         st_sub = dzl_shoes if st_c == "ALL" else dzl_shoes[dzl_shoes['clean_code'] == st_c]
@@ -1005,7 +1002,7 @@ def process_and_build():
     </div>
 </div>
 
-<!-- 4. Commercial Action Hub (مع أعمدة المخزون والمبيعات الكاملة) -->
+<!-- 4. Commercial Action Hub -->
 <div id="view-action" style="display:none;">
     <div class="table-wrap" style="margin-bottom:24px;">
         <div class="table-header">
@@ -1089,13 +1086,18 @@ def process_and_build():
   let businessBrand = 'MMS';
   let istFilterBrand = 'ALL';
 
-  const OCT_BRAND_TOTALS = {safe_json(brand_totals)};
-  const SEP_BRAND_TOTALS = {safe_json(sep_totals_dict)};
-  const OCT_STORE_META = {safe_json(store_meta_map)};
-  const SEP_STORE_META = {safe_json(sep_meta_dict)};
-  
-  let currentStoreMeta = OCT_STORE_META;
-  let currentBrandTotals = OCT_BRAND_TOTALS;
+  const BRAND_TOTALS_BY_MONTH = {{
+    "OCT": {safe_json(brand_totals)},
+    "SEP": {safe_json(sep_brand_totals)}
+  }};
+
+  const STORE_META_BY_MONTH = {{
+    "OCT": {safe_json(store_meta_map)},
+    "SEP": {safe_json(sep_meta_dict)}
+  }};
+
+  let currentBrandTotals = BRAND_TOTALS_BY_MONTH["OCT"];
+  let currentStoreMeta = STORE_META_BY_MONTH["OCT"];
 
   const STORE_CATS = {safe_json(store_cat_details)};
   const MMS_TOP500 = {safe_json(mms_top500)};
@@ -1114,6 +1116,7 @@ def process_and_build():
   let genderChart = null;
 
   document.addEventListener("DOMContentLoaded", function() {{
+    try {{ updateKPICards('ALL'); }} catch(e) {{ console.error(e); }}
     try {{ renderRegionTables(); }} catch(e) {{ console.error(e); }}
     try {{ renderDrillDown(); }} catch(e) {{ console.error(e); }}
     try {{ renderDZLMovers(); }} catch(e) {{ console.error(e); }}
