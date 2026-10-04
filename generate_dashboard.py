@@ -6,10 +6,11 @@ import html
 import pandas as pd
 import numpy as np
 
-# تحديد مسار البحث بمرونة لتفادي أي خطأ في المجلدات
+# تحديد مسارات البحث بمرونة لدعم المجلد الرئيسي ومجلد reports
 REPORTS_DIR = "./reports" if os.path.exists("./reports") else "."
 ARCHIVE_SEP_DIR = os.path.join(REPORTS_DIR, "Archive_Sep")
 
+# خريطة المتاجر المعتمدة (17 متجر MMS + 4 متاجر DZL)
 STORE_MAPPING = {
     # Central & Eastern Region (Sultan - 10 MMS + 3 DZL)
     "K108": {"full_name": "MMS Riyadh Solitaire", "region": "Central & Eastern Region", "manager": "Sultan", "city": "Riyadh", "brand": "MMS"},
@@ -80,7 +81,7 @@ def classify_shoe_gender_by_size(name, spec=""):
     return 'Women'
 
 def load_october_phasing():
-    phasing_files = glob.glob(os.path.join(REPORTS_DIR, "*Phasing*.xlsx")) + glob.glob("*Phasing*.xlsx") + glob.glob("*Phasing*.xlsx")
+    phasing_files = glob.glob(os.path.join(REPORTS_DIR, "*Phasing*.xlsx")) + glob.glob("*Phasing*.xlsx")
     if not phasing_files: return {}, {}, {}
     oct_targets, oct_mtd_targets, oct_today_targets = {}, {}, {}
     try:
@@ -152,7 +153,7 @@ def load_ly_sales_data(target_date_str="2026-10-03"):
         return {}, {}
 
 def load_soh_data():
-    soh_files = glob.glob(os.path.join(REPORTS_DIR, "*SOH*.xlsx")) + glob.glob("*SOH*.xlsx") + glob.glob("*SOH*.xlsx")
+    soh_files = glob.glob(os.path.join(REPORTS_DIR, "*SOH*.xlsx")) + glob.glob("*SOH*.xlsx")
     if not soh_files: return {}, {}, pd.DataFrame(), 0, {}, {}
     soh_store_summary, sku_to_cat_map = {}, {}
     wh_sku_soh = {}
@@ -207,6 +208,37 @@ def load_soh_data():
         print(f"[!] SOH Load Exception: {e}")
         return {}, {}, pd.DataFrame(), 0, {}, {}
 
+# دالة استخراج العمود المالي الموثوق حصراً (Sanity Financial Guard)
+def extract_true_sales_column(df):
+    exact_candidates = ['Actual Sales Amount', 'actual sales amount', 'Sales Amount', 'sales amount', 'Actual Amount', 'Gross Sales', 'G-Sale']
+    for cand in exact_candidates:
+        matched = [c for c in df.columns if str(c).strip().lower() == cand.lower()]
+        if matched:
+            vals = pd.to_numeric(df[matched[0]], errors='coerce').fillna(0)
+            if vals.abs().max() < 1000000 and vals.sum() > 0:
+                return matched[0]
+
+    for c in df.columns:
+        c_l = str(c).lower()
+        if any(bad in c_l for bad in ['no', 'id', 'num', 'code', 'barcode', 'serial', 'receipt', 'order', 'doc', 'seq', 'time', 'date', 'sn']):
+            continue
+        if any(good in c_l for good in ['actual sales', 'sales amount', 'actual amount', 'sales val', 'amount']):
+            vals = pd.to_numeric(df[c], errors='coerce').fillna(0)
+            if vals.abs().max() < 1000000 and vals.sum() > 0:
+                return c
+    return None
+
+def extract_true_qty_column(df):
+    for c in df.columns:
+        c_l = str(c).lower()
+        if any(bad in c_l for bad in ['no', 'id', 'num', 'code', 'barcode', 'serial', 'price', 'amount']):
+            continue
+        if any(good in c_l for good in ['sales quantity', 'quantity', 'sales qty', 'qty', 'units']):
+            vals = pd.to_numeric(df[c], errors='coerce').fillna(0)
+            if vals.abs().max() < 100000:
+                return c
+    return None
+
 def load_september_archive_data():
     sep_perf_list = []
     sep_totals = {}
@@ -248,21 +280,15 @@ def load_september_archive_data():
 
         if s_dfs:
             df_s = pd.concat(s_dfs, ignore_index=True)
-            def is_valid_sales_col(c_name):
-                c_l = str(c_name).lower()
-                if any(bad in c_l for bad in ['no', 'id', 'num', 'code', 'barcode', 'receipt', 'order', 'date', 'time', 'qty', 'quantity']):
-                    return False
-                return any(good in c_l for good in ['actual sales amount', 'actual amount', 'sales amount', 'actual_sales_amount', 'actual sales', 'amount', 'sales', 'net'])
-
-            sc = next((c for c in df_s.columns if is_valid_sales_col(c)), None)
-            qc = next((c for c in df_s.columns if any(k in str(c).lower() for k in ['sales quantity', 'quantity', 'qty']) and not any(bad in str(c).lower() for bad in ['id', 'no', 'code'])), None)
+            sc = extract_true_sales_column(df_s)
+            qc = extract_true_qty_column(df_s)
             oc = next((c for c in df_s.columns if any(k in str(c).lower() for k in ['org code', 'store code', 'organization code', 'shop code'])), df_s.columns[0])
             tc = next((c for c in df_s.columns if 'receipt' in str(c).lower()), oc)
 
             df_s['clean_code'] = df_s[oc].apply(clean_store_code_str)
             df_s['sales_amt'] = pd.to_numeric(df_s[sc], errors='coerce').fillna(0) if sc else 0
             df_s['qty_amt'] = pd.to_numeric(df_s[qc], errors='coerce').fillna(0) if qc else 0
-            df_s = df_s[(df_s['sales_amt'] > 0) & (df_s['clean_code'].isin(ALL_VALID_CODES))].copy()
+            df_s = df_s[(df_s['sales_amt'] > 0) & (df_s['sales_amt'] < 500000) & (df_s['clean_code'].isin(ALL_VALID_CODES))].copy()
 
             for code, info in STORE_MAPPING.items():
                 st_d = df_s[df_s['clean_code'] == code]
@@ -308,7 +334,7 @@ def process_and_build():
     soh_map, sku_to_cat, df_soh_raw, wh_total_stock, wh_sku_soh, store_sku_soh = load_soh_data()
     sep_perf_list, sep_brand_totals = load_september_archive_data()
 
-    sales_candidates = glob.glob(os.path.join(REPORTS_DIR, "*.xlsx")) + glob.glob("*.xlsx") + glob.glob("*.xlsx")
+    sales_candidates = glob.glob(os.path.join(REPORTS_DIR, "*.xlsx")) + glob.glob("*.xlsx")
     mms_files = [f for f in sales_candidates if "50100002" in f and "ARCHIVE" not in f.upper()]
     dzl_files = [f for f in sales_candidates if "dzl" in f.lower() and "sales" in f.lower() and "ARCHIVE" not in f.upper()]
 
@@ -331,8 +357,8 @@ def process_and_build():
 
     df_clean = pd.concat(dfs, ignore_index=True) if dfs else pd.DataFrame()
     
-    col_sales_match = next((c for c in df_clean.columns if any(k in str(c).lower() for k in ['actual sales amount', 'actual sales', 'actual amount', 'sales amount', 'amount', 'sales', 'net']) and not any(bad in str(c).lower() for bad in ['no', 'id', 'num', 'code', 'barcode'])), None)
-    col_qty_match = next((c for c in df_clean.columns if any(k in str(c).lower() for k in ['sales quantity', 'quantity', 'qty', 'units']) and not any(bad in str(c).lower() for bad in ['id', 'no', 'code'])), None)
+    col_sales_match = extract_true_sales_column(df_clean)
+    col_qty_match = extract_true_qty_column(df_clean)
 
     if col_sales_match:
         df_clean['Actual Sales Amount'] = pd.to_numeric(df_clean[col_sales_match], errors='coerce').fillna(0)
@@ -367,7 +393,7 @@ def process_and_build():
                 return "Shoes", "Footwear Styles", r['clean_name'][:25]
             return "DZL Accessories", "Shoe Care & Acc", r['clean_name'][:25]
         
-        # MUMUSO EXCLUSIVE CATEGORIES - لا وجود للأحذية نهائياً في موموسو
+        # MUMUSO EXCLUSIVE CATEGORIES
         raw_c = str(r[cat_col]).strip() if cat_col and pd.notna(r[cat_col]) else sku_to_cat.get(b_c, "")
         raw_c_l = raw_c.lower()
 
@@ -400,7 +426,9 @@ def process_and_build():
     df_clean['sub_sub_category'] = [h[2] for h in hier_res]
     df_clean['gender'] = df_clean.apply(lambda r: classify_shoe_gender_by_size(r['clean_name']), axis=1)
 
-    df_clean = df_clean[(df_clean['Actual Sales Amount'] > 0) & (df_clean['Sales Quantity'] > 0)].copy()
+    # Sanity guard: تصفية السجلات السليمة مالياً
+    df_clean = df_clean[(df_clean['Actual Sales Amount'] > 0) & (df_clean['Actual Sales Amount'] < 500000)].copy()
+    df_clean = df_clean[(df_clean['Sales Quantity'] > 0) & (df_clean['Sales Quantity'] < 10000)].copy()
     for kw in EXCLUDED_KEYWORDS:
         df_clean = df_clean[~df_clean['clean_name'].str.lower().str.contains(kw, regex=False)]
 
@@ -585,7 +613,7 @@ def process_and_build():
                 donor_code = donor_candidates[0][0] if donor_candidates else [c for c in DZL_VALID_CODES if c != st_c][0]
                 donor_stock = donor_candidates[0][1] if donor_candidates else 0
                 donor_info = STORE_MAPPING[donor_code]
-                match_type = "🏙️️ Same City" if donor_info['city'] == st_info['city'] else "🚛 Inter-City"
+                match_type = "🏙️ Same City" if donor_info['city'] == st_info['city'] else "🚛 Inter-City"
 
                 source_route = f"{donor_info['full_name']} ({donor_code}) [{match_type}] [SOH: {donor_stock} Pcs]"
                 urgency = "🚨 Broken Size Recovery (IST)"
@@ -1597,12 +1625,12 @@ def process_and_build():
     try {{
       activeMonth = m;
       if (m === "SEP") {{
-        currentBrandTotals = SEP_BRAND_TOTALS;
-        currentStoreMeta = SEP_STORE_META;
+        currentBrandTotals = BRAND_TOTALS_BY_MONTH["SEP"];
+        currentStoreMeta = STORE_META_BY_MONTH["SEP"];
         document.getElementById("headerSubtitle").innerText = "September 2026 Full Monthly Performance & Benchmarking (Archived)";
       }} else {{
-        currentBrandTotals = OCT_BRAND_TOTALS;
-        currentStoreMeta = OCT_STORE_META;
+        currentBrandTotals = BRAND_TOTALS_BY_MONTH["OCT"];
+        currentStoreMeta = STORE_META_BY_MONTH["OCT"];
         document.getElementById("headerSubtitle").innerText = "October 2026 Daily Phasing & Commercial Performance Tracking";
       }}
 
