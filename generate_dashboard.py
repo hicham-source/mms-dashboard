@@ -6,11 +6,9 @@ import html
 import pandas as pd
 import numpy as np
 
-# تحديد مسارات البحث بمرونة لدعم المجلد الرئيسي ومجلد reports
 REPORTS_DIR = "./reports" if os.path.exists("./reports") else "."
 ARCHIVE_SEP_DIR = os.path.join(REPORTS_DIR, "Archive_Sep")
 
-# خريطة المتاجر المعتمدة (17 متجر MMS + 4 متاجر DZL)
 STORE_MAPPING = {
     # Central & Eastern Region (Sultan - 10 MMS + 3 DZL)
     "K108": {"full_name": "MMS Riyadh Solitaire", "region": "Central & Eastern Region", "manager": "Sultan", "city": "Riyadh", "brand": "MMS"},
@@ -208,7 +206,6 @@ def load_soh_data():
         print(f"[!] SOH Load Exception: {e}")
         return {}, {}, pd.DataFrame(), 0, {}, {}
 
-# دالة استخراج العمود المالي الموثوق حصراً (Sanity Financial Guard)
 def extract_true_sales_column(df):
     exact_candidates = ['Actual Sales Amount', 'actual sales amount', 'Sales Amount', 'sales amount', 'Actual Amount', 'Gross Sales', 'G-Sale']
     for cand in exact_candidates:
@@ -791,49 +788,6 @@ def process_and_build():
 </head>
 <body>
 
-<div id="auth-overlay" style="position:fixed;top:0;left:0;width:100%;height:100%;background:#090d16;z-index:99999999;display:flex;align-items:center;justify-content:center;">
-  <div style="background:#131b2e;padding:32px;border-radius:12px;text-align:center;width:90%;max-width:380px;border:1px solid #1e293b;">
-    <h3 style="color:#fff;margin:0 0 8px 0;font-size:20px;">🔒 Executive Secure Access</h3>
-    <p style="color:#94a3b8;font-size:13px;margin:0 0 20px 0;">Enter authorization PIN to unlock dashboard</p>
-    <input type="password" id="access-pass" placeholder="PIN Code" style="width:100%;padding:12px;border-radius:6px;border:1px solid #334155;background:#090d16;color:#fff;font-size:16px;text-align:center;outline:none;margin-bottom:14px;">
-    <button onclick="checkAccess()" style="width:100%;padding:12px;border-radius:6px;border:none;background:#2563eb;color:#fff;font-weight:700;font-size:15px;cursor:pointer;">Unlock Dashboard</button>
-    <p id="error-msg" style="color:#ef4444;font-size:13px;margin:12px 0 0 0;display:none;">Invalid authorization credentials</p>
-  </div>
-</div>
-
-<script>
-  const USER_ROLES = {{
-    "MMS2026": {{ role: "ADMIN", name: "Executive & Merchandising (Full Access)", region: "ALL" }},
-    "SULTAN2026": {{ role: "AREA_MGR", name: "Sultan", region: "Central & Eastern Region" }},
-    "RAJIB2026": {{ role: "AREA_MGR", name: "Rajib", region: "Western, Southern & Northern Region" }}
-  }};
-
-  function checkAccess() {{
-    var val = document.getElementById("access-pass").value.trim().toUpperCase();
-    var user = USER_ROLES[val];
-    if (user) {{
-      sessionStorage.setItem("mms_user", JSON.stringify(user));
-      document.getElementById("auth-overlay").style.display = "none";
-      document.getElementById("current-user-badge").innerHTML = "👤 " + user.name;
-    }} else {{
-      document.getElementById("error-msg").style.display = "block";
-    }}
-  }}
-
-  function logout() {{ sessionStorage.removeItem("mms_user"); location.reload(); }}
-
-  document.addEventListener("DOMContentLoaded", function() {{
-    var u = sessionStorage.getItem("mms_user");
-    if (u) {{
-      document.getElementById("auth-overlay").style.display = "none";
-      document.getElementById("current-user-badge").innerHTML = "👤 " + JSON.parse(u).name;
-    }}
-    document.getElementById("access-pass").addEventListener("keypress", function(e) {{
-      if (e.key === "Enter") checkAccess();
-    }});
-  }});
-</script>
-
 <div id="store-modal" class="app-modal">
   <div class="modal-content">
     <div class="modal-header">
@@ -877,8 +831,8 @@ def process_and_build():
             <button class="brand-btn" id="btn-MMS" onclick="switchBrand('MMS')">🔴 MUMUSO (17)</button>
             <button class="brand-btn" id="btn-DZL" onclick="switchBrand('DZL')">🟡 DZL (4)</button>
         </div>
-        <span id="current-user-badge" style="font-size:13px; font-weight:700; color:#38bdf8; background:#1e293b; padding:8px 14px; border-radius:8px;">👤 Authenticating..</span>
-        <button onclick="logout()" style="background:#ef444422; border:1px solid #ef444455; color:#ef4444; padding:8px 14px; border-radius:8px; font-weight:700; cursor:pointer;">Logout</button>
+        <span id="current-user-badge" style="font-size:13px; font-weight:700; color:#38bdf8; background:#1e293b; padding:8px 14px; border-radius:8px;">👤 Hicham Darazi (Admin)</span>
+        <button onclick="location.reload()" style="background:#ef444422; border:1px solid #ef444455; color:#ef4444; padding:8px 14px; border-radius:8px; font-weight:700; cursor:pointer;">Refresh</button>
     </div>
 </div>
 
@@ -1625,12 +1579,12 @@ def process_and_build():
     try {{
       activeMonth = m;
       if (m === "SEP") {{
-        currentBrandTotals = BRAND_TOTALS_BY_MONTH["SEP"];
-        currentStoreMeta = STORE_META_BY_MONTH["SEP"];
+        currentBrandTotals = SEP_BRAND_TOTALS;
+        currentStoreMeta = SEP_STORE_META;
         document.getElementById("headerSubtitle").innerText = "September 2026 Full Monthly Performance & Benchmarking (Archived)";
       }} else {{
-        currentBrandTotals = BRAND_TOTALS_BY_MONTH["OCT"];
-        currentStoreMeta = STORE_META_BY_MONTH["OCT"];
+        currentBrandTotals = OCT_BRAND_TOTALS;
+        currentStoreMeta = OCT_STORE_META;
         document.getElementById("headerSubtitle").innerText = "October 2026 Daily Phasing & Commercial Performance Tracking";
       }}
 
@@ -1676,7 +1630,7 @@ def process_and_build():
     with open(out_file, "w", encoding="utf-8") as f:
         f.write(template_html)
 
-    print(f"[✓] Dashboard generated successfully: {out_file}")
+    print(f"[✓] Dashboard generated successfully without login lock: {out_file}")
 
 if __name__ == "__main__":
     process_and_build()
