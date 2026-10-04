@@ -6,9 +6,11 @@ import html
 import pandas as pd
 import numpy as np
 
+# تحديد مسارات البحث بمرونة لدعم المجلد الرئيسي ومجلد reports
 REPORTS_DIR = "./reports" if os.path.exists("./reports") else "."
 ARCHIVE_SEP_DIR = os.path.join(REPORTS_DIR, "Archive_Sep")
 
+# خريطة المتاجر المعتمدة (17 متجر MMS + 4 متاجر DZL)
 STORE_MAPPING = {
     # Central & Eastern Region (Sultan - 10 MMS + 3 DZL)
     "K108": {"full_name": "MMS Riyadh Solitaire", "region": "Central & Eastern Region", "manager": "Sultan", "city": "Riyadh", "brand": "MMS"},
@@ -42,12 +44,15 @@ ALL_VALID_CODES = set(STORE_MAPPING.keys())
 
 EXCLUDED_KEYWORDS = [
     'gwp', 'shopping bag', 'carrier bag', 'plastic bag', 'paper bag',
-    'gift with purchase', 'non-sale', 'packaging', 'free gift', 'material',
-    'stationery', 'basketball', 'football', 'm&g'
+    'gift with purchase', 'non-sale', 'packaging', 'free gift', 'material'
 ]
 
+def sanitize_text(val):
+    if pd.isna(val): return ""
+    return str(val).replace('\u200c', '').replace('\ufeff', '').replace('\xa0', ' ').strip()
+
 def clean_store_code_str(val):
-    s = str(val).strip().upper()
+    s = sanitize_text(val).upper()
     if s.endswith('.0'): s = s[:-2]
     if "DZL107" in s or "RIYADH PARK(DZL)" in s or ("107" in s and "DZL" in s): return "K107"
     if "DZL104" in s or "UWALK(DZL)" in s or ("104" in s and "DZL" in s) or "K104" in s: return "K104"
@@ -59,7 +64,7 @@ def clean_store_code_str(val):
     return s
 
 def clean_sku_code(val):
-    s = str(val).strip()
+    s = sanitize_text(val)
     if s.endswith('.0'): s = s[:-2]
     return s
 
@@ -78,6 +83,30 @@ def classify_shoe_gender_by_size(name, spec=""):
     if any(k in s for k in [' MAN ', ' MEN ', ' MENS ', ' MALE ']): return 'Men'
     return 'Women'
 
+def read_pos_excel(filepath):
+    """قراءة احترافية تنظف العناوين من الرموز المخفية وتتعامل مع صفوف الملخص ورؤوس الجداول"""
+    if not os.path.exists(filepath):
+        return pd.DataFrame()
+    try:
+        df_raw = pd.read_excel(filepath, sheet_name=0)
+        # فحص هل رأس الجدول في السطر 0 أو السطر 1
+        first_row = [sanitize_text(c) for c in df_raw.iloc[0].values] if len(df_raw) > 0 else []
+        col_names = [sanitize_text(c) for c in df_raw.columns]
+
+        if any('organization code' in c.lower() for c in first_row):
+            df_clean = df_raw.iloc[1:].copy()
+            df_clean.columns = first_row
+        else:
+            df_clean = df_raw.copy()
+            df_clean.columns = col_names
+
+        # تنظيف أسماء الأعمدة مجدداً
+        df_clean.columns = [sanitize_text(c) for c in df_clean.columns]
+        return df_clean
+    except Exception as e:
+        print(f"[!] Error reading POS file {filepath}: {e}")
+        return pd.DataFrame()
+
 def load_october_phasing():
     phasing_files = glob.glob(os.path.join(REPORTS_DIR, "*Phasing*.xlsx")) + glob.glob("*Phasing*.xlsx")
     if not phasing_files: return {}, {}, {}
@@ -89,7 +118,7 @@ def load_october_phasing():
 
         col_store_map = {}
         for c_idx in range(4, len(row_stores) - 1):
-            h_text = str(row_stores[c_idx]).replace('\n', ' ').strip()
+            h_text = sanitize_text(row_stores[c_idx]).replace('\n', ' ')
             c_code = clean_store_code_str(h_text)
             col_store_map[c_idx] = c_code
             full_t = row_target[c_idx]
@@ -158,19 +187,12 @@ def load_soh_data():
     store_sku_soh = {}
     wh_total_stock = 0
     try:
-        soh_path = soh_files[0]
-        xl = pd.ExcelFile(soh_path)
-        sheet_to_use = "Sheet1" if "Sheet1" in xl.sheet_names else xl.sheet_names[0]
-        
-        df_soh = pd.read_excel(soh_path, sheet_name=sheet_to_use, skiprows=1)
-        df_soh.columns = [str(c).replace('\u200c', '').replace('\ufeff', '').strip() for c in df_soh.columns]
-        if not any(k in str(c).lower() for k in ["avail_stock", "current_stock", "stock", "qty"] for c in df_soh.columns):
-            df_soh = pd.read_excel(soh_path, sheet_name=sheet_to_use)
-            df_soh.columns = [str(c).replace('\u200c', '').replace('\ufeff', '').strip() for c in df_soh.columns]
+        df_soh = read_pos_excel(soh_files[0])
+        if df_soh.empty: return {}, {}, pd.DataFrame(), 0, {}, {}
 
-        code_col = next((c for c in df_soh.columns if any(k in str(c).lower() for k in ["org code", "store code", "organization", "org_code", "shop code"])), None)
-        stock_col = next((c for c in df_soh.columns if any(k in str(c).lower() for k in ["avail_stock", "current_stock", "stock", "qty", "quantity"])), None)
-        barcode_col = next((c for c in df_soh.columns if any(k in str(c).lower() for k in ["barcode", "bar code", "upc", "sku", "item code"])), None)
+        code_col = next((c for c in df_soh.columns if any(k in c.lower() for k in ["org code", "store code", "organization", "shop code"])), None)
+        stock_col = next((c for c in df_soh.columns if any(k in c.lower() for k in ["avail_stock", "current_stock", "stock", "qty", "quantity"])), None)
+        barcode_col = next((c for c in df_soh.columns if any(k in c.lower() for k in ["barcode", "bar code", "upc", "sku", "item code"])), None)
         cat_col = next((c for c in df_soh.columns if str(c).lower() in ["category", "cat", "product_category"]), None)
 
         if not code_col or not stock_col: 
@@ -183,7 +205,7 @@ def load_soh_data():
             df_soh['clean_barcode'] = df_soh[barcode_col].apply(clean_sku_code)
             if cat_col:
                 for _, r in df_soh[[barcode_col, cat_col]].dropna().drop_duplicates().iterrows():
-                    sku_to_cat_map[clean_sku_code(r[barcode_col])] = str(r[cat_col]).strip()
+                    sku_to_cat_map[clean_sku_code(r[barcode_col])] = sanitize_text(r[cat_col])
 
             for _, r in df_soh.iterrows():
                 b_code = r['clean_barcode']
@@ -207,33 +229,31 @@ def load_soh_data():
         return {}, {}, pd.DataFrame(), 0, {}, {}
 
 def extract_true_sales_column(df):
-    exact_candidates = ['Actual Sales Amount', 'actual sales amount', 'Sales Amount', 'sales amount', 'Actual Amount', 'Gross Sales', 'G-Sale']
-    for cand in exact_candidates:
-        matched = [c for c in df.columns if str(c).strip().lower() == cand.lower()]
-        if matched:
-            vals = pd.to_numeric(df[matched[0]], errors='coerce').fillna(0)
-            if vals.abs().max() < 1000000 and vals.sum() > 0:
-                return matched[0]
-
     for c in df.columns:
-        c_l = str(c).lower()
-        if any(bad in c_l for bad in ['no', 'id', 'num', 'code', 'barcode', 'serial', 'receipt', 'order', 'doc', 'seq', 'time', 'date', 'sn']):
+        c_l = sanitize_text(c).lower()
+        if c_l == 'actual sales amount': return c
+    for c in df.columns:
+        c_l = sanitize_text(c).lower()
+        if any(bad in c_l for bad in ['no', 'id', 'num', 'code', 'barcode', 'serial', 'receipt', 'order', 'doc', 'seq', 'time', 'date', 'sn', 'tax', 'discount', 'selling price']):
             continue
-        if any(good in c_l for good in ['actual sales', 'sales amount', 'actual amount', 'sales val', 'amount']):
-            vals = pd.to_numeric(df[c], errors='coerce').fillna(0)
-            if vals.abs().max() < 1000000 and vals.sum() > 0:
-                return c
+        if any(good in c_l for good in ['actual sales amount', 'sales amount', 'actual amount', 'gross sales', 'g-sale']):
+            return c
+    for c in df.columns:
+        c_l = sanitize_text(c).lower()
+        if 'amount' in c_l and not any(bad in c_l for bad in ['tax', 'discount', 'price']):
+            return c
     return None
 
 def extract_true_qty_column(df):
     for c in df.columns:
-        c_l = str(c).lower()
-        if any(bad in c_l for bad in ['no', 'id', 'num', 'code', 'barcode', 'serial', 'price', 'amount']):
+        c_l = sanitize_text(c).lower()
+        if c_l == 'sales quantity': return c
+    for c in df.columns:
+        c_l = sanitize_text(c).lower()
+        if any(bad in c_l for bad in ['no', 'id', 'num', 'code', 'barcode', 'serial', 'price', 'amount', 'tax']):
             continue
         if any(good in c_l for good in ['sales quantity', 'quantity', 'sales qty', 'qty', 'units']):
-            vals = pd.to_numeric(df[c], errors='coerce').fillna(0)
-            if vals.abs().max() < 100000:
-                return c
+            return c
     return None
 
 def load_september_archive_data():
@@ -247,9 +267,9 @@ def load_september_archive_data():
 
         t_map = {}
         if sep_target_files:
-            df_t = pd.read_excel(sep_target_files[0])
-            st_col = next((c for c in df_t.columns if any(k in str(c).lower() for k in ["profit", "cost", "store", "code"])), df_t.columns[0])
-            tg_col = next((c for c in df_t.columns if any(k in str(c).lower() for k in ["target", "sep", "val"])), df_t.columns[-1])
+            df_t = read_pos_excel(sep_target_files[0])
+            st_col = next((c for c in df_t.columns if any(k in c.lower() for k in ["profit", "cost", "store", "code"])), df_t.columns[0])
+            tg_col = next((c for c in df_t.columns if any(k in c.lower() for k in ["target", "sep", "val"])), df_t.columns[-1])
             for _, r in df_t.iterrows():
                 c_c = clean_store_code_str(r[st_col])
                 v = pd.to_numeric(str(r[tg_col]).replace(",", ""), errors='coerce')
@@ -266,12 +286,11 @@ def load_september_archive_data():
 
         s_dfs = []
         if sep_sales_files:
-            dm = pd.read_excel(sep_sales_files[0], skiprows=1).iloc[:-1]
+            dm = read_pos_excel(sep_sales_files[0])
             dm['brand_origin'] = 'MMS'
             s_dfs.append(dm)
         if sep_dzl_files:
-            dd = pd.read_excel(sep_dzl_files[0])
-            if not any("org" in str(c).lower() for c in dd.columns): dd = pd.read_excel(sep_dzl_files[0], skiprows=1)
+            dd = read_pos_excel(sep_dzl_files[0])
             dd['brand_origin'] = 'DZL'
             s_dfs.append(dd)
 
@@ -279,8 +298,8 @@ def load_september_archive_data():
             df_s = pd.concat(s_dfs, ignore_index=True)
             sc = extract_true_sales_column(df_s)
             qc = extract_true_qty_column(df_s)
-            oc = next((c for c in df_s.columns if any(k in str(c).lower() for k in ['org code', 'store code', 'organization code', 'shop code'])), df_s.columns[0])
-            tc = next((c for c in df_s.columns if 'receipt' in str(c).lower()), oc)
+            oc = next((c for c in df_s.columns if any(k in c.lower() for k in ['org code', 'store code', 'organization code', 'shop code'])), df_s.columns[0])
+            tc = next((c for c in df_s.columns if 'receipt' in c.lower()), oc)
 
             df_s['clean_code'] = df_s[oc].apply(clean_store_code_str)
             df_s['sales_amt'] = pd.to_numeric(df_s[sc], errors='coerce').fillna(0) if sc else 0
@@ -331,26 +350,23 @@ def process_and_build():
     soh_map, sku_to_cat, df_soh_raw, wh_total_stock, wh_sku_soh, store_sku_soh = load_soh_data()
     sep_perf_list, sep_brand_totals = load_september_archive_data()
 
+    # جلب ملفات المبيعات الحالية
     sales_candidates = glob.glob(os.path.join(REPORTS_DIR, "*.xlsx")) + glob.glob("*.xlsx")
     mms_files = [f for f in sales_candidates if "50100002" in f and "ARCHIVE" not in f.upper()]
     dzl_files = [f for f in sales_candidates if "dzl" in f.lower() and "sales" in f.lower() and "ARCHIVE" not in f.upper()]
 
     dfs = []
     if mms_files:
-        df_m = pd.read_excel(mms_files[0], skiprows=1).iloc[:-1].copy()
-        df_m.columns = [str(c).strip() for c in df_m.columns]
+        df_m = read_pos_excel(mms_files[0])
+        # استبعاد سطر المجموع الكلي إذا وجد
+        df_m = df_m[df_m.iloc[:, 0].astype(str).str.strip().str.upper().isin(ALL_VALID_CODES)].copy()
         df_m['brand_origin'] = "MMS"
         dfs.append(df_m)
 
     if dzl_files:
-        try:
-            df_d = pd.read_excel(dzl_files[0])
-            if not any("org" in str(c).lower() for c in df_d.columns):
-                df_d = pd.read_excel(dzl_files[0], skiprows=1)
-            df_d.columns = [str(c).strip() for c in df_d.columns]
-            df_d['brand_origin'] = "DZL"
-            dfs.append(df_d)
-        except Exception: pass
+        df_d = read_pos_excel(dzl_files[0])
+        df_d['brand_origin'] = "DZL"
+        dfs.append(df_d)
 
     df_clean = pd.concat(dfs, ignore_index=True) if dfs else pd.DataFrame()
     
@@ -367,13 +383,12 @@ def process_and_build():
     else:
         df_clean['Sales Quantity'] = 0
 
-    org_col = next((c for c in df_clean.columns if any(k in str(c).lower() for k in ['organization code', 'org code', 'store code', 'shop code'])), df_clean.columns[0])
-    item_col = next((c for c in df_clean.columns if any(k in str(c).lower() for k in ['product code', 'item code', 'barcode'])), df_clean.columns[0])
-    name_col = next((c for c in df_clean.columns if any(k in str(c).lower() for k in ['product name', 'item name'])), item_col)
-    txn_col = next((c for c in df_clean.columns if 'receipt' in str(c).lower()), item_col)
-    cat_col = next((c for c in df_clean.columns if str(c).lower() in ['category name', 'category', 'product category', 'main_category']), None)
-    subcat_col = next((c for c in df_clean.columns if any(k in str(c).lower() for k in ['sub-category', 'sub category', 'sub_category', 'subcat'])), None)
-    subsub_col = next((c for c in df_clean.columns if any(k in str(c).lower() for k in ['sub-sub', 'sub sub', 'item class', 'class'])), None)
+    org_col = next((c for c in df_clean.columns if any(k in c.lower() for k in ['organization code', 'org code', 'store code', 'shop code'])), df_clean.columns[0])
+    item_col = next((c for c in df_clean.columns if any(k in c.lower() for k in ['item code', 'product code', 'barcode'])), df_clean.columns[0])
+    name_col = next((c for c in df_clean.columns if any(k in c.lower() for k in ['item name', 'product name'])), item_col)
+    txn_col = next((c for c in df_clean.columns if 'receipt' in c.lower()), item_col)
+    cat_col = next((c for c in df_clean.columns if any(k in c.lower() for k in ['product_category', 'category name', 'category'])), None)
+    subcat_col = next((c for c in df_clean.columns if any(k in c.lower() for k in ['category name', 'sub-category', 'sub category'])), None)
 
     df_clean['clean_code'] = df_clean[org_col].apply(clean_store_code_str)
     df_clean = df_clean[df_clean['clean_code'].isin(ALL_VALID_CODES)].copy()
@@ -381,7 +396,7 @@ def process_and_build():
     df_clean['clean_sku'] = df_clean[item_col].apply(clean_sku_code)
     df_clean['clean_name'] = df_clean[name_col].fillna("Item").astype(str)
     
-    # عزل صارم لفئات دوزولو (Shoes و DZL Accessories) عن موموسو
+    # عزل صارم لفئات دوزولو (Shoes و Accessories) عن فئات موموسو
     def get_category_hierarchy(r):
         b_c = r['clean_sku']
         name_l = r['clean_name'].lower()
@@ -391,7 +406,7 @@ def process_and_build():
             return "DZL Accessories", "Shoe Care & Acc", r['clean_name'][:25]
         
         # MUMUSO EXCLUSIVE CATEGORIES
-        raw_c = str(r[cat_col]).strip() if cat_col and pd.notna(r[cat_col]) else sku_to_cat.get(b_c, "")
+        raw_c = sanitize_text(r[cat_col]) if cat_col and pd.notna(r[cat_col]) else sku_to_cat.get(b_c, "")
         raw_c_l = raw_c.lower()
 
         if 'beauty' in raw_c_l or 'clean' in raw_c_l or any(x in name_l for x in ['lip', 'mask', 'cream', 'perfume', 'makeup']):
@@ -411,10 +426,10 @@ def process_and_build():
         elif 'apparel' in raw_c_l or any(x in name_l for x in ['sock', 'hat', 'sunglass']):
             main_c = "Apparel Accessories"
         else:
-            main_c = "Variety Lifestyle"
+            main_c = "Home & Daily Use"
 
-        sub_c = str(r[subcat_col]).strip() if subcat_col and pd.notna(r[subcat_col]) else f"{main_c} Line"
-        subsub_c = str(r[subsub_col]).strip() if subsub_col and pd.notna(r[subsub_col]) else r['clean_name'][:25]
+        sub_c = sanitize_text(r[subcat_col]) if subcat_col and pd.notna(r[subcat_col]) else f"{main_c} Line"
+        subsub_c = r['clean_name'][:25]
         return main_c, sub_c, subsub_c
 
     hier_res = df_clean.apply(get_category_hierarchy, axis=1)
@@ -423,7 +438,7 @@ def process_and_build():
     df_clean['sub_sub_category'] = [h[2] for h in hier_res]
     df_clean['gender'] = df_clean.apply(lambda r: classify_shoe_gender_by_size(r['clean_name']), axis=1)
 
-    # Sanity guard: تصفية السجلات السليمة مالياً
+    # حماية مالية صارمة ضد أي إدخال خاطئ
     df_clean = df_clean[(df_clean['Actual Sales Amount'] > 0) & (df_clean['Actual Sales Amount'] < 500000)].copy()
     df_clean = df_clean[(df_clean['Sales Quantity'] > 0) & (df_clean['Sales Quantity'] < 10000)].copy()
     for kw in EXCLUDED_KEYWORDS:
@@ -478,7 +493,7 @@ def process_and_build():
 
     perf_df = pd.DataFrame(store_rows_data).sort_values(by='sales', ascending=False).reset_index(drop=True)
 
-    # حساب الـ Totals الدقيقة لكل اختيار براند لشهر أكتوبر
+    # حساب الـ Totals الدقيقة لكل براند
     brand_totals = {}
     for b in ['ALL', 'MMS', 'DZL']:
         sub = perf_df if b == 'ALL' else perf_df[perf_df['brand'] == b]
@@ -501,7 +516,7 @@ def process_and_build():
             "str": f"{b_str}%", "upt": f"{(b_units/b_txns):.2f}" if b_txns>0 else "0.00"
         }
 
-    # بناء الأسطر في الجدول الرئيسي
+    # بناء أسطر الجدول الرئيسي
     store_table_rows = ""
     for idx, r in perf_df.iterrows():
         yoy_str = f'<span style="color:{"#10b981" if r["yoy"]>=0 else "#ef4444"}; font-weight:700;">{r["yoy"]:+.1f}%</span>' if pd.notna(r["yoy"]) else '<span style="color:#64748b;">-</span>'
@@ -530,7 +545,7 @@ def process_and_build():
         </tr>
         """
 
-    # هيكلية الـ Drill-down المتسلسلة لـ Business & Gender لكل براند
+    # هيكلية الفئات المتسلسلة
     hierarchy_tree = {}
     for b in ['ALL', 'MMS', 'DZL']:
         sub_c = df_clean if b == 'ALL' else df_clean[df_clean['brand'] == b]
@@ -573,7 +588,7 @@ def process_and_build():
     }
 
     # =========================================================================
-    # محرك التوريد الآلي المتطور (Auto-Replenishment Engine with WH vs IST logic)
+    # محرك التوريد الآلي (Auto-Replenishment Engine with WH vs IST logic)
     # =========================================================================
     repl_data_list = []
     
@@ -831,7 +846,7 @@ def process_and_build():
             <button class="brand-btn" id="btn-MMS" onclick="switchBrand('MMS')">🔴 MUMUSO (17)</button>
             <button class="brand-btn" id="btn-DZL" onclick="switchBrand('DZL')">🟡 DZL (4)</button>
         </div>
-        <span id="current-user-badge" style="font-size:13px; font-weight:700; color:#38bdf8; background:#1e293b; padding:8px 14px; border-radius:8px;">👤 Hicham Darazi (Admin)</span>
+        <span id="current-user-badge" style="font-size:13px; font-weight:700; color:#38bdf8; background:#1e293b; padding:8px 14px; border-radius:8px;">👤 Hicham Darazi (Executive Access)</span>
         <button onclick="location.reload()" style="background:#ef444422; border:1px solid #ef444455; color:#ef4444; padding:8px 14px; border-radius:8px; font-weight:700; cursor:pointer;">Refresh</button>
     </div>
 </div>
@@ -1579,12 +1594,12 @@ def process_and_build():
     try {{
       activeMonth = m;
       if (m === "SEP") {{
-        currentBrandTotals = SEP_BRAND_TOTALS;
-        currentStoreMeta = SEP_STORE_META;
+        currentBrandTotals = BRAND_TOTALS_BY_MONTH["SEP"];
+        currentStoreMeta = STORE_META_BY_MONTH["SEP"];
         document.getElementById("headerSubtitle").innerText = "September 2026 Full Monthly Performance & Benchmarking (Archived)";
       }} else {{
-        currentBrandTotals = OCT_BRAND_TOTALS;
-        currentStoreMeta = OCT_STORE_META;
+        currentBrandTotals = BRAND_TOTALS_BY_MONTH["OCT"];
+        currentStoreMeta = STORE_META_BY_MONTH["OCT"];
         document.getElementById("headerSubtitle").innerText = "October 2026 Daily Phasing & Commercial Performance Tracking";
       }}
 
@@ -1630,7 +1645,7 @@ def process_and_build():
     with open(out_file, "w", encoding="utf-8") as f:
         f.write(template_html)
 
-    print(f"[✓] Dashboard generated successfully without login lock: {out_file}")
+    print(f"[✓] Dashboard generated successfully: {out_file}")
 
 if __name__ == "__main__":
     process_and_build()
