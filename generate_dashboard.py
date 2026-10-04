@@ -7,6 +7,7 @@ import pandas as pd
 import numpy as np
 
 REPORTS_DIR = "./reports"
+ARCHIVE_SEP_DIR = os.path.join(REPORTS_DIR, "Archive_Sep")
 
 STORE_MAPPING = {
     # Central & Eastern Region (Sultan - 10 MMS + 3 DZL)
@@ -48,7 +49,6 @@ EXCLUDED_KEYWORDS = [
 def clean_store_code_str(val):
     s = str(val).strip().upper()
     if s.endswith('.0'): s = s[:-2]
-    # مطابقة دوزولو الصارمة
     if "DZL107" in s or "RIYADH PARK(DZL)" in s or ("107" in s and "DZL" in s): return "K107"
     if "DZL104" in s or "UWALK(DZL)" in s or ("104" in s and "DZL" in s): return "K104"
     if "DZL112" in s or "SOLITAIRE(DZL)" in s or ("111" in s and "DZL" in s) or ("112" in s and "DZL" in s): return "K111"
@@ -80,12 +80,10 @@ def classify_shoe_gender_by_size(name, spec=""):
 
 def load_october_phasing():
     phasing_files = glob.glob(os.path.join(REPORTS_DIR, "*Phasing*.xlsx")) + glob.glob("*Phasing*.xlsx")
-    if not phasing_files:
-        return {}, {}, {}
-    phasing_file = phasing_files[0]
+    if not phasing_files: return {}, {}, {}
     oct_targets, oct_mtd_targets, oct_today_targets = {}, {}, {}
     try:
-        df_p = pd.read_excel(phasing_file, sheet_name=0)
+        df_p = pd.read_excel(phasing_files[0], sheet_name=0)
         row_target = df_p.iloc[2].values
         row_stores = df_p.iloc[3].values
 
@@ -116,10 +114,8 @@ def load_october_phasing():
         return {}, {}, {}
 
 def load_ly_sales_data(target_date_str="2026-10-03"):
-    ly_files = glob.glob(os.path.join(REPORTS_DIR, "*LY*OCT*.xlsx")) + glob.glob(os.path.join(REPORTS_DIR, "*LY*.xlsx")) + glob.glob("*LY*OCT*.xlsx") + glob.glob("*LY*.xlsx")
-    if not ly_files: 
-        return {}, {}
-    
+    ly_files = glob.glob(os.path.join(REPORTS_DIR, "*LY*OCT*.xlsx")) + glob.glob(os.path.join(REPORTS_DIR, "*LY*.xlsx"))
+    if not ly_files: return {}, {}
     ly_mtd_totals, ly_today_totals = {}, {}
     try:
         xl = pd.ExcelFile(ly_files[0])
@@ -144,7 +140,6 @@ def load_ly_sales_data(target_date_str="2026-10-03"):
                 mtd_val = pd.to_numeric(df_ly_mtd[col], errors='coerce').sum()
                 if pd.notna(mtd_val) and mtd_val > 0:
                     ly_mtd_totals[code] = round(float(mtd_val))
-                
                 if not df_ly_today.empty:
                     today_val = pd.to_numeric(df_ly_today[col], errors='coerce').sum()
                     if pd.notna(today_val):
@@ -200,10 +195,100 @@ def load_soh_data():
         print(f"[!] SOH Load Exception: {e}")
         return {}, {}, pd.DataFrame(), 0
 
+def load_september_archive_data():
+    sep_perf_list = []
+    sep_totals = {}
+    try:
+        sep_sales_files = glob.glob(os.path.join(ARCHIVE_SEP_DIR, "50100002*.xlsx")) + glob.glob(os.path.join(REPORTS_DIR, "*0928*.xlsx")) + glob.glob(os.path.join(ARCHIVE_SEP_DIR, "*Sep*.xlsx"))
+        sep_dzl_files = glob.glob(os.path.join(ARCHIVE_SEP_DIR, "*DZL*.xlsx")) + glob.glob(os.path.join(REPORTS_DIR, "*DZL*Sep*.xlsx"))
+        sep_target_files = glob.glob(os.path.join(ARCHIVE_SEP_DIR, "*Target*.xlsx")) + glob.glob(os.path.join(REPORTS_DIR, "*Sep_Target*.xlsx"))
+        sep_ly_files = glob.glob(os.path.join(ARCHIVE_SEP_DIR, "*LY*.xlsx")) + glob.glob(os.path.join(REPORTS_DIR, "*LY*SEP*.xlsx"))
+
+        t_map = {}
+        if sep_target_files:
+            df_t = pd.read_excel(sep_target_files[0])
+            st_col = next((c for c in df_t.columns if any(k in str(c).lower() for k in ["profit", "cost", "store", "code"])), df_t.columns[0])
+            tg_col = next((c for c in df_t.columns if any(k in str(c).lower() for k in ["target", "sep", "val"])), df_t.columns[-1])
+            for _, r in df_t.iterrows():
+                c_c = clean_store_code_str(r[st_col])
+                v = pd.to_numeric(str(r[tg_col]).replace(",", ""), errors='coerce')
+                if pd.notna(v) and v > 0: t_map[c_c] = float(v)
+
+        ly_map = {}
+        if sep_ly_files:
+            df_ly = pd.read_excel(sep_ly_files[0])
+            gs = df_ly[df_ly.iloc[:, 2].astype(str).str.upper() == 'G-SALE'] if len(df_ly.columns) > 2 else df_ly
+            for col in df_ly.columns[3:]:
+                c_c = clean_store_code_str(col)
+                val = pd.to_numeric(gs[col], errors='coerce').sum()
+                if pd.notna(val) and val > 0: ly_map[c_c] = round(float(val))
+
+        s_dfs = []
+        if sep_sales_files:
+            dm = pd.read_excel(sep_sales_files[0], skiprows=1).iloc[:-1]
+            dm['brand_origin'] = 'MMS'
+            s_dfs.append(dm)
+        if sep_dzl_files:
+            dd = pd.read_excel(sep_dzl_files[0])
+            if not any("org" in str(c).lower() for c in dd.columns): dd = pd.read_excel(sep_dzl_files[0], skiprows=1)
+            dd['brand_origin'] = 'DZL'
+            s_dfs.append(dd)
+
+        if s_dfs:
+            df_s = pd.concat(s_dfs, ignore_index=True)
+            sc = next((c for c in df_s.columns if any(k in str(c).lower() for k in ['actual sales amount', 'actual amount', 'sales revenue'])), None)
+            qc = next((c for c in df_s.columns if any(k in str(c).lower() for k in ['sales quantity', 'quantity', 'qty'])), None)
+            oc = next((c for c in df_s.columns if any(k in str(c).lower() for k in ['org code', 'store code', 'organization code'])), df_s.columns[0])
+            tc = next((c for c in df_s.columns if 'receipt' in str(c).lower()), oc)
+
+            df_s['clean_code'] = df_s[oc].apply(clean_store_code_str)
+            df_s['sales_amt'] = pd.to_numeric(df_s[sc], errors='coerce').fillna(0) if sc else 0
+            df_s['qty_amt'] = pd.to_numeric(df_s[qc], errors='coerce').fillna(0) if qc else 0
+            df_s = df_s[(df_s['sales_amt'] > 0) & (df_s['clean_code'].isin(ALL_VALID_CODES))].copy()
+
+            for code, info in STORE_MAPPING.items():
+                st_d = df_s[df_s['clean_code'] == code]
+                s_val = round(st_d['sales_amt'].sum())
+                u_val = int(st_d['qty_amt'].sum())
+                t_val = st_d[tc].nunique() if tc in st_d.columns else len(st_d)
+                tg_val = t_map.get(code, 0)
+                ly_val = ly_map.get(code, None)
+                ach = (s_val / tg_val * 100) if tg_val > 0 else 0
+                yoy = ((s_val - ly_val) / ly_val * 100) if ly_val and ly_val > 0 else None
+                atv = round(s_val / t_val) if t_val > 0 else 0
+                upt = round(u_val / t_val, 2) if t_val > 0 else 0
+                asp = round(s_val / u_val) if u_val > 0 else 0
+
+                sep_perf_list.append({
+                    "code": code, "name": info["full_name"], "region": info["region"], "manager": info["manager"], "brand": info["brand"],
+                    "sales": s_val, "ly_sales": ly_val, "yoy": yoy, "target": tg_val, "ach": ach,
+                    "units": u_val, "txns": t_val, "upt": upt, "atv": atv, "asp": asp, "str_pct": 85.0
+                })
+
+            df_sep_res = pd.DataFrame(sep_perf_list)
+            for b in ['ALL', 'MMS', 'DZL']:
+                sub = df_sep_res if b == 'ALL' else df_sep_res[df_sep_res['brand'] == b]
+                bs = sub['sales'].sum()
+                bt = sub['target'].sum()
+                bu = sub['units'].sum()
+                bx = sub['txns'].sum()
+                bly = sub['ly_sales'].dropna().sum()
+                byoy = ((sub[sub['ly_sales'].notna()]['sales'].sum() - bly) / bly * 100) if bly > 0 else 0
+                sep_totals[b] = {
+                    "sales": f"{bs:,}", "ly": f"{round(bly):,}", "yoy": f"{byoy:+.1f}%", "yoy_val": byoy,
+                    "target": f"{round(bt):,}", "ach": f"{(bs/bt*100):.1f}%" if bt>0 else "0%", "ach_val": (bs/bt*100) if bt>0 else 0,
+                    "atv": f"{round(bs/bx):,}" if bx>0 else "0", "asp": f"{round(bs/bu):,}" if bu>0 else "0",
+                    "units": f"{bu:,}", "txns": f"{bx:,}", "upt": f"{(bu/bx):.2f}" if bx>0 else "0.00"
+                }
+    except Exception as e:
+        print(f"[!] September Archive Load Warning: {e}")
+    return sep_perf_list, sep_totals
+
 def process_and_build():
     oct_targets, oct_mtd_targets, oct_today_targets = load_october_phasing()
     ly_mtd_map, ly_today_map = load_ly_sales_data("2026-10-03")
     soh_map, sku_to_cat, df_soh_raw, wh_total_stock = load_soh_data()
+    sep_perf_list, sep_brand_totals = load_september_archive_data()
 
     sales_candidates = glob.glob(os.path.join(REPORTS_DIR, "*.xlsx")) + glob.glob("*.xlsx")
     mms_files = [f for f in sales_candidates if "50100002" in f and "ARCHIVE" not in f.upper()]
@@ -255,6 +340,7 @@ def process_and_build():
     df_clean['clean_sku'] = df_clean[item_col].apply(clean_sku_code)
     df_clean['clean_name'] = df_clean[name_col].fillna("Item").astype(str)
     
+    # عزل صارم لفئات البراندين (MMS vs DZL) لمنع اختلاط فئة Shoes مع MUMUSO
     def get_category_hierarchy(r):
         b_c = r['clean_sku']
         name_l = r['clean_name'].lower()
@@ -263,18 +349,30 @@ def process_and_build():
                 return "Shoes", "Footwear Styles", r['clean_name'][:25]
             return "Accessories", "Fashion Acc", r['clean_name'][:25]
         
-        main_c = str(r[cat_col]).strip() if cat_col and pd.notna(r[cat_col]) else sku_to_cat.get(b_c, "Variety Lifestyle")
-        if main_c in ["nan", "None", "", "General"]:
-            if any(x in name_l for x in ['toy', 'doll', 'clay', 'puzzle', 'baby']): main_c = "Children's Goods"
-            elif any(x in name_l for x in ['lip', 'mask', 'cream', 'perfume', 'makeup', 'beauty', 'clean']): main_c = "Beauty & Cleaning"
-            elif any(x in name_l for x in ['cup', 'mat', 'storage', 'kitchen', 'umbrella']): main_c = "Home & Daily Use"
-            elif any(x in name_l for x in ['cable', 'headphone', 'fan', 'usb', 'charger']): main_c = "3C Electronics"
-            elif any(x in name_l for x in ['bag', 'backpack', 'wallet', 'purse']): main_c = "Bags"
-            elif any(x in name_l for x in ['sock', 'hat', 'sunglass']): main_c = "Apparel Accessories"
-            elif any(x in name_l for x in ['pen', 'notebook', 'pencil']): main_c = "Stationery"
-            else: main_c = "Variety Lifestyle"
+        # MUMUSO EXCLUSIVE CATEGORIES - NEVER ASSIGN SHOES TO MMS
+        raw_c = str(r[cat_col]).strip() if cat_col and pd.notna(r[cat_col]) else sku_to_cat.get(b_c, "")
+        raw_c_l = raw_c.lower()
 
-        sub_c = str(r[subcat_col]).strip() if subcat_col and pd.notna(r[subcat_col]) else f"{main_c} Class"
+        if 'beauty' in raw_c_l or 'clean' in raw_c_l or any(x in name_l for x in ['lip', 'mask', 'cream', 'perfume', 'makeup']):
+            main_c = "Beauty & Cleaning"
+        elif 'child' in raw_c_l or 'toy' in raw_c_l or any(x in name_l for x in ['toy', 'doll', 'clay', 'puzzle', 'baby']):
+            main_c = "Children's Goods"
+        elif 'bag' in raw_c_l or any(x in name_l for x in ['bag', 'backpack', 'wallet', 'purse']):
+            main_c = "Bags"
+        elif '3c' in raw_c_l or 'elect' in raw_c_l or any(x in name_l for x in ['cable', 'headphone', 'fan', 'usb', 'charger']):
+            main_c = "3C Electronics"
+        elif 'home' in raw_c_l and 'textile' in raw_c_l:
+            main_c = "Home Textile"
+        elif 'home' in raw_c_l or any(x in name_l for x in ['cup', 'mat', 'storage', 'kitchen', 'umbrella']):
+            main_c = "Home & Daily Use"
+        elif 'stat' in raw_c_l or any(x in name_l for x in ['pen', 'notebook', 'pencil', 'tape']):
+            main_c = "Stationery"
+        elif 'apparel' in raw_c_l or any(x in name_l for x in ['sock', 'hat', 'sunglass']):
+            main_c = "Apparel Accessories"
+        else:
+            main_c = "Variety Lifestyle"
+
+        sub_c = str(r[subcat_col]).strip() if subcat_col and pd.notna(r[subcat_col]) else f"{main_c} Line"
         subsub_c = str(r[subsub_col]).strip() if subsub_col and pd.notna(r[subsub_col]) else r['clean_name'][:25]
         return main_c, sub_c, subsub_c
 
@@ -337,7 +435,7 @@ def process_and_build():
 
     perf_df = pd.DataFrame(store_rows_data).sort_values(by='sales', ascending=False).reset_index(drop=True)
 
-    # حساب الـ Totals الدقيقة لكل اختيار براند
+    # حساب الـ Totals الدقيقة لكل اختيار براند لشهر أكتوبر
     brand_totals = {}
     for b in ['ALL', 'MMS', 'DZL']:
         sub = perf_df if b == 'ALL' else perf_df[perf_df['brand'] == b]
@@ -389,17 +487,7 @@ def process_and_build():
         </tr>
         """
 
-    # الحسابات الإقليمية (Region-Wise Overall)
-    region_data = {}
-    for reg in ["Central & Eastern Region", "Western, Southern & Northern Region"]:
-        reg_df = perf_df[perf_df['region'] == reg]
-        region_data[reg] = {
-            "ALL": reg_df.to_dict(orient='records'),
-            "MMS": reg_df[reg_df['brand'] == 'MMS'].to_dict(orient='records'),
-            "DZL": reg_df[reg_df['brand'] == 'DZL'].to_dict(orient='records')
-        }
-
-    # هيكلية الـ Drill-down المتسلسلة لـ Business & Gender
+    # هيكلية الـ Drill-down المتسلسلة لـ Business & Gender لكل براند
     hierarchy_tree = {}
     for b in ['ALL', 'MMS', 'DZL']:
         sub_c = df_clean if b == 'ALL' else df_clean[df_clean['brand'] == b]
@@ -622,7 +710,7 @@ def process_and_build():
 <div class="header">
     <div>
         <h1 style="margin:0; font-size:22px;">MMS & DZL Executive Commercial Intelligence Dashboard</h1>
-        <p style="margin:4px 0 0 0; color:var(--text-muted); font-size:13px;">October 2026 Daily Phasing & Commercial Performance Tracking</p>
+        <p style="margin:4px 0 0 0; color:var(--text-muted); font-size:13px;" id="headerSubtitle">October 2026 Daily Phasing & Commercial Performance Tracking</p>
     </div>
     <div class="top-controls">
         <select class="month-select" id="monthDropdown" onchange="switchMonth(this.value)">
@@ -671,7 +759,7 @@ def process_and_build():
                         <th>Target</th><th>% Ach</th><th>Units</th><th>Trans</th><th>UPT</th><th>STR%</th><th>Diagnostic</th><th>ASP</th>
                     </tr>
                 </thead>
-                <tbody>
+                <tbody id="storesTableBody">
                     __STORE_TABLE_ROWS__
                 </tbody>
                 <tfoot>
@@ -750,9 +838,18 @@ def process_and_build():
 
 <!-- 3. Business & Gender Mix View -->
 <div id="view-business" style="display:none;">
+    <div style="margin-bottom:14px; display:flex; justify-content:space-between; align-items:center; background:#131b2e; padding:12px 18px; border-radius:8px; border:1px solid #1e293b;">
+        <span style="font-weight:700; color:#38bdf8; font-size:14px;">🔍 Select Brand for Assortment Analysis:</span>
+        <select id="businessBrandSelect" class="month-select" onchange="switchBusinessBrand(this.value)">
+            <option value="MMS">🔴 MUMUSO Categories Only (No Shoes)</option>
+            <option value="DZL">🟡 DZL (Shoes & Accessories Only)</option>
+            <option value="ALL">🏢 ALL BRANDS COMBINED</option>
+        </select>
+    </div>
+
     <div style="display:flex; gap:16px; flex-wrap:wrap; margin-bottom:24px;">
         <div class="chart-container" style="flex:1; min-width:320px;">
-            <div style="font-weight:700; margin-bottom:12px; font-size:14px;">🍩 Category Contribution Share</div>
+            <div style="font-weight:700; margin-bottom:12px; font-size:14px;" id="catDonutTitle">🍩 Category Contribution Share</div>
             <div id="apexCategoryDonut" style="min-height: 330px;"></div>
         </div>
         <div class="chart-container" id="genderChartWrapper" style="flex:1; min-width:320px;">
@@ -835,9 +932,18 @@ def process_and_build():
 </div>
 
 <script>
+  let activeMonth = 'OCT';
   let activeBrand = 'ALL';
-  const BRAND_TOTALS = __BRAND_TOTALS_JSON__;
-  const STORE_META = __STORE_META_JSON__;
+  let businessBrand = 'MMS';
+
+  const OCT_BRAND_TOTALS = __BRAND_TOTALS_JSON__;
+  const SEP_BRAND_TOTALS = __SEP_BRAND_TOTALS_JSON__;
+  const OCT_STORE_META = __STORE_META_JSON__;
+  const SEP_STORE_META = __SEP_STORE_META_JSON__;
+  
+  let currentStoreMeta = OCT_STORE_META;
+  let currentBrandTotals = OCT_BRAND_TOTALS;
+
   const STORE_CATS = __STORE_CATS_JSON__;
   const MMS_TOP500 = __MMS_TOP500_JSON__;
   const MMS_LOW500 = __MMS_LOW500_JSON__;
@@ -862,7 +968,7 @@ def process_and_build():
   });
 
   function updateKPICards(b) {
-    const d = BRAND_TOTALS[b];
+    const d = currentBrandTotals[b] || currentBrandTotals['ALL'];
     if (!d) return;
     document.getElementById("kpi-sales").innerHTML = d.sales + " <span style='font-size:12px; color:var(--text-muted);'>SAR</span>";
     document.getElementById("kpi-ly").innerHTML = d.ly + " <span style='font-size:12px; color:var(--text-muted);'>SAR</span>";
@@ -893,7 +999,7 @@ def process_and_build():
     document.getElementById("tot-units").innerText = d.units;
     document.getElementById("tot-txns").innerText = d.txns;
     document.getElementById("tot-upt").innerText = d.upt;
-    document.getElementById("tot-str").innerText = d.str;
+    document.getElementById("tot-str").innerText = d.str || "0.0%";
     document.getElementById("tot-asp").innerText = d.asp;
   }
 
@@ -909,6 +1015,10 @@ def process_and_build():
 
     updateKPICards(b);
     renderRegionTables();
+    
+    // ضبط البراند تلقائياً في تبويب Business & Gender
+    businessBrand = (b === 'DZL') ? 'DZL' : ((b === 'MMS') ? 'MMS' : 'ALL');
+    document.getElementById("businessBrandSelect").value = businessBrand;
     renderDrillDown();
     renderCharts();
 
@@ -924,6 +1034,15 @@ def process_and_build():
       if (dzlBlock) dzlBlock.style.display = "block";
       if (mmsBlock) mmsBlock.style.display = "block";
     }
+  }
+
+  function switchBusinessBrand(val) {
+    businessBrand = val;
+    currentDrillLevel = 1;
+    selectedMainCat = null;
+    selectedSubCat = null;
+    renderDrillDown();
+    renderCharts();
   }
 
   function filterStores() {
@@ -944,10 +1063,10 @@ def process_and_build():
     let cSales = 0, cTarget = 0, cUnits = 0, cTxns = 0, cLy = 0;
     let wSales = 0, wTarget = 0, wUnits = 0, wTxns = 0, wLy = 0;
 
-    Object.values(STORE_META).forEach(r => {
+    Object.values(currentStoreMeta).forEach(r => {
       if (activeBrand !== 'ALL' && r.brand !== activeBrand) return;
       const isCentral = r.region.includes('Central');
-      const yoyStr = (r.yoy !== null) ? `<span style="color:${r.yoy>=0?'#10b981':'#ef4444'}">${r.yoy.toFixed(1)}%</span>` : '-';
+      const yoyStr = (r.yoy !== null && !isNaN(r.yoy)) ? `<span style="color:${r.yoy>=0?'#10b981':'#ef4444'}">${r.yoy.toFixed(1)}%</span>` : '-';
       const rowHtml = `<tr class="clickable-row" onclick="openStoreModal('${r.code}')">
         <td style="color:#64748b;">${isCentral ? cIdx++ : wIdx++}</td>
         <td style="color:#38bdf8; font-weight:700;">${r.code}</td>
@@ -980,7 +1099,7 @@ def process_and_build():
     const cYoy = (cLy > 0) ? ((cSales - cLy) / cLy * 100).toFixed(1) : 0;
     const wYoy = (wLy > 0) ? ((wSales - wLy) / wLy * 100).toFixed(1) : 0;
 
-    // ملء بطاقات الإجمالي لكل منطقة
+    // بطاقات الإجمالي لكل منطقة
     document.getElementById("centralRegionOverview").innerHTML = `
       <div class="kpi-card"><div class="kpi-title">CENTRAL SALES</div><div class="kpi-value">${cSales.toLocaleString()} <span style="font-size:11px;">SAR</span></div></div>
       <div class="kpi-card"><div class="kpi-title">CENTRAL TARGET</div><div class="kpi-value">${Math.round(cTarget).toLocaleString()} <span style="font-size:11px;">SAR</span></div></div>
@@ -1020,11 +1139,11 @@ def process_and_build():
   }
 
   function renderDrillDown() {
-    const tree = HIERARCHY_TREE[activeBrand] || {};
+    const tree = HIERARCHY_TREE[businessBrand] || {};
     const thead = document.getElementById("drillTableHead");
     const tbody = document.getElementById("drillTableBody");
     const crumbs = document.getElementById("drillBreadcrumbs");
-    let cHtml = `<span class="drill-crumb" onclick="drillGoLevel(1)">🏷️ All Categories</span>`;
+    let cHtml = `<span class="drill-crumb" onclick="drillGoLevel(1)">🏷️ All Categories (${businessBrand})</span>`;
 
     if (currentDrillLevel === 1) {
       crumbs.innerHTML = cHtml;
@@ -1090,11 +1209,12 @@ def process_and_build():
   function drillIntoSubCat(s) { selectedSubCat = s; currentDrillLevel = 3; renderDrillDown(); }
 
   function renderCharts() {
-    const tree = HIERARCHY_TREE[activeBrand] || {};
+    const tree = HIERARCHY_TREE[businessBrand] || {};
     const catLabels = Object.keys(tree);
     const catSeries = catLabels.map(k => tree[k].sales);
-    const colors = ['#38bdf8', '#f59e0b', '#10b981', '#ec4899', '#818cf8', '#a855f7', '#06b6d4', '#e11d48'];
+    const colors = ['#38bdf8', '#f59e0b', '#10b981', '#ec4899', '#818cf8', '#a855f7', '#06b6d4', '#e11d48', '#6366f1', '#14b8a6'];
 
+    document.getElementById("catDonutTitle").innerText = `🍩 Category Contribution Share (${businessBrand})`;
     const donutEl = document.querySelector("#apexCategoryDonut");
     if (donutEl) {
       donutEl.innerHTML = "";
@@ -1110,8 +1230,8 @@ def process_and_build():
     }
 
     const genderWrapper = document.getElementById("genderChartWrapper");
-    if (activeBrand === 'DZL' || activeBrand === 'ALL') {
-      if (genderWrapper) genderWrapper.style.display = "block";
+    if (businessBrand === 'DZL' || businessBrand === 'ALL') {
+      genderWrapper.style.display = "block";
       const genderEl = document.querySelector("#apexGenderDonut");
       if (genderEl) {
         genderEl.innerHTML = "";
@@ -1126,7 +1246,7 @@ def process_and_build():
         }
       }
     } else {
-      if (genderWrapper) genderWrapper.style.display = "none";
+      genderWrapper.style.display = "none";
     }
   }
 
@@ -1149,14 +1269,14 @@ def process_and_build():
   }
 
   function openStoreModal(code) {
-    const r = STORE_META[code];
+    const r = currentStoreMeta[code];
     if (!r) return;
     document.getElementById("modal-store-name").innerText = "[" + r.brand + "] " + r.name;
     document.getElementById("modal-store-code").innerText = "CODE: " + code + " | " + r.region + " (Manager: " + r.manager + ")";
     document.getElementById("modal-sales").innerText = r.sales.toLocaleString() + " SAR";
     document.getElementById("modal-target").innerText = Math.round(r.target).toLocaleString() + " SAR (" + r.ach.toFixed(1) + "%)";
-    document.getElementById("modal-soh").innerText = r.soh_units.toLocaleString() + " Pcs";
-    document.getElementById("modal-woc").innerText = r.woc + " Wks";
+    document.getElementById("modal-soh").innerText = (r.soh_units || 0).toLocaleString() + " Pcs";
+    document.getElementById("modal-woc").innerText = (r.woc || 0) + " Wks";
     document.getElementById("modal-atv").innerText = r.atv.toLocaleString() + " SAR";
     document.getElementById("modal-upt").innerText = r.upt.toFixed(2);
 
@@ -1165,7 +1285,7 @@ def process_and_build():
     if (r.ach >= 95) {
       needs = "High demand velocity. Priority supply for fast movers.";
       directive = "⚡ Maintain 100% floor availability on leading drivers.";
-    } else if (r.ach < 70 && r.soh_units > 10000) {
+    } else if (r.ach < 70 && (r.soh_units || 0) > 10000) {
       needs = "Store holds heavy display depth but slow sell-through.";
       directive = "⚡ Reallocate front gondolas to high-velocity impulse items and initiate clearance.";
     }
@@ -1242,12 +1362,48 @@ def process_and_build():
   }
 
   function switchMonth(m) {
+    activeMonth = m;
     if (m === "SEP") {
-      alert("Loading September 2026 Archive benchmark data.");
-      // التبديل لأرشيف سبتمبر عند الحاجة
+      currentBrandTotals = SEP_BRAND_TOTALS;
+      currentStoreMeta = SEP_STORE_META;
+      document.getElementById("headerSubtitle").innerText = "September 2026 Full Monthly Performance & Benchmarking (Archived)";
     } else {
-      location.reload();
+      currentBrandTotals = OCT_BRAND_TOTALS;
+      currentStoreMeta = OCT_STORE_META;
+      document.getElementById("headerSubtitle").innerText = "October 2026 Daily Phasing & Commercial Performance Tracking";
     }
+
+    // إعادة رسم جدول المتاجر بالكامل حسب الشهر المختار
+    let rowsHtml = "";
+    let idx = 1;
+    Object.values(currentStoreMeta).forEach(r => {
+      const yoyStr = (r.yoy !== null && !isNaN(r.yoy)) ? `<span style="color:${r.yoy>=0?'#10b981':'#ef4444'}; font-weight:700;">${r.yoy.toFixed(1)}%</span>` : `<span style="color:#64748b;">-</span>`;
+      const lyStr = r.ly_sales ? r.ly_sales.toLocaleString() : `<span style="color:#64748b;">-</span>`;
+      const achCol = (r.ach >= 100) ? "#10b981" : ((r.ach >= 80) ? "#f59e0b" : "#ef4444");
+      const brandBadge = `<span class="badge" style="background:${r.brand==='DZL'?'#ef444422':'#38bdf822'}; color:${r.brand==='DZL'?'#ef4444':'#38bdf8'};">${r.brand}</span>`;
+
+      rowsHtml += `<tr class="clickable-row store-row" data-brand="${r.brand}" data-region="${r.region}" onclick="openStoreModal('${r.code}')">
+        <td style="color:#64748b; font-weight:600;">${idx++}</td>
+        <td style="color:#38bdf8; font-weight:700;">${r.code}</td>
+        <td style="color:#fff; font-weight:600;">${brandBadge} ${r.name}</td>
+        <td style="color:#94a3b8; font-size:12px;">${r.region}</td>
+        <td style="color:#f8fafc; font-weight:700;">${r.sales.toLocaleString()}</td>
+        <td style="color:#38bdf8;">${lyStr}</td>
+        <td>${yoyStr}</td>
+        <td style="color:#94a3b8;">${Math.round(r.target).toLocaleString()}</td>
+        <td style="color:${achCol}; font-weight:700;">${r.ach.toFixed(1)}%</td>
+        <td style="color:#38bdf8; font-weight:700;">${r.units.toLocaleString()}</td>
+        <td style="color:#fff; font-weight:700;">${r.txns.toLocaleString()}</td>
+        <td style="color:#10b981; font-weight:700;">${r.upt.toFixed(2)}</td>
+        <td style="color:#38bdf8; font-weight:700;">${r.str_pct}%</td>
+        <td><span class="badge" style="background:#10b98122; color:#10b981;">Archived</span></td>
+        <td style="color:#f59e0b; font-weight:700;">${r.asp}</td>
+      </tr>`;
+    });
+    document.getElementById("storesTableBody").innerHTML = rowsHtml;
+
+    updateKPICards(activeBrand);
+    renderRegionTables();
   }
 </script>
 
@@ -1255,10 +1411,15 @@ def process_and_build():
 </html>
 """
 
+    sep_meta_dict = {r['code']: r for r in sep_perf_list} if sep_perf_list else store_meta_map
+    sep_totals_dict = sep_brand_totals if sep_brand_totals else brand_totals
+
     final_html = template_html.replace("__STORE_TABLE_ROWS__", store_table_rows)
     final_html = final_html.replace("__REPL_ROWS_HTML__", repl_rows_html)
     final_html = final_html.replace("__BRAND_TOTALS_JSON__", json.dumps(brand_totals))
+    final_html = final_html.replace("__SEP_BRAND_TOTALS_JSON__", json.dumps(sep_totals_dict))
     final_html = final_html.replace("__STORE_META_JSON__", json.dumps(store_meta_map))
+    final_html = final_html.replace("__SEP_STORE_META_JSON__", json.dumps(sep_meta_dict))
     final_html = final_html.replace("__STORE_CATS_JSON__", json.dumps(store_cat_details))
     final_html = final_html.replace("__MMS_TOP500_JSON__", json.dumps(mms_top500))
     final_html = final_html.replace("__MMS_LOW500_JSON__", json.dumps(mms_low500))
