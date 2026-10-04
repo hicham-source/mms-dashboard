@@ -50,9 +50,9 @@ def clean_store_code_str(val):
     s = str(val).strip().upper()
     if s.endswith('.0'): s = s[:-2]
     if "DZL107" in s or "RIYADH PARK(DZL)" in s or ("107" in s and "DZL" in s): return "K107"
-    if "DZL104" in s or "UWALK(DZL)" in s or ("104" in s and "DZL" in s): return "K104"
-    if "DZL112" in s or "SOLITAIRE(DZL)" in s or ("111" in s and "DZL" in s) or ("112" in s and "DZL" in s): return "K111"
-    if "DZL204" in s or "RED SEA(DZL)" in s or ("204" in s and "DZL" in s): return "K204"
+    if "DZL104" in s or "UWALK(DZL)" in s or ("104" in s and "DZL" in s) or "K104" in s: return "K104"
+    if "DZL112" in s or "SOLITAIRE(DZL)" in s or ("111" in s and "DZL" in s) or ("112" in s and "DZL" in s) or "K111" in s: return "K111"
+    if "DZL204" in s or "RED SEA(DZL)" in s or ("204" in s and "DZL" in s) or "K204" in s: return "K204"
     if "RABWA" in s: return "K130"
     m = re.search(r'\b[A-Z]?(\d{3,4})\b', s)
     if m: return f"K{m.group(1)}"
@@ -199,9 +199,9 @@ def load_september_archive_data():
     sep_perf_list = []
     sep_totals = {}
     try:
-        sep_sales_files = glob.glob(os.path.join(ARCHIVE_SEP_DIR, "50100002*.xlsx")) + glob.glob(os.path.join(REPORTS_DIR, "*0928*.xlsx")) + glob.glob(os.path.join(ARCHIVE_SEP_DIR, "*Sep*.xlsx"))
-        sep_dzl_files = glob.glob(os.path.join(ARCHIVE_SEP_DIR, "*DZL*.xlsx")) + glob.glob(os.path.join(REPORTS_DIR, "*DZL*Sep*.xlsx"))
-        sep_target_files = glob.glob(os.path.join(ARCHIVE_SEP_DIR, "*Target*.xlsx")) + glob.glob(os.path.join(REPORTS_DIR, "*Sep_Target*.xlsx"))
+        sep_sales_files = glob.glob(os.path.join(ARCHIVE_SEP_DIR, "50100002*.xlsx")) + glob.glob(os.path.join(ARCHIVE_SEP_DIR, "*0928*.xlsx")) + glob.glob(os.path.join(REPORTS_DIR, "*0928*.xlsx"))
+        sep_dzl_files = glob.glob(os.path.join(ARCHIVE_SEP_DIR, "*DZL*.xlsx")) + glob.glob(os.path.join(ARCHIVE_SEP_DIR, "*dzl*.xlsx")) + glob.glob(os.path.join(REPORTS_DIR, "*DZL*Sep*.xlsx"))
+        sep_target_files = glob.glob(os.path.join(ARCHIVE_SEP_DIR, "*Target*.xlsx")) + glob.glob(os.path.join(REPORTS_DIR, "*Sep_Target*.xlsx")) + glob.glob(os.path.join(REPORTS_DIR, "*TY Sep*.xlsx"))
         sep_ly_files = glob.glob(os.path.join(ARCHIVE_SEP_DIR, "*LY*.xlsx")) + glob.glob(os.path.join(REPORTS_DIR, "*LY*SEP*.xlsx"))
 
         t_map = {}
@@ -236,7 +236,7 @@ def load_september_archive_data():
 
         if s_dfs:
             df_s = pd.concat(s_dfs, ignore_index=True)
-            sc = next((c for c in df_s.columns if any(k in str(c).lower() for k in ['actual sales amount', 'actual amount', 'sales revenue'])), None)
+            sc = next((c for c in df_s.columns if any(k in str(c).lower() for k in ['actual sales amount', 'actual amount', 'sales revenue', 'sales amount'])), None)
             qc = next((c for c in df_s.columns if any(k in str(c).lower() for k in ['sales quantity', 'quantity', 'qty'])), None)
             oc = next((c for c in df_s.columns if any(k in str(c).lower() for k in ['org code', 'store code', 'organization code'])), df_s.columns[0])
             tc = next((c for c in df_s.columns if 'receipt' in str(c).lower()), oc)
@@ -340,16 +340,16 @@ def process_and_build():
     df_clean['clean_sku'] = df_clean[item_col].apply(clean_sku_code)
     df_clean['clean_name'] = df_clean[name_col].fillna("Item").astype(str)
     
-    # عزل صارم لفئات البراندين (MMS vs DZL) لمنع اختلاط فئة Shoes مع MUMUSO
+    # عزل صارم ومطلق لفئات دوزولو (الأحذية وإكسسوارات دوزولو فقط) عن فئات موموسو
     def get_category_hierarchy(r):
         b_c = r['clean_sku']
         name_l = r['clean_name'].lower()
         if r['brand'] == 'DZL':
             if any(k in name_l for k in ['shoe', 'runner', 'trainer', 'sneaker', 'loafer', 'boot', 'sandal']):
                 return "Shoes", "Footwear Styles", r['clean_name'][:25]
-            return "Accessories", "Fashion Acc", r['clean_name'][:25]
+            return "DZL Accessories", "Fashion & Shoe Care", r['clean_name'][:25]
         
-        # MUMUSO EXCLUSIVE CATEGORIES - NEVER ASSIGN SHOES TO MMS
+        # MUMUSO EXCLUSIVE CATEGORIES (لا وجود للأحذية إطلاقاً في موموسو)
         raw_c = str(r[cat_col]).strip() if cat_col and pd.notna(r[cat_col]) else sku_to_cat.get(b_c, "")
         raw_c_l = raw_c.lower()
 
@@ -529,13 +529,13 @@ def process_and_build():
         "records": dzl_g_sales.to_dict(orient='records')
     }
 
-    # محرك التوريد التبادلي الذكي IST
-    repl_rows_html = ""
-    repl_export = []
-    dzl_shoes = df_clean[(df_clean['brand'] == 'DZL') & (df_clean['main_category'] == 'Shoes')].copy()
+    # محرك التوريد التبادلي الذكي IST الشامل (لكل من DZL و MMS)
+    repl_data_list = []
+    dzl_shoes = dzl_only_shoes.copy()
+    # 1. أوامر مناقلات DZL للأحذية
     if not dzl_shoes.empty:
-        sku_agg = dzl_shoes.groupby(['clean_code', 'clean_sku', 'clean_name'], as_index=False)['Sales Quantity'].sum()
-        for idx, r in sku_agg.head(30).iterrows():
+        sku_agg_dzl = dzl_shoes.groupby(['clean_code', 'clean_sku', 'clean_name'], as_index=False)['Sales Quantity'].sum()
+        for idx, r in sku_agg_dzl.head(25).iterrows():
             st_c = r['clean_code']
             st_info = STORE_MAPPING[st_c]
             other_dzl = [c for c in DZL_VALID_CODES if c != st_c]
@@ -543,25 +543,38 @@ def process_and_build():
             donor_info = STORE_MAPPING.get(donor_code, {"full_name": "Central Warehouse", "city": "Riyadh"})
             match_type = "🏙️ Same City" if donor_info.get('city') == st_info['city'] else "🚛 Inter-City"
 
-            repl_rows_html += f"""
-            <tr data-brand="DZL">
-                <td style="color:#64748b;">{idx+1}</td>
-                <td><span class="badge" style="background:#ef444422; color:#ef4444;">Store Transfer (IST - Opportunity)</span></td>
-                <td style="color:#fff; font-weight:700;">{st_info['full_name']} ({st_c})</td>
-                <td style="color:#f59e0b; font-weight:600;">👟 [SHOE PRIORITY 1] {r['clean_name'][:30]} (SKU: {r['clean_sku']})</td>
-                <td style="color:#38bdf8;">{donor_info['full_name']} ({donor_code}) [{match_type}]</td>
-                <td style="color:#10b981; font-weight:700;">{int(r['Sales Quantity'] * 2)} Pcs</td>
-                <td><span class="badge" style="background:#ef444422; color:#ef4444;">🚨 Broken Size Recovery</span></td>
-            </tr>
-            """
-            repl_export.append({
-                "Brand": "DZL", "Store": st_info['full_name'], "SKU": r['clean_sku'], "Product Name": r['clean_name'],
-                "Donor Store": donor_info['full_name'], "Transfer Qty": int(r['Sales Quantity'] * 2), "Type": match_type
+            repl_data_list.append({
+                "brand": "DZL",
+                "action": "Store Transfer (IST - Opportunity)",
+                "store": f"{st_info['full_name']} ({st_c})",
+                "focus": f"👟 [SHOE PRIORITY 1] {r['clean_name'][:30]} (SKU: {r['clean_sku']})",
+                "source": f"{donor_info['full_name']} ({donor_code}) [{match_type}]",
+                "qty": f"{int(r['Sales Quantity'] * 2)} Pcs",
+                "urgency": "🚨 Broken Size Recovery"
             })
 
-    if repl_export:
-        try: pd.DataFrame(repl_export).to_excel(os.path.join(REPORTS_DIR, "Auto_Replenishment_DZL.xlsx"), index=False)
-        except Exception: pass
+    # 2. أوامر مناقلات MMS للأصناف عالية السرعة (MMS IST)
+    mms_only_items = df_clean[df_clean['brand'] == 'MMS']
+    if not mms_only_items.empty:
+        sku_agg_mms = mms_only_items.groupby(['clean_code', 'clean_sku', 'clean_name', 'main_category'], as_index=False)['Sales Quantity'].sum()
+        for idx, r in sku_agg_mms.sort_values(by='Sales Quantity', ascending=False).head(35).iterrows():
+            st_c = r['clean_code']
+            st_info = STORE_MAPPING[st_c]
+            # البحث عن فرع MMS مانح في نفس المدينة
+            donor_candidates = [c for c in MMS_VALID_CODES if c != st_c and STORE_MAPPING[c]['city'] == st_info['city']]
+            donor_code = donor_candidates[0] if donor_candidates else [c for c in MMS_VALID_CODES if c != st_c][0]
+            donor_info = STORE_MAPPING[donor_code]
+            match_type = "🏙️ Same City" if donor_info['city'] == st_info['city'] else "🚛 Inter-City"
+
+            repl_data_list.append({
+                "brand": "MMS",
+                "action": "Store Transfer (IST - Opportunity)",
+                "store": f"{st_info['full_name']} ({st_c})",
+                "focus": f"📦 [MMS FAST MOVER] {r['main_category']} | {r['clean_name'][:25]} (SKU: {r['clean_sku']})",
+                "source": f"{donor_info['full_name']} ({donor_code}) [{match_type}]",
+                "qty": f"{max(6, int(r['Sales Quantity']))} Pcs",
+                "urgency": "⚡ Fast Sell-Through Replenish"
+            })
 
     # قوائم MMS Top/Low 500
     mms_only = df_clean[df_clean['brand'] == 'MMS'].groupby(['clean_sku', 'clean_name', 'main_category'], as_index=False).agg(
@@ -838,10 +851,10 @@ def process_and_build():
 
 <!-- 3. Business & Gender Mix View -->
 <div id="view-business" style="display:none;">
-    <div style="margin-bottom:14px; display:flex; justify-content:space-between; align-items:center; background:#131b2e; padding:12px 18px; border-radius:8px; border:1px solid #1e293b;">
+    <div style="margin-bottom:14px; display:flex; justify-content:space-between; align-items:center; background:#131b2e; padding:12px 18px; border-radius:8px; border:1px solid #1e293b; flex-wrap:wrap; gap:10px;">
         <span style="font-weight:700; color:#38bdf8; font-size:14px;">🔍 Select Brand for Assortment Analysis:</span>
         <select id="businessBrandSelect" class="month-select" onchange="switchBusinessBrand(this.value)">
-            <option value="MMS">🔴 MUMUSO Categories Only (No Shoes)</option>
+            <option value="MMS" selected>🔴 MUMUSO Categories Only (No Shoes)</option>
             <option value="DZL">🟡 DZL (Shoes & Accessories Only)</option>
             <option value="ALL">🏢 ALL BRANDS COMBINED</option>
         </select>
@@ -849,10 +862,10 @@ def process_and_build():
 
     <div style="display:flex; gap:16px; flex-wrap:wrap; margin-bottom:24px;">
         <div class="chart-container" style="flex:1; min-width:320px;">
-            <div style="font-weight:700; margin-bottom:12px; font-size:14px;" id="catDonutTitle">🍩 Category Contribution Share</div>
+            <div style="font-weight:700; margin-bottom:12px; font-size:14px;" id="catDonutTitle">🍩 Category Contribution Share (MMS)</div>
             <div id="apexCategoryDonut" style="min-height: 330px;"></div>
         </div>
-        <div class="chart-container" id="genderChartWrapper" style="flex:1; min-width:320px;">
+        <div class="chart-container" id="genderChartWrapper" style="flex:1; min-width:320px; display:none;">
             <div style="font-weight:700; margin-bottom:12px; font-size:14px;">👟 Footwear Gender Mix Share (Kids 23-34 | Women 35-39 | Men 40-48)</div>
             <div id="apexGenderDonut" style="min-height: 330px;"></div>
         </div>
@@ -879,13 +892,21 @@ def process_and_build():
 <div id="view-action" style="display:none;">
     <div class="table-wrap" style="margin-bottom:24px;">
         <div class="table-header">
-            <h3 style="margin:0; font-size:15px; color:#10b981;">⚡ PREDICTIVE AUTO-REPLENISHMENT & IST OPPORTUNITY ROUTING</h3>
-            <a href="./reports/Auto_Replenishment_DZL.xlsx" download style="background:#10b981; color:#fff; padding:6px 14px; border-radius:6px; text-decoration:none; font-weight:700; font-size:12px;">📥 Download Plan</a>
+            <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap;">
+                <h3 style="margin:0; font-size:15px; color:#10b981;">⚡ PREDICTIVE AUTO-REPLENISHMENT & IST OPPORTUNITY ROUTING</h3>
+                <button class="sub-tab-btn active" id="btn-ist-all" onclick="filterISTBrand('ALL')">ALL IST</button>
+                <button class="sub-tab-btn" id="btn-ist-dzl" onclick="filterISTBrand('DZL')">DZL (Shoes IST)</button>
+                <button class="sub-tab-btn" id="btn-ist-mms" onclick="filterISTBrand('MMS')">MMS (Fast Movers IST)</button>
+            </div>
+            <div style="display:flex; gap:8px;">
+                <button onclick="downloadISTPlan('DZL')" style="background:#ef4444; color:#fff; border:none; padding:8px 14px; border-radius:6px; font-weight:700; font-size:12px; cursor:pointer;">📥 Export DZL IST</button>
+                <button onclick="downloadISTPlan('MMS')" style="background:#2563eb; color:#fff; border:none; padding:8px 14px; border-radius:6px; font-weight:700; font-size:12px; cursor:pointer;">📥 Export MMS IST</button>
+            </div>
         </div>
-        <div style="max-height:350px; overflow-y:auto;">
+        <div style="max-height:380px; overflow-y:auto;">
             <table>
-                <thead><tr><th>#</th><th>Action Type</th><th>Store Target</th><th>SKU Focus</th><th>Source Route</th><th>Quantity</th><th>Urgency</th></tr></thead>
-                <tbody>__REPL_ROWS_HTML__</tbody>
+                <thead><tr><th>#</th><th>Brand</th><th>Action Type</th><th>Store Target</th><th>SKU Focus</th><th>Source Route</th><th>Quantity</th><th>Urgency</th></tr></thead>
+                <tbody id="replTableBody"></tbody>
             </table>
         </div>
     </div>
@@ -935,6 +956,7 @@ def process_and_build():
   let activeMonth = 'OCT';
   let activeBrand = 'ALL';
   let businessBrand = 'MMS';
+  let istFilterBrand = 'ALL';
 
   const OCT_BRAND_TOTALS = __BRAND_TOTALS_JSON__;
   const SEP_BRAND_TOTALS = __SEP_BRAND_TOTALS_JSON__;
@@ -950,6 +972,7 @@ def process_and_build():
   const DZL_MOVERS = __DZL_MOVERS_JSON__;
   const HIERARCHY_TREE = __HIERARCHY_TREE_JSON__;
   const DZL_GENDER = __DZL_GENDER_JSON__;
+  const REPL_ITEMS = __REPL_ITEMS_JSON__;
 
   let currentDrillLevel = 1;
   let selectedMainCat = null;
@@ -963,8 +986,10 @@ def process_and_build():
     updateKPICards('ALL');
     renderRegionTables();
     renderDrillDown();
+    renderCharts();
     renderDZLMovers();
     renderMMSMovers();
+    renderISTTable();
   });
 
   function updateKPICards(b) {
@@ -1016,8 +1041,7 @@ def process_and_build():
     updateKPICards(b);
     renderRegionTables();
     
-    // ضبط البراند تلقائياً في تبويب Business & Gender
-    businessBrand = (b === 'DZL') ? 'DZL' : ((b === 'MMS') ? 'MMS' : 'ALL');
+    businessBrand = (b === 'DZL') ? 'DZL' : ((b === 'MMS') ? 'MMS' : 'MMS');
     document.getElementById("businessBrandSelect").value = businessBrand;
     renderDrillDown();
     renderCharts();
@@ -1099,7 +1123,6 @@ def process_and_build():
     const cYoy = (cLy > 0) ? ((cSales - cLy) / cLy * 100).toFixed(1) : 0;
     const wYoy = (wLy > 0) ? ((wSales - wLy) / wLy * 100).toFixed(1) : 0;
 
-    // بطاقات الإجمالي لكل منطقة
     document.getElementById("centralRegionOverview").innerHTML = `
       <div class="kpi-card"><div class="kpi-title">CENTRAL SALES</div><div class="kpi-value">${cSales.toLocaleString()} <span style="font-size:11px;">SAR</span></div></div>
       <div class="kpi-card"><div class="kpi-title">CENTRAL TARGET</div><div class="kpi-value">${Math.round(cTarget).toLocaleString()} <span style="font-size:11px;">SAR</span></div></div>
@@ -1116,7 +1139,6 @@ def process_and_build():
       <div class="kpi-card"><div class="kpi-title">ACTIVE DOORS</div><div class="kpi-value">${wIdx-1}</div></div>
     `;
 
-    // ملء صف الـ Total أسفل جداول الـ Region
     document.getElementById("c-tot-sales").innerText = cSales.toLocaleString();
     document.getElementById("c-tot-ly").innerText = cLy.toLocaleString();
     document.getElementById("c-tot-yoy").innerHTML = `<span style="color:${cYoy>=0?'#10b981':'#ef4444'}">${cYoy>0?'+':''}${cYoy}%</span>`;
@@ -1230,7 +1252,7 @@ def process_and_build():
     }
 
     const genderWrapper = document.getElementById("genderChartWrapper");
-    if (businessBrand === 'DZL' || businessBrand === 'ALL') {
+    if (businessBrand === 'DZL') {
       genderWrapper.style.display = "block";
       const genderEl = document.querySelector("#apexGenderDonut");
       if (genderEl) {
@@ -1266,6 +1288,7 @@ def process_and_build():
         window.dispatchEvent(new Event('resize'));
       }, 80);
     }
+    if (viewName === 'action') renderISTTable();
   }
 
   function openStoreModal(code) {
@@ -1309,6 +1332,55 @@ def process_and_build():
 
   function closeModal() { document.getElementById("store-modal").style.display = "none"; }
 
+  // IST Table Rendering & Filtering
+  function filterISTBrand(b) {
+    istFilterBrand = b;
+    document.getElementById("btn-ist-all").classList.toggle('active', b === 'ALL');
+    document.getElementById("btn-ist-dzl").classList.toggle('active', b === 'DZL');
+    document.getElementById("btn-ist-mms").classList.toggle('active', b === 'MMS');
+    renderISTTable();
+  }
+
+  function renderISTTable() {
+    const tbody = document.getElementById("replTableBody");
+    let html = "";
+    let idx = 1;
+    REPL_ITEMS.forEach(r => {
+      if (istFilterBrand !== 'ALL' && r.brand !== istFilterBrand) return;
+      const brandBadge = `<span class="badge" style="background:${r.brand==='DZL'?'#ef444422':'#38bdf822'}; color:${r.brand==='DZL'?'#ef4444':'#38bdf8'};">${r.brand}</span>`;
+      html += `<tr>
+        <td style="color:#64748b;">${idx++}</td>
+        <td>${brandBadge}</td>
+        <td><span class="badge" style="background:#ef444422; color:#ef4444;">${r.action}</span></td>
+        <td style="color:#fff; font-weight:700;">${r.store}</td>
+        <td style="color:#f59e0b; font-weight:600;">${r.focus}</td>
+        <td style="color:#38bdf8;">${r.source}</td>
+        <td style="color:#10b981; font-weight:700;">${r.qty}</td>
+        <td><span class="badge" style="background:#ef444422; color:#ef4444;">${r.urgency}</span></td>
+      </tr>`;
+    });
+    tbody.innerHTML = html || `<tr><td colspan="8" style="text-align:center;">No recommendations available</td></tr>`;
+  }
+
+  // التوليد والتنزيل الفوري عبر المتصفح بدون أي ملفات خارجية مفقودة
+  function downloadISTPlan(b) {
+    let rows = [["Brand", "Action Type", "Target Store", "SKU / Category Focus", "Source Route", "Quantity", "Urgency"]];
+    REPL_ITEMS.forEach(r => {
+      if (b === 'ALL' || r.brand === b) {
+        rows.push([r.brand, r.action, r.store, r.focus.replace(/,/g, ' '), r.source.replace(/,/g, ' '), r.qty, r.urgency]);
+      }
+    });
+    let csvContent = "data:text/csv;charset=utf-8,\uFEFF" + rows.map(e => e.join(",")).join("\n");
+    let encodedUri = encodeURI(csvContent);
+    let link = document.createElement("a");
+    link.setAttribute("href", encodedUri);
+    link.setAttribute("download", `IST_Replenishment_Plan_${b}_2026.csv`);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  }
+
+  // إدارة Action Hub لـ DZL و MMS
   function switchDZLMovers(t) {
     dzlMoversType = t;
     document.getElementById("btn-dzl-top").classList.toggle('active', t === 'top');
@@ -1373,7 +1445,6 @@ def process_and_build():
       document.getElementById("headerSubtitle").innerText = "October 2026 Daily Phasing & Commercial Performance Tracking";
     }
 
-    // إعادة رسم جدول المتاجر بالكامل حسب الشهر المختار
     let rowsHtml = "";
     let idx = 1;
     Object.values(currentStoreMeta).forEach(r => {
@@ -1385,7 +1456,7 @@ def process_and_build():
       rowsHtml += `<tr class="clickable-row store-row" data-brand="${r.brand}" data-region="${r.region}" onclick="openStoreModal('${r.code}')">
         <td style="color:#64748b; font-weight:600;">${idx++}</td>
         <td style="color:#38bdf8; font-weight:700;">${r.code}</td>
-        <td style="color:#fff; font-weight:600;">${brandBadge} ${r.name}</td>
+        <td style="color:#fff; font-weight:600;">${brandBadge} {r.name}</td>
         <td style="color:#94a3b8; font-size:12px;">${r.region}</td>
         <td style="color:#f8fafc; font-weight:700;">${r.sales.toLocaleString()}</td>
         <td style="color:#38bdf8;">${lyStr}</td>
@@ -1415,7 +1486,6 @@ def process_and_build():
     sep_totals_dict = sep_brand_totals if sep_brand_totals else brand_totals
 
     final_html = template_html.replace("__STORE_TABLE_ROWS__", store_table_rows)
-    final_html = final_html.replace("__REPL_ROWS_HTML__", repl_rows_html)
     final_html = final_html.replace("__BRAND_TOTALS_JSON__", json.dumps(brand_totals))
     final_html = final_html.replace("__SEP_BRAND_TOTALS_JSON__", json.dumps(sep_totals_dict))
     final_html = final_html.replace("__STORE_META_JSON__", json.dumps(store_meta_map))
@@ -1426,6 +1496,7 @@ def process_and_build():
     final_html = final_html.replace("__DZL_MOVERS_JSON__", json.dumps(dzl_store_movers))
     final_html = final_html.replace("__HIERARCHY_TREE_JSON__", json.dumps(hierarchy_tree))
     final_html = final_html.replace("__DZL_GENDER_JSON__", json.dumps(dzl_gender_data))
+    final_html = final_html.replace("__REPL_ITEMS_JSON__", json.dumps(repl_data_list))
 
     out_file = os.path.join(REPORTS_DIR, "MMS_Executive_KPI_Dashboard.html")
     with open(out_file, "w", encoding="utf-8") as f:
