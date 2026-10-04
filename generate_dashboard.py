@@ -9,7 +9,7 @@ import numpy as np
 REPORTS_DIR = "./reports"
 
 STORE_MAPPING = {
-    # Central & Eastern Region (Sultan - 11 Doors)
+    # Central & Eastern Region (Sultan - 10 MMS + 3 DZL)
     "K108": {"full_name": "MMS Riyadh Solitaire", "region": "Central & Eastern Region", "manager": "Sultan", "city": "Riyadh", "brand": "MMS"},
     "K301": {"full_name": "MMS Mall of Dhahran", "region": "Central & Eastern Region", "manager": "Sultan", "city": "Dhahran", "brand": "MMS"},
     "K101": {"full_name": "MMS Riyadh The View Mall", "region": "Central & Eastern Region", "manager": "Sultan", "city": "Riyadh", "brand": "MMS"},
@@ -17,12 +17,11 @@ STORE_MAPPING = {
     "K102": {"full_name": "MMS Riyadh Tala Mall", "region": "Central & Eastern Region", "manager": "Sultan", "city": "Riyadh", "brand": "MMS"},
     "K109": {"full_name": "MMS Riyadh Lastrada", "region": "Central & Eastern Region", "manager": "Sultan", "city": "Riyadh", "brand": "MMS"},
     "K130": {"full_name": "MMS Riyadh Al-Rabwa", "region": "Central & Eastern Region", "manager": "Sultan", "city": "Riyadh", "brand": "MMS"},
-    "K111": {"full_name": "MMS Riyadh Al-Rabwa (K111)", "region": "Central & Eastern Region", "manager": "Sultan", "city": "Riyadh", "brand": "MMS"},
     "K107": {"full_name": "DZL Riyadh Park", "region": "Central & Eastern Region", "manager": "Sultan", "city": "Riyadh", "brand": "DZL"},
     "K104": {"full_name": "DZL Riyadh U-Walk", "region": "Central & Eastern Region", "manager": "Sultan", "city": "Riyadh", "brand": "DZL"},
-    "K112": {"full_name": "DZL Solitaire", "region": "Central & Eastern Region", "manager": "Sultan", "city": "Riyadh", "brand": "DZL"},
+    "K111": {"full_name": "DZL Solitaire", "region": "Central & Eastern Region", "manager": "Sultan", "city": "Riyadh", "brand": "DZL"},
 
-    # Western, Southern & Northern Region (Rajib - 12 Doors)
+    # Western, Southern & Northern Region (Rajib - 10 MMS + 1 DZL)
     "K205": {"full_name": "MMS Jeddah U-Walk", "region": "Western, Southern & Northern Region", "manager": "Rajib", "city": "Jeddah", "brand": "MMS"},
     "K211": {"full_name": "MMS Madinah", "region": "Western, Southern & Northern Region", "manager": "Rajib", "city": "Madinah", "brand": "MMS"},
     "K201": {"full_name": "MMS Jeddah Park", "region": "Western, Southern & Northern Region", "manager": "Rajib", "city": "Jeddah", "brand": "MMS"},
@@ -36,7 +35,7 @@ STORE_MAPPING = {
     "K204": {"full_name": "DZL Redsea", "region": "Western, Southern & Northern Region", "manager": "Rajib", "city": "Jeddah", "brand": "DZL"}
 }
 
-DZL_VALID_CODES = {"K107", "K104", "K112", "K204"}
+DZL_VALID_CODES = {"K107", "K104", "K111", "K204"}
 MMS_VALID_CODES = {k for k, v in STORE_MAPPING.items() if v["brand"] == "MMS"}
 ALL_VALID_CODES = set(STORE_MAPPING.keys())
 
@@ -49,11 +48,11 @@ EXCLUDED_KEYWORDS = [
 def clean_store_code_str(val):
     s = str(val).strip().upper()
     if s.endswith('.0'): s = s[:-2]
-    if "DZL107" in s or "107 - RIYADH" in s or "RIYADH PARK(DZL)" in s: return "K107"
-    if "DZL104" in s or "104 - UWALK" in s or "UWALK(DZL)" in s or "K104" in s: return "K104"
-    if "DZL112" in s or "SOLITAIRE(DZL)" in s or "K112" in s or "112" in s: return "K112"
-    if "DZL204" in s or "204 - RED SEA" in s or "RED SEA(DZL)" in s or "K204" in s: return "K204"
-    if "RABWA" in s and "111" in s: return "K111"
+    # مطابقة دوزولو الصارمة
+    if "DZL107" in s or "RIYADH PARK(DZL)" in s or ("107" in s and "DZL" in s): return "K107"
+    if "DZL104" in s or "UWALK(DZL)" in s or ("104" in s and "DZL" in s): return "K104"
+    if "DZL112" in s or "SOLITAIRE(DZL)" in s or ("111" in s and "DZL" in s) or ("112" in s and "DZL" in s): return "K111"
+    if "DZL204" in s or "RED SEA(DZL)" in s or ("204" in s and "DZL" in s): return "K204"
     if "RABWA" in s: return "K130"
     m = re.search(r'\b[A-Z]?(\d{3,4})\b', s)
     if m: return f"K{m.group(1)}"
@@ -229,7 +228,6 @@ def process_and_build():
 
     df_clean = pd.concat(dfs, ignore_index=True) if dfs else pd.DataFrame()
     
-    # التعرف التلقائي على عمود المبيعات والكمية
     col_sales_match = next((c for c in df_clean.columns if any(k in str(c).lower() for k in ['actual sales amount', 'actual sales', 'actual amount', 'sales amount', 'amount', 'revenue'])), None)
     col_qty_match = next((c for c in df_clean.columns if any(k in str(c).lower() for k in ['sales quantity', 'quantity', 'qty', 'units'])), None)
 
@@ -257,7 +255,6 @@ def process_and_build():
     df_clean['clean_sku'] = df_clean[item_col].apply(clean_sku_code)
     df_clean['clean_name'] = df_clean[name_col].fillna("Item").astype(str)
     
-    # تعيين الهيكلية الشجرية للمنتجات
     def get_category_hierarchy(r):
         b_c = r['clean_sku']
         name_l = r['clean_name'].lower()
@@ -266,14 +263,15 @@ def process_and_build():
                 return "Shoes", "Footwear Styles", r['clean_name'][:25]
             return "Accessories", "Fashion Acc", r['clean_name'][:25]
         
-        # MUMUSO HIERARCHY
         main_c = str(r[cat_col]).strip() if cat_col and pd.notna(r[cat_col]) else sku_to_cat.get(b_c, "Variety Lifestyle")
         if main_c in ["nan", "None", "", "General"]:
-            if any(x in name_l for x in ['toy', 'doll', 'clay', 'puzzle']): main_c = "Children's Goods"
-            elif any(x in name_l for x in ['lip', 'mask', 'cream', 'perfume', 'makeup']): main_c = "Beauty & Cleaning"
-            elif any(x in name_l for x in ['cup', 'mat', 'storage', 'kitchen']): main_c = "Home & Daily Use"
-            elif any(x in name_l for x in ['cable', 'headphone', 'fan', 'usb']): main_c = "3C Electronics"
-            elif any(x in name_l for x in ['bag', 'backpack', 'wallet']): main_c = "Bags"
+            if any(x in name_l for x in ['toy', 'doll', 'clay', 'puzzle', 'baby']): main_c = "Children's Goods"
+            elif any(x in name_l for x in ['lip', 'mask', 'cream', 'perfume', 'makeup', 'beauty', 'clean']): main_c = "Beauty & Cleaning"
+            elif any(x in name_l for x in ['cup', 'mat', 'storage', 'kitchen', 'umbrella']): main_c = "Home & Daily Use"
+            elif any(x in name_l for x in ['cable', 'headphone', 'fan', 'usb', 'charger']): main_c = "3C Electronics"
+            elif any(x in name_l for x in ['bag', 'backpack', 'wallet', 'purse']): main_c = "Bags"
+            elif any(x in name_l for x in ['sock', 'hat', 'sunglass']): main_c = "Apparel Accessories"
+            elif any(x in name_l for x in ['pen', 'notebook', 'pencil']): main_c = "Stationery"
             else: main_c = "Variety Lifestyle"
 
         sub_c = str(r[subcat_col]).strip() if subcat_col and pd.notna(r[subcat_col]) else f"{main_c} Class"
@@ -323,7 +321,6 @@ def process_and_build():
             "diag": diag, "diag_col": diag_col, "soh_units": soh_units, "woc": woc
         })
 
-        # تفاصيل فئات المتجر للـ Modal
         cats_list = []
         if not st_df.empty:
             c_grp = st_df.groupby('main_category', as_index=False).agg(cs=('Actual Sales Amount', 'sum'), cu=('Sales Quantity', 'sum'))
@@ -340,7 +337,7 @@ def process_and_build():
 
     perf_df = pd.DataFrame(store_rows_data).sort_values(by='sales', ascending=False).reset_index(drop=True)
 
-    # حساب المجاميع لكل فلتر براند
+    # حساب الـ Totals الدقيقة لكل اختيار براند
     brand_totals = {}
     for b in ['ALL', 'MMS', 'DZL']:
         sub = perf_df if b == 'ALL' else perf_df[perf_df['brand'] == b]
@@ -366,8 +363,8 @@ def process_and_build():
     # بناء الأسطر في الجدول الرئيسي
     store_table_rows = ""
     for idx, r in perf_df.iterrows():
-        yoy_str = f'<span style="color:{"#10b981" if r["yoy"]>=0 else "#ef4444"}; font-weight:700;">{r["yoy"]:+.1f}%</span>' if pd.notna(r["yoy"]) else '<span style="color:#64748b;">New Store</span>'
-        ly_str = f"{r['ly_sales']:,}" if pd.notna(r['ly_sales']) else '<span style="color:#64748b;">New Store</span>'
+        yoy_str = f'<span style="color:{"#10b981" if r["yoy"]>=0 else "#ef4444"}; font-weight:700;">{r["yoy"]:+.1f}%</span>' if pd.notna(r["yoy"]) else '<span style="color:#64748b;">-</span>'
+        ly_str = f"{r['ly_sales']:,}" if pd.notna(r['ly_sales']) else '<span style="color:#64748b;">-</span>'
         ach_col = "#10b981" if r['ach'] >= 100 else ("#f59e0b" if r['ach'] >= 80 else "#ef4444")
         diag_badge = f'<span class="badge" style="background:{r["diag_col"]}22; color:{r["diag_col"]}; border:1px solid {r["diag_col"]}55;">{r["diag"]}</span>'
         brand_badge = f'<span class="badge" style="background:{"#ef444422" if r["brand"]=="DZL" else "#38bdf822"}; color:{"#ef4444" if r["brand"]=="DZL" else "#38bdf8"};">{r["brand"]}</span>'
@@ -397,14 +394,12 @@ def process_and_build():
     for reg in ["Central & Eastern Region", "Western, Southern & Northern Region"]:
         reg_df = perf_df[perf_df['region'] == reg]
         region_data[reg] = {
-            "Sultan" if "Central" in reg else "Rajib": {
-                "ALL": reg_df.to_dict(orient='records'),
-                "MMS": reg_df[reg_df['brand'] == 'MMS'].to_dict(orient='records'),
-                "DZL": reg_df[reg_df['brand'] == 'DZL'].to_dict(orient='records')
-            }
+            "ALL": reg_df.to_dict(orient='records'),
+            "MMS": reg_df[reg_df['brand'] == 'MMS'].to_dict(orient='records'),
+            "DZL": reg_df[reg_df['brand'] == 'DZL'].to_dict(orient='records')
         }
 
-    # هيكلية الـ Drill-down الكاملة لتبويب Business & Gender
+    # هيكلية الـ Drill-down المتسلسلة لـ Business & Gender
     hierarchy_tree = {}
     for b in ['ALL', 'MMS', 'DZL']:
         sub_c = df_clean if b == 'ALL' else df_clean[df_clean['brand'] == b]
@@ -637,7 +632,7 @@ def process_and_build():
         <div class="brand-switcher">
             <button class="brand-btn active" id="btn-ALL" onclick="switchBrand('ALL')">🏢 ALL BRANDS</button>
             <button class="brand-btn" id="btn-MMS" onclick="switchBrand('MMS')">🔴 MUMUSO (17)</button>
-            <button class="brand-btn" id="btn-DZL" onclick="switchBrand('DZL')">🟡 DZL (3)</button>
+            <button class="brand-btn" id="btn-DZL" onclick="switchBrand('DZL')">🟡 DZL (4)</button>
         </div>
         <span id="current-user-badge" style="font-size:13px; font-weight:700; color:#38bdf8; background:#1e293b; padding:8px 14px; border-radius:8px;">👤 Authenticating..</span>
         <button onclick="logout()" style="background:#ef444422; border:1px solid #ef444455; color:#ef4444; padding:8px 14px; border-radius:8px; font-weight:700; cursor:pointer;">Logout</button>
@@ -709,6 +704,20 @@ def process_and_build():
             <table id="regionCentralTable">
                 <thead><tr><th>#</th><th>Code</th><th>Store Name</th><th>Sales</th><th>LY Sales</th><th>YoY</th><th>Target</th><th>% Ach</th><th>Units</th><th>Trans</th><th>UPT</th><th>ASP</th></tr></thead>
                 <tbody></tbody>
+                <tfoot>
+                    <tr id="centralTotalRow" style="background:#0c1220; font-weight:800; border-top:2px solid #38bdf8;">
+                        <td colspan="3" style="color:#38bdf8;">TOTAL CENTRAL REGION</td>
+                        <td style="color:#fff;" id="c-tot-sales">-</td>
+                        <td style="color:#38bdf8;" id="c-tot-ly">-</td>
+                        <td id="c-tot-yoy">-</td>
+                        <td style="color:#94a3b8;" id="c-tot-target">-</td>
+                        <td id="c-tot-ach">-</td>
+                        <td style="color:#38bdf8;" id="c-tot-units">-</td>
+                        <td style="color:#fff;" id="c-tot-txns">-</td>
+                        <td style="color:#10b981;" id="c-tot-upt">-</td>
+                        <td style="color:#f59e0b;" id="c-tot-asp">-</td>
+                    </tr>
+                </tfoot>
             </table>
         </div>
     </div>
@@ -720,6 +729,20 @@ def process_and_build():
             <table id="regionWesternTable">
                 <thead><tr><th>#</th><th>Code</th><th>Store Name</th><th>Sales</th><th>LY Sales</th><th>YoY</th><th>Target</th><th>% Ach</th><th>Units</th><th>Trans</th><th>UPT</th><th>ASP</th></tr></thead>
                 <tbody></tbody>
+                <tfoot>
+                    <tr id="westernTotalRow" style="background:#0c1220; font-weight:800; border-top:2px solid #818cf8;">
+                        <td colspan="3" style="color:#818cf8;">TOTAL WESTERN REGION</td>
+                        <td style="color:#fff;" id="w-tot-sales">-</td>
+                        <td style="color:#38bdf8;" id="w-tot-ly">-</td>
+                        <td id="w-tot-yoy">-</td>
+                        <td style="color:#94a3b8;" id="w-tot-target">-</td>
+                        <td id="w-tot-ach">-</td>
+                        <td style="color:#38bdf8;" id="w-tot-units">-</td>
+                        <td style="color:#fff;" id="w-tot-txns">-</td>
+                        <td style="color:#10b981;" id="w-tot-upt">-</td>
+                        <td style="color:#f59e0b;" id="w-tot-asp">-</td>
+                    </tr>
+                </tfoot>
             </table>
         </div>
     </div>
@@ -780,7 +803,7 @@ def process_and_build():
                     <option value="ALL">All DZL Stores</option>
                     <option value="K107">DZL Riyadh Park (K107)</option>
                     <option value="K104">DZL Riyadh U-Walk (K104)</option>
-                    <option value="K112">DZL Solitaire (K112)</option>
+                    <option value="K111">DZL Solitaire (K111)</option>
                     <option value="K204">DZL Redsea (K204)</option>
                 </select>
             </div>
@@ -855,8 +878,7 @@ def process_and_build():
     document.getElementById("kpi-atv").innerText = "SAR " + d.atv;
     document.getElementById("kpi-asp").innerText = "SAR " + d.asp;
 
-    // تحديث صف الإجمالي أسفل جدول المتاجر
-    document.getElementById("totalRowTitle").innerText = (b === 'ALL') ? "TOTAL PORTFOLIO (ALL DOORS)" : (b === 'MMS' ? "TOTAL MUMUSO NETWORK (17 DOORS)" : "TOTAL DZL DOZOLO (3 DOORS)");
+    document.getElementById("totalRowTitle").innerText = (b === 'ALL') ? "TOTAL PORTFOLIO (ALL DOORS)" : (b === 'MMS' ? "TOTAL MUMUSO NETWORK (17 DOORS)" : "TOTAL DZL DOZOLO (4 DOORS)");
     document.getElementById("tot-sales").innerText = d.sales;
     document.getElementById("tot-ly").innerText = d.ly;
     const totYoy = document.getElementById("tot-yoy");
@@ -919,8 +941,8 @@ def process_and_build():
     const westernTbody = document.querySelector("#regionWesternTable tbody");
     let cRows = "", wRows = "";
     let cIdx = 1, wIdx = 1;
-    let cSales = 0, cTarget = 0, cUnits = 0, cTxns = 0;
-    let wSales = 0, wTarget = 0, wUnits = 0, wTxns = 0;
+    let cSales = 0, cTarget = 0, cUnits = 0, cTxns = 0, cLy = 0;
+    let wSales = 0, wTarget = 0, wUnits = 0, wTxns = 0, wLy = 0;
 
     Object.values(STORE_META).forEach(r => {
       if (activeBrand !== 'ALL' && r.brand !== activeBrand) return;
@@ -943,18 +965,22 @@ def process_and_build():
 
       if (isCentral) {
         cRows += rowHtml; cSales += r.sales; cTarget += r.target; cUnits += r.units; cTxns += r.txns;
+        if (r.ly_sales) cLy += r.ly_sales;
       } else {
         wRows += rowHtml; wSales += r.sales; wTarget += r.target; wUnits += r.units; wTxns += r.txns;
+        if (r.ly_sales) wLy += r.ly_sales;
       }
     });
 
     if (centralTbody) centralTbody.innerHTML = cRows;
     if (westernTbody) westernTbody.innerHTML = wRows;
 
-    // بطاقات الإجمالي لكل منطقة في الأعلى
     const cAch = (cTarget > 0) ? (cSales / cTarget * 100).toFixed(1) : 0;
     const wAch = (wTarget > 0) ? (wSales / wTarget * 100).toFixed(1) : 0;
+    const cYoy = (cLy > 0) ? ((cSales - cLy) / cLy * 100).toFixed(1) : 0;
+    const wYoy = (wLy > 0) ? ((wSales - wLy) / wLy * 100).toFixed(1) : 0;
 
+    // ملء بطاقات الإجمالي لكل منطقة
     document.getElementById("centralRegionOverview").innerHTML = `
       <div class="kpi-card"><div class="kpi-title">CENTRAL SALES</div><div class="kpi-value">${cSales.toLocaleString()} <span style="font-size:11px;">SAR</span></div></div>
       <div class="kpi-card"><div class="kpi-title">CENTRAL TARGET</div><div class="kpi-value">${Math.round(cTarget).toLocaleString()} <span style="font-size:11px;">SAR</span></div></div>
@@ -970,9 +996,29 @@ def process_and_build():
       <div class="kpi-card"><div class="kpi-title">QUANTITY</div><div class="kpi-value" style="color:#38bdf8;">${wUnits.toLocaleString()}</div></div>
       <div class="kpi-card"><div class="kpi-title">ACTIVE DOORS</div><div class="kpi-value">${wIdx-1}</div></div>
     `;
+
+    // ملء صف الـ Total أسفل جداول الـ Region
+    document.getElementById("c-tot-sales").innerText = cSales.toLocaleString();
+    document.getElementById("c-tot-ly").innerText = cLy.toLocaleString();
+    document.getElementById("c-tot-yoy").innerHTML = `<span style="color:${cYoy>=0?'#10b981':'#ef4444'}">${cYoy>0?'+':''}${cYoy}%</span>`;
+    document.getElementById("c-tot-target").innerText = Math.round(cTarget).toLocaleString();
+    document.getElementById("c-tot-ach").innerHTML = `<span style="color:${cAch>=100?'#10b981':'#f59e0b'}">${cAch}%</span>`;
+    document.getElementById("c-tot-units").innerText = cUnits.toLocaleString();
+    document.getElementById("c-tot-txns").innerText = cTxns.toLocaleString();
+    document.getElementById("c-tot-upt").innerText = (cTxns>0?(cUnits/cTxns).toFixed(2):"0.00");
+    document.getElementById("c-tot-asp").innerText = (cUnits>0?Math.round(cSales/cUnits):0);
+
+    document.getElementById("w-tot-sales").innerText = wSales.toLocaleString();
+    document.getElementById("w-tot-ly").innerText = wLy.toLocaleString();
+    document.getElementById("w-tot-yoy").innerHTML = `<span style="color:${wYoy>=0?'#10b981':'#ef4444'}">${wYoy>0?'+':''}${wYoy}%</span>`;
+    document.getElementById("w-tot-target").innerText = Math.round(wTarget).toLocaleString();
+    document.getElementById("w-tot-ach").innerHTML = `<span style="color:${wAch>=100?'#10b981':'#f59e0b'}">${wAch}%</span>`;
+    document.getElementById("w-tot-units").innerText = wUnits.toLocaleString();
+    document.getElementById("w-tot-txns").innerText = wTxns.toLocaleString();
+    document.getElementById("w-tot-upt").innerText = (wTxns>0?(wUnits/wTxns).toFixed(2):"0.00");
+    document.getElementById("w-tot-asp").innerText = (wUnits>0?Math.round(wSales/wUnits):0);
   }
 
-  // نظام الـ Drill-Down المتسلسل للـ Categories
   function renderDrillDown() {
     const tree = HIERARCHY_TREE[activeBrand] || {};
     const thead = document.getElementById("drillTableHead");
@@ -1051,14 +1097,16 @@ def process_and_build():
 
     const donutEl = document.querySelector("#apexCategoryDonut");
     if (donutEl) {
-      if (donutChart) donutChart.destroy();
-      donutChart = new ApexCharts(donutEl, {
-        series: catSeries.length ? catSeries : [1],
-        labels: catLabels.length ? catLabels : ["No Data"],
-        chart: { type: 'donut', height: 330, background: 'transparent' },
-        theme: { mode: 'dark' }, colors: colors, legend: { position: 'bottom', labels: { colors: '#cbd5e1' } }
-      });
-      donutChart.render();
+      donutEl.innerHTML = "";
+      if (donutChart) { try { donutChart.destroy(); } catch(e){} }
+      if (catSeries.length > 0) {
+        donutChart = new ApexCharts(donutEl, {
+          series: catSeries, labels: catLabels,
+          chart: { type: 'donut', height: 330, background: 'transparent' },
+          theme: { mode: 'dark' }, colors: colors, legend: { position: 'bottom', labels: { colors: '#cbd5e1' } }
+        });
+        donutChart.render();
+      }
     }
 
     const genderWrapper = document.getElementById("genderChartWrapper");
@@ -1066,12 +1114,16 @@ def process_and_build():
       if (genderWrapper) genderWrapper.style.display = "block";
       const genderEl = document.querySelector("#apexGenderDonut");
       if (genderEl) {
-        if (genderChart) genderChart.destroy();
-        genderChart = new ApexCharts(genderEl, {
-          series: DZL_GENDER.series, labels: DZL_GENDER.labels, chart: { type: 'donut', height: 330, background: 'transparent' },
-          theme: { mode: 'dark' }, colors: ['#ec4899', '#38bdf8', '#10b981'], legend: { position: 'bottom', labels: { colors: '#cbd5e1' } }
-        });
-        genderChart.render();
+        genderEl.innerHTML = "";
+        if (genderChart) { try { genderChart.destroy(); } catch(e){} }
+        if (DZL_GENDER.series.length > 0) {
+          genderChart = new ApexCharts(genderEl, {
+            series: DZL_GENDER.series, labels: DZL_GENDER.labels,
+            chart: { type: 'donut', height: 330, background: 'transparent' },
+            theme: { mode: 'dark' }, colors: ['#ec4899', '#38bdf8', '#10b981'], legend: { position: 'bottom', labels: { colors: '#cbd5e1' } }
+          });
+          genderChart.render();
+        }
       }
     } else {
       if (genderWrapper) genderWrapper.style.display = "none";
@@ -1092,7 +1144,7 @@ def process_and_build():
         renderCharts();
         renderDrillDown();
         window.dispatchEvent(new Event('resize'));
-      }, 50);
+      }, 80);
     }
   }
 
@@ -1137,7 +1189,6 @@ def process_and_build():
 
   function closeModal() { document.getElementById("store-modal").style.display = "none"; }
 
-  // إدارة Action Hub لـ DZL و MMS
   function switchDZLMovers(t) {
     dzlMoversType = t;
     document.getElementById("btn-dzl-top").classList.toggle('active', t === 'top');
@@ -1183,7 +1234,7 @@ def process_and_build():
         <td style="color:#fff;">${r.clean_name}</td>
         <td style="color:#94a3b8;">${r.main_category}</td>
         <td style="color:#38bdf8; font-weight:700;">${r.units.toLocaleString()}</td>
-        <td style="color:#fff; font-weight:700;">${r.sales.toLocaleString()}</td>
+        <td style="color:#fff; font-weight:700;">${Math.round(r.sales).toLocaleString()}</td>
         <td style="color:#f59e0b;">${r.asp}</td>
       </tr>`;
     });
@@ -1191,8 +1242,12 @@ def process_and_build():
   }
 
   function switchMonth(m) {
-    if (m === "SEP") alert("Loading September 2026 Archive.");
-    else location.reload();
+    if (m === "SEP") {
+      alert("Loading September 2026 Archive benchmark data.");
+      // التبديل لأرشيف سبتمبر عند الحاجة
+    } else {
+      location.reload();
+    }
   }
 </script>
 
