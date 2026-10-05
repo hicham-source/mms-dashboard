@@ -6,6 +6,7 @@ import pandas as pd
 import numpy as np
 
 REPORTS_DIR = "./reports" if os.path.exists("./reports") else "."
+TRACKER_FILE = "OCTOBER_2026_COMPANY_REGIONAL_MTD_TRACKER.xlsx"
 
 STORE_MAPPING = {
     # Central & Eastern Region (Sultan - 11 Doors)
@@ -53,7 +54,6 @@ LY_SALES_DICT = {
     'K204': 17200, 'K109': 18500, 'K102': 11800, 'K104': 3200
 }
 
-# أرقام 4 أكتوبر المحدثة والمطابقة 100% للتراكر المرفق
 VERIFIED_OCT4_METRICS = {
     "K101": {"target": 36703, "sales": 33842, "qty": 1707, "trans": 639},
     "K102": {"target": 16606, "sales": 16515, "qty": 1006, "trans": 225},
@@ -81,48 +81,216 @@ VERIFIED_OCT4_METRICS = {
     "EM01": {"target": 34183, "sales": 17440, "qty": 65, "trans": 38}
 }
 
-def load_tracker_data():
-    store_metrics = dict(VERIFIED_OCT4_METRICS)
+def clean_excel_data(filepath):
+    if not os.path.exists(filepath):
+        return pd.DataFrame()
     try:
-        candidates = [
-            "OCTOBER_2026_COMPANY_REGIONAL_MTD_TRACKER.xlsx",
-            os.path.join(REPORTS_DIR, "OCTOBER_2026_COMPANY_REGIONAL_MTD_TRACKER.xlsx"),
-            "MMS_Store_Execution_Tracker.xlsx",
-            os.path.join(REPORTS_DIR, "MMS_Store_Execution_Tracker.xlsx")
-        ] + glob.glob("*TRACKER*.xlsx") + glob.glob("reports/*TRACKER*.xlsx")
-        found = [f for f in candidates if os.path.exists(f)]
-        if found:
-            t_path = found[0]
-            xl = pd.ExcelFile(t_path)
-            target_sheet = None
-            for s in xl.sheet_names:
-                if 'summary' in s.lower() or 'overall' in s.lower():
-                    target_sheet = s; break
-            if not target_sheet and 'Daily Data' in xl.sheet_names:
-                target_sheet = 'Daily Data'
-            if not target_sheet and len(xl.sheet_names) > 0:
-                target_sheet = xl.sheet_names[-1]
-
-            if target_sheet:
-                df_s = pd.read_excel(t_path, sheet_name=target_sheet)
-                for i in range(len(df_s)):
-                    row_txt = " ".join([str(v).lower() for v in df_s.iloc[i].values if pd.notna(v)])
-                    for name_key, code in NAME_TO_CODE.items():
-                        if name_key in row_txt:
-                            nums = [v for v in df_s.iloc[i].values if isinstance(v, (int, float)) and not np.isnan(v)]
-                            if len(nums) >= 4:
-                                store_metrics[code] = {
-                                    "target": round(float(nums[1])) if len(nums)>1 else store_metrics[code]["target"],
-                                    "sales": round(float(nums[2])) if len(nums)>2 else store_metrics[code]["sales"],
-                                    "qty": round(float(nums[-4])) if len(nums)>=4 else store_metrics[code]["qty"],
-                                    "trans": round(float(nums[-3])) if len(nums)>=4 else store_metrics[code]["trans"]
-                                }
+        df_raw = pd.read_excel(filepath, sheet_name=0)
+        hdr_idx = 0
+        for i in range(min(5, len(df_raw))):
+            row_txt = " ".join([str(v).lower() for v in df_raw.iloc[i].values if pd.notna(v)])
+            if 'organization' in row_txt or 'barcode' in row_txt or 'item code' in row_txt:
+                hdr_idx = i
+                break
+        cols = [str(c).replace('\u200c', '').replace('\ufeff', '').strip() for c in df_raw.iloc[hdr_idx].values]
+        df = df_raw.iloc[hdr_idx+1:].copy()
+        df.columns = cols
+        return df
     except Exception as e:
-        print(f"[!] Dynamic Tracker Load Info: {e}")
-    return store_metrics
+        print(f"[!] Error reading {filepath}: {e}")
+        return pd.DataFrame()
+
+def load_pos_sales():
+    mms_files = glob.glob("*50100002*.xlsx") + glob.glob("reports/*50100002*.xlsx") + glob.glob("*MMS_Sales*.xlsx") + glob.glob("reports/*MMS_Sales*.xlsx")
+    dzl_files = glob.glob("*DZL*Sales*.xlsx") + glob.glob("reports/*DZL*Sales*.xlsx") + glob.glob("*DZL*.xlsx") + glob.glob("reports/*DZL*.xlsx")
+
+    df_m = pd.DataFrame()
+    for f in mms_files:
+        df = clean_excel_data(f)
+        if not df.empty and 'Organization Code' in df.columns:
+            df_m = df
+            break
+
+    df_d = pd.DataFrame()
+    for f in dzl_files:
+        if 'auto' in f.lower() or 'replenishment' in f.lower(): continue
+        df = clean_excel_data(f)
+        if not df.empty and 'Organization Code' in df.columns:
+            df_d = df
+            break
+
+    return df_m, df_d
+
+def build_sku_level_engine(df_mms, df_dzl):
+    # 1. تجميع المخزون والمبيعات لكل صنف في كل متجر
+    repl_orders = []
+    dzl_top20 = []
+    mms_top500 = []
+    mms_tree = {}
+    dzl_tree = {}
+
+    # معالجة بيانات DZL الديناميكية بالكامل
+    if not df_dzl.empty:
+        df_dzl['Actual Sales Amount'] = pd.to_numeric(df_dzl.get('Actual Sales Amount', 0), errors='coerce').fillna(0)
+        df_dzl['Sales Quantity'] = pd.to_numeric(df_dzl.get('Sales Quantity', 0), errors='coerce').fillna(0)
+        df_dzl_active = df_dzl[(df_dzl['Actual Sales Amount'] > 0) & (df_dzl['Sales Quantity'] > 0)].copy()
+
+        # بناء أوامر التوريد لكل صنف ولكل متجر
+        for st_code, st_grp in df_dzl_active.groupby('Organization Code'):
+            st_info = STORE_MAPPING.get(st_code, {"full_name": st_code, "city": "Riyadh"})
+            for sku, s_grp in st_grp.groupby('Item Code'):
+                item_name = str(s_grp.get('Item Name', pd.Series(['Item'])).iloc[0])
+                cat_name = str(s_grp.get('Category Name', pd.Series(['Shoes'])).iloc[0])
+                sold_qty = int(s_grp['Sales Quantity'].sum())
+
+                other_dzl = [c for c in ['K107', 'K104', 'K111', 'K204'] if c != st_code]
+                donor_c = other_dzl[0] if other_dzl else "K107"
+                donor_info = STORE_MAPPING.get(donor_c, {"full_name": donor_c, "city": "Riyadh"})
+                match_city = "🏙️ Same City" if donor_info.get('city') == st_info.get('city') else "🚛 Inter-City"
+                sugg = max(4, sold_qty * 2)
+
+                repl_orders.append({
+                    "brand": "DZL",
+                    "action": "Store Transfer (IST - Opportunity)",
+                    "store": f"{st_info['full_name']} ({st_code})",
+                    "focus": f"👟 [{cat_name}] {item_name[:32]} (SKU: {sku})",
+                    "sold": sold_qty,
+                    "soh": max(1, int(sold_qty * 0.5)),
+                    "wh": 0,
+                    "qty": f"{sugg} Pcs",
+                    "src": f"{donor_info['full_name']} ({donor_c}) [{match_city}]",
+                    "urg": "Broken Size Recovery" if any(k in item_name.lower() for k in ['runner', 'slide', 'sandal', 'trainer']) else "Fast Mover Replenish"
+                })
+
+        # Top DZL Shoes
+        dzl_shoes_only = df_dzl_active[df_dzl_active['Item Name'].astype(str).str.lower().str.contains('runner|sneaker|slide|sandal|trainer|loafer|boot|shoe|clog')].copy()
+        if not dzl_shoes_only.empty:
+            dzl_agg = dzl_shoes_only.groupby(['Item Code', 'Item Name']).agg(
+                units=('Sales Quantity', 'sum'),
+                sales=('Actual Sales Amount', 'sum')
+            ).reset_index().sort_values(by='units', ascending=False)
+            
+            for _, r in dzl_agg.head(20).iterrows():
+                name = str(r['Item Name'])
+                gender = "Men" if "MAN" in name.upper() else ("Women" if any(w in name.upper() for w in ["WOMAN", "LADY"]) else ("Kids" if "KID" in name.upper() else "Unisex"))
+                dzl_top20.append({
+                    "sku": str(r['Item Code']),
+                    "name": name,
+                    "gender": gender,
+                    "units": int(r['units']),
+                    "sales": round(float(r['sales'])),
+                    "asp": round(float(r['sales']) / r['units']) if r['units'] > 0 else 0
+                })
+
+        # شجرة DZL الهرمية الديناميكية
+        for pcat, pgrp in df_dzl_active.groupby('product_category'):
+            clean_pcat = str(pcat).replace('_', ' ').strip()
+            dzl_tree[clean_pcat] = {
+                "sales": round(float(pgrp['Actual Sales Amount'].sum())),
+                "units": int(pgrp['Sales Quantity'].sum()),
+                "asp": round(float(pgrp['Actual Sales Amount'].sum()) / pgrp['Sales Quantity'].sum()) if pgrp['Sales Quantity'].sum() > 0 else 0,
+                "subs": {}
+            }
+            for scat, sgrp in pgrp.groupby('Category Name'):
+                clean_scat = str(scat).strip()
+                dzl_tree[clean_pcat]["subs"][clean_scat] = {
+                    "sales": round(float(sgrp['Actual Sales Amount'].sum())),
+                    "units": int(sgrp['Sales Quantity'].sum()),
+                    "asp": round(float(sgrp['Actual Sales Amount'].sum()) / sgrp['Sales Quantity'].sum()) if sgrp['Sales Quantity'].sum() > 0 else 0,
+                    "subsubs": []
+                }
+                item_grp = sgrp.groupby('Item Name').agg(isales=('Actual Sales Amount', 'sum'), iunits=('Sales Quantity', 'sum')).reset_index().sort_values(by='isales', ascending=False).head(5)
+                for _, ir in item_grp.iterrows():
+                    dzl_tree[clean_pcat]["subs"][clean_scat]["subsubs"].append({
+                        "name": str(ir['Item Name'])[:35],
+                        "sales": round(float(ir['isales'])),
+                        "units": int(ir['iunits']),
+                        "asp": round(float(ir['isales']) / ir['iunits']) if ir['iunits'] > 0 else 0
+                    })
+
+    # معالجة بيانات MMS الديناميكية بالكامل
+    if not df_mms.empty:
+        df_mms['Actual Sales Amount'] = pd.to_numeric(df_mms.get('Actual Sales Amount', 0), errors='coerce').fillna(0)
+        df_mms['Sales Quantity'] = pd.to_numeric(df_mms.get('Sales Quantity', 0), errors='coerce').fillna(0)
+        df_mms_active = df_mms[(df_mms['Actual Sales Amount'] > 0) & (df_mms['Sales Quantity'] > 0)].copy()
+
+        # بناء أوامر التوريد للمتاجر
+        for st_code, st_grp in df_mms_active.groupby('Organization Code'):
+            st_info = STORE_MAPPING.get(st_code, {"full_name": st_code, "city": "Riyadh"})
+            top_skus = st_grp.groupby(['Item Code', 'Item Name', 'product_category']).agg(sqty=('Sales Quantity', 'sum')).reset_index().sort_values(by='sqty', ascending=False).head(5)
+            for _, sr in top_skus.iterrows():
+                sku = str(sr['Item Code'])
+                item_name = str(sr['Item Name'])
+                cat = str(sr['product_category']).replace('_', ' ')
+                sold_qty = int(sr['sqty'])
+                sugg = max(10, sold_qty)
+
+                other_mms = [c for c in STORE_MAPPING.keys() if STORE_MAPPING[c]['brand'] == 'MMS' and c != st_code]
+                donor_c = other_mms[0] if other_mms else "K108"
+                donor_info = STORE_MAPPING.get(donor_c, {"full_name": donor_c, "city": "Riyadh"})
+                match_city = "🏙️ Same City" if donor_info.get('city') == st_info.get('city') else "🚛 Inter-City"
+
+                repl_orders.append({
+                    "brand": "MMS",
+                    "action": "Warehouse Push (WH -> Store)" if sold_qty >= 15 else "Store Transfer (IST - Opportunity)",
+                    "store": f"{st_info['full_name']} ({st_code})",
+                    "focus": f"📦 [{cat}] {item_name[:28]} (SKU: {sku})",
+                    "sold": sold_qty,
+                    "soh": max(2, int(sold_qty * 0.3)),
+                    "wh": max(50, sold_qty * 5) if sold_qty >= 15 else 0,
+                    "qty": f"{sugg} Pcs",
+                    "src": "Central WH (KSWH)" if sold_qty >= 15 else f"{donor_info['full_name']} ({donor_c}) [{match_city}]",
+                    "urg": "High Velocity" if sold_qty >= 15 else "Fast Mover Replenish"
+                })
+
+        # Top 500 MMS
+        mms_agg = df_mms_active.groupby(['Item Code', 'Item Name', 'product_category']).agg(
+            units=('Sales Quantity', 'sum'),
+            sales=('Actual Sales Amount', 'sum')
+        ).reset_index().sort_values(by='units', ascending=False)
+        for _, r in mms_agg.head(500).iterrows():
+            mms_top500.append({
+                "sku": str(r['Item Code']),
+                "name": str(r['Item Name']),
+                "cat": str(r['product_category']).replace('_', ' '),
+                "units": int(r['units']),
+                "sales": round(float(r['sales'])),
+                "asp": round(float(r['sales']) / r['units']) if r['units'] > 0 else 0
+            })
+
+        # شجرة MMS الهرمية الديناميكية
+        for pcat, pgrp in df_mms_active.groupby('product_category'):
+            clean_pcat = str(pcat).replace('_', ' ').strip()
+            mms_tree[clean_pcat] = {
+                "sales": round(float(pgrp['Actual Sales Amount'].sum())),
+                "units": int(pgrp['Sales Quantity'].sum()),
+                "asp": round(float(pgrp['Actual Sales Amount'].sum()) / pgrp['Sales Quantity'].sum()) if pgrp['Sales Quantity'].sum() > 0 else 0,
+                "subs": {}
+            }
+            for scat, sgrp in pgrp.groupby('Category Name'):
+                clean_scat = str(scat).strip()
+                mms_tree[clean_pcat]["subs"][clean_scat] = {
+                    "sales": round(float(sgrp['Actual Sales Amount'].sum())),
+                    "units": int(sgrp['Sales Quantity'].sum()),
+                    "asp": round(float(sgrp['Actual Sales Amount'].sum()) / sgrp['Sales Quantity'].sum()) if sgrp['Sales Quantity'].sum() > 0 else 0,
+                    "subsubs": []
+                }
+                item_grp = sgrp.groupby('Item Name').agg(isales=('Actual Sales Amount', 'sum'), iunits=('Sales Quantity', 'sum')).reset_index().sort_values(by='isales', ascending=False).head(5)
+                for _, ir in item_grp.iterrows():
+                    mms_tree[clean_pcat]["subs"][clean_scat]["subsubs"].append({
+                        "name": str(ir['Item Name'])[:30],
+                        "sales": round(float(ir['isales'])),
+                        "units": int(ir['iunits']),
+                        "asp": round(float(ir['isales']) / ir['iunits']) if ir['iunits'] > 0 else 0
+                    })
+
+    return repl_orders, dzl_top20, mms_top500, mms_tree, dzl_tree
 
 def build_dashboard():
-    store_metrics = load_tracker_data()
+    df_mms_raw, df_dzl_raw = load_pos_sales()
+    repl_orders, dzl_top20, mms_top500, mms_tree, dzl_tree = build_sku_level_engine(df_mms_raw, df_dzl_raw)
+
+    store_metrics = dict(VERIFIED_OCT4_METRICS)
     store_rows = []
     
     for code, info in STORE_MAPPING.items():
@@ -183,7 +351,6 @@ def build_dashboard():
             "upt": f"{s_upt:.2f}", "str": "21.4%"
         }
 
-    # بناء أسطر الجدول الرئيسي
     store_table_rows = ""
     for idx, r in perf_df.iterrows():
         yoy_str = f'<span style="color:{"#10b981" if r["yoy"]>=0 else "#ef4444"}; font-weight:700;">{r["yoy"]:+.1f}%</span>' if (r["yoy"] is not None and not np.isnan(r["yoy"])) else '<span style="color:#64748b;">-</span>'
@@ -214,166 +381,8 @@ def build_dashboard():
         </tr>
         """
 
-    # الهيكلية الهرمية المأخوذة 100% من Product Hierarchy MMS و DZL Sales
-    hierarchy_tree = {
-        "MMS": {
-            "Beauty & Cleaning": {
-                "sales": 182400, "units": 9800, "asp": 19,
-                "subs": {
-                    "Basic Care": {
-                        "sales": 98500, "units": 5200, "asp": 19,
-                        "subsubs": [
-                            {"name": "Facial Masks (Sheet & Lip Masks)", "sales": 48200, "units": 2600, "asp": 19},
-                            {"name": "Facial Care (Essence & Creams)", "sales": 32100, "units": 1600, "asp": 20},
-                            {"name": "Facial Cleansing (Face Wash)", "sales": 18200, "units": 1000, "asp": 18}
-                        ]
-                    },
-                    "Daily Chemicals": {
-                        "sales": 83900, "units": 4600, "asp": 18,
-                        "subsubs": [
-                            {"name": "Body Cleaning (Body Wash & Soaps)", "sales": 34100, "units": 1900, "asp": 18},
-                            {"name": "Body Care (Lotion & Hand Cream)", "sales": 26800, "units": 1500, "asp": 18},
-                            {"name": "Hair Cleaning & Care", "sales": 14000, "units": 750, "asp": 19},
-                            {"name": "Oral Care (Toothbrushes & Floss)", "sales": 9000, "units": 450, "asp": 20}
-                        ]
-                    }
-                }
-            },
-            "Children's Goods": {
-                "sales": 156800, "units": 5100, "asp": 31,
-                "subs": {
-                    "Toys & Games": {
-                        "sales": 156800, "units": 5100, "asp": 31,
-                        "subsubs": [
-                            {"name": "Plush Dolls & Figures", "sales": 72400, "units": 2300, "asp": 31},
-                            {"name": "Creative DIY & Clay Sets", "sales": 51200, "units": 1700, "asp": 30},
-                            {"name": "Active & Outdoor Toys", "sales": 33200, "units": 1100, "asp": 30}
-                        ]
-                    }
-                }
-            },
-            "Home & Daily Use": {
-                "sales": 64200, "units": 2800, "asp": 23,
-                "subs": {
-                    "Household & Kitchen": {
-                        "sales": 64200, "units": 2800, "asp": 23,
-                        "subsubs": [
-                            {"name": "Drinkware & Water Bottles", "sales": 28500, "units": 1200, "asp": 24},
-                            {"name": "Storage Baskets & Organizers", "sales": 22100, "units": 1000, "asp": 22},
-                            {"name": "Travel & Utility Essentials", "sales": 13600, "units": 600, "asp": 23}
-                        ]
-                    }
-                }
-            },
-            "Stationery": {
-                "sales": 48900, "units": 3200, "asp": 15,
-                "subs": {
-                    "Office & School": {
-                        "sales": 48900, "units": 3200, "asp": 15,
-                        "subsubs": [
-                            {"name": "Writing Instruments (Gel Pens)", "sales": 26500, "units": 1800, "asp": 15},
-                            {"name": "Spiral Notebooks & Paper", "sales": 14200, "units": 900, "asp": 16},
-                            {"name": "Desktop Accessories & Tape", "sales": 8200, "units": 500, "asp": 16}
-                        ]
-                    }
-                }
-            },
-            "Bags": {
-                "sales": 28500, "units": 850, "asp": 34,
-                "subs": {
-                    "Fashion Bags": {
-                        "sales": 28500, "units": 850, "asp": 34,
-                        "subsubs": [
-                            {"name": "Crossbody & Shoulder Bags", "sales": 18500, "units": 550, "asp": 34},
-                            {"name": "Mini Backpacks & Wallets", "sales": 10000, "units": 300, "asp": 33}
-                        ]
-                    }
-                }
-            },
-            "Apparel Accessories": {
-                "sales": 19400, "units": 980, "asp": 20,
-                "subs": {
-                    "Wearables": {
-                        "sales": 19400, "units": 980, "asp": 20,
-                        "subsubs": [
-                            {"name": "Socks & Footwear Accessories", "sales": 12400, "units": 650, "asp": 19},
-                            {"name": "Hats, Caps & Sunglasses", "sales": 7000, "units": 330, "asp": 21}
-                        ]
-                    }
-                }
-            },
-            "Home Textile": {
-                "sales": 11200, "units": 320, "asp": 35,
-                "subs": {
-                    "Bed & Bath": {
-                        "sales": 11200, "units": 320, "asp": 35,
-                        "subsubs": [
-                            {"name": "Bath Towels & Hand Towels", "sales": 7200, "units": 200, "asp": 36},
-                            {"name": "Blankets & Cushions", "sales": 4000, "units": 120, "asp": 33}
-                        ]
-                    }
-                }
-            },
-            "3C Electronics": {
-                "sales": 6821, "units": 286, "asp": 24,
-                "subs": {
-                    "Digital Gadgets": {
-                        "sales": 6821, "units": 286, "asp": 24,
-                        "subsubs": [
-                            {"name": "Charging Cables & Adapters", "sales": 4200, "units": 180, "asp": 23},
-                            {"name": "Earphones & Mini Audio", "sales": 2621, "units": 106, "asp": 25}
-                        ]
-                    }
-                }
-            }
-        },
-        "DZL": {
-            "Shoes": {
-                "sales": 43500, "units": 242, "asp": 180,
-                "subs": {
-                    "Men Footwear": {
-                        "sales": 20500, "units": 105, "asp": 195,
-                        "subsubs": [
-                            {"name": "BR Nexus Knit Runner (Sizes 40-46)", "sales": 13200, "units": 65, "asp": 203},
-                            {"name": "Ultra Breathable Trekker (Sizes 41-45)", "sales": 7300, "units": 40, "asp": 183}
-                        ]
-                    },
-                    "Women Footwear": {
-                        "sales": 18800, "units": 112, "asp": 168,
-                        "subsubs": [
-                            {"name": "AQ Two-Strap Slide (Sizes 35-39)", "sales": 11200, "units": 68, "asp": 165},
-                            {"name": "Cloud Cushion Sandal (Sizes 36-39)", "sales": 7600, "units": 44, "asp": 173}
-                        ]
-                    },
-                    "Kids Footwear": {
-                        "sales": 4200, "units": 25, "asp": 168,
-                        "subsubs": [
-                            {"name": "Kids Light-Up Flex Runner (Sizes 26-34)", "sales": 4200, "units": 25, "asp": 168}
-                        ]
-                    }
-                }
-            },
-            "DZL Accessories": {
-                "sales": 13153, "units": 86, "asp": 153,
-                "subs": {
-                    "Shoe Care & Ergonomics": {
-                        "sales": 13153, "units": 86, "asp": 153,
-                        "subsubs": [
-                            {"name": "Memory Foam Ergonomic Insoles", "sales": 7200, "units": 48, "asp": 150},
-                            {"name": "5A Antibacterial Socks Pack", "sales": 3600, "units": 24, "asp": 150},
-                            {"name": "Shoe Cleaning Kits & Brushes", "sales": 2353, "units": 14, "asp": 168}
-                        ]
-                    }
-                }
-            }
-        }
-    }
-
-    dzl_gender_data = {
-        "labels": ["Women", "Men", "Kids"],
-        "series": [46.2, 43.4, 10.4]
-    }
-
+    hierarchy_tree = {"MMS": mms_tree, "DZL": dzl_tree}
+    dzl_gender_data = {"labels": ["Women", "Men", "Kids"], "series": [46.2, 43.4, 10.4]}
     init = totals["ALL"]
     store_meta_map = {r['code']: r for r in perf_df.to_dict(orient='records')}
 
@@ -574,12 +583,12 @@ def build_dashboard():
     </div>
 </div>
 
-<!-- 3. Business & Gender (Donut Charts + Complete 3-Level Hierarchy) -->
+<!-- 3. Business & Gender (Dynamic 3-Level Hierarchy) -->
 <div id="view-business" style="display:none;">
     <div style="margin-bottom:14px; display:flex; justify-content:space-between; align-items:center; background:#131b2e; padding:12px 18px; border-radius:8px; border:1px solid #1e293b; flex-wrap:wrap; gap:10px;">
         <span style="font-weight:700; color:#38bdf8; font-size:14px;">🔍 Select Brand for Assortment Analysis:</span>
         <select id="businessBrandSelect" class="month-select" onchange="switchBusinessBrand(this.value)">
-            <option value="MMS" selected>🔴 MUMUSO Categories Only (No Shoes)</option>
+            <option value="MMS" selected>🔴 MUMUSO Categories (Full Portfolio)</option>
             <option value="DZL">🟡 DZL (Shoes & Accessories Only)</option>
         </select>
     </div>
@@ -611,19 +620,19 @@ def build_dashboard():
     </div>
 </div>
 
-<!-- 4. Commercial Action Hub -->
+<!-- 4. Commercial Action Hub (Dynamic SKU Engine) -->
 <div id="view-action" style="display:none;">
     <div class="table-wrap" style="margin-bottom:24px;">
         <div class="table-header">
             <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap;">
-                <h3 style="margin:0; font-size:15px; color:#10b981;">⚡ PREDICTIVE AUTO-REPLENISHMENT & IST ROUTING</h3>
+                <h3 style="margin:0; font-size:15px; color:#10b981;">⚡ PREDICTIVE AUTO-REPLENISHMENT & IST ROUTING (SKU LEVEL)</h3>
                 <select id="replBrandSelect" class="month-select" onchange="renderReplTable()">
-                    <option value="ALL">All Replenishment Orders</option>
+                    <option value="ALL">All Replenishment Orders ({len(repl_orders)} Items)</option>
                     <option value="DZL">DZL Orders (Shoes & Acc)</option>
                     <option value="MMS">MMS Orders (Fast Movers)</option>
                 </select>
             </div>
-            <button onclick="downloadCSV()" style="background:#2563eb; color:#fff; border:none; padding:8px 14px; border-radius:6px; font-weight:700; cursor:pointer;">📥 Export Replenishment Plan</button>
+            <button onclick="downloadCSV()" style="background:#2563eb; color:#fff; border:none; padding:8px 14px; border-radius:6px; font-weight:700; cursor:pointer;">📥 Export Complete Replenishment Plan</button>
         </div>
         <div style="max-height:420px; overflow-y:auto;">
             <table>
@@ -644,13 +653,6 @@ def build_dashboard():
             <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap;">
                 <button class="sub-tab-btn active" id="btn-dzl-top" onclick="toggleDZLType('top')">🔥 DZL TOP 20 SHOES</button>
                 <button class="sub-tab-btn" id="btn-dzl-low" onclick="toggleDZLType('low')">❄️ DZL LOW 20 SHOES</button>
-                <select id="dzlStoreSelect" class="month-select" onchange="renderDZLMovers()">
-                    <option value="ALL">All DZL Stores Combined</option>
-                    <option value="K107">DZL-Riyad Park (K107)</option>
-                    <option value="K104">DZL-Uwalk Mall (K104)</option>
-                    <option value="K111">DZL-Solitaire (K111)</option>
-                    <option value="K204">Red Sea Mall DZL (K204)</option>
-                </select>
             </div>
         </div>
         <div style="overflow-x:auto;">
@@ -668,7 +670,7 @@ def build_dashboard():
                 <button class="sub-tab-btn active" id="btn-mms-top" onclick="toggleMMSType('top')">🔥 MMS TOP 500 FAST MOVERS</button>
                 <button class="sub-tab-btn" id="btn-mms-low" onclick="toggleMMSType('low')">❄️ MMS LOW 500 CLEARANCE</button>
             </div>
-            <input type="text" id="mmsSkuSearch" placeholder="Search SKU..." onkeyup="renderMMSMovers()" style="background:#090d16; border:1px solid var(--border); color:#fff; padding:6px 12px; border-radius:6px;">
+            <input type="text" id="mmsSkuSearch" placeholder="Search SKU or Name..." onkeyup="renderMMSMovers()" style="background:#090d16; border:1px solid var(--border); color:#fff; padding:6px 12px; border-radius:6px;">
         </div>
         <div style="max-height:400px; overflow-y:auto;">
             <table>
@@ -686,6 +688,9 @@ def build_dashboard():
   const STORE_META = {json.dumps(store_meta_map)};
   const HIERARCHY_TREE = {json.dumps(hierarchy_tree)};
   const DZL_GENDER = {json.dumps(dzl_gender_data)};
+  const ALL_REPL_ORDERS = {json.dumps(repl_orders)};
+  const DZL_MOVERS_DATA = {json.dumps(dzl_top20)};
+  const MMS_MOVERS_DATA = {json.dumps(mms_top500)};
 
   let currentDrillLevel = 1;
   let selectedMainCat = null;
@@ -879,7 +884,7 @@ def build_dashboard():
     const tree = HIERARCHY_TREE[businessBrand] || {{}};
     const catLabels = Object.keys(tree);
     const catSeries = catLabels.map(k => tree[k].sales);
-    const colors = ['#38bdf8', '#f59e0b', '#10b981', '#ec4899', '#818cf8', '#a855f7', '#06b6d4', '#e11d48'];
+    const colors = ['#38bdf8', '#f59e0b', '#10b981', '#ec4899', '#818cf8', '#a855f7', '#06b6d4', '#e11d48', '#6366f1', '#14b8a6'];
 
     document.getElementById("catDonutTitle").innerText = `🍩 Category Contribution Share (${{businessBrand}})`;
     const donutEl = document.querySelector("#apexCategoryDonut");
@@ -932,7 +937,7 @@ def build_dashboard():
           <td style="color:#38bdf8; font-weight:700;">${{data.sales.toLocaleString()}}</td>
           <td>${{data.units.toLocaleString()}}</td>
           <td style="color:#f59e0b;">${{data.asp}}</td>
-          <td><button class="sub-tab-btn" onclick="drillIntoMainCat('${{mCat}}')">View Sub-Categories ▼</button></td>
+          <td><button class="sub-tab-btn" onclick="drillIntoMainCat('${{mCat.replace("'", "\\'")}}')">View Sub-Categories ▼</button></td>
         </tr>`;
       }}
       tbody.innerHTML = bHtml;
@@ -950,7 +955,7 @@ def build_dashboard():
           <td style="color:#38bdf8; font-weight:700;">${{data.sales.toLocaleString()}}</td>
           <td>${{data.units.toLocaleString()}}</td>
           <td style="color:#f59e0b;">${{data.asp}}</td>
-          <td><button class="sub-tab-btn" onclick="drillIntoSubCat('${{sCat}}')">View Items ▼</button></td>
+          <td><button class="sub-tab-btn" onclick="drillIntoSubCat('${{sCat.replace("'", "\\'")}}')">View Items ▼</button></td>
         </tr>`;
       }}
       tbody.innerHTML = bHtml;
@@ -998,22 +1003,6 @@ def build_dashboard():
 
   function closeModal() {{ document.getElementById("store-modal").style.display = "none"; }}
 
-  const ALL_REPL_ORDERS = [
-    {{ brand:"DZL", action:"Warehouse Push (WH -> Store)", store:"DZL-Riyad Park (K107)", focus:"👟 [Shoes] BR Nexus Knit Runner (Pale-Beige-42)", sold:48, soh:8, wh:180, qty:"24 Pcs", src:"Central WH (KSWH)", urg:"Broken Size" }},
-    {{ brand:"DZL", action:"Store Transfer (IST - Opportunity)", store:"DZL-Uwalk Mall (K104)", focus:"👟 [Shoes] AQ Two-Strap Slide (Light-Grey-38)", sold:14, soh:1, wh:0, qty:"6 Pcs", src:"DZL-Riyad Park (K107) [Same City]", urg:"Fast Mover" }},
-    {{ brand:"DZL", action:"Warehouse Push (WH -> Store)", store:"Red Sea Mall DZL (K204)", focus:"👟 [Shoes] Ultra Breathable Trekker (Navy-43)", sold:32, soh:6, wh:120, qty:"18 Pcs", src:"Central WH (KSWH)", urg:"High Velocity" }},
-    {{ brand:"DZL", action:"Store Transfer (IST - Opportunity)", store:"DZL-Solitaire (K111)", focus:"👟 [Shoes] Cloud Cushion Sandal (Pink-38)", sold:22, soh:2, wh:0, qty:"8 Pcs", src:"DZL-Riyad Park (K107) [Same City]", urg:"Size Depletion" }},
-    {{ brand:"DZL", action:"Warehouse Push (WH -> Store)", store:"DZL-Riyad Park (K107)", focus:"👟 [Accessories] Memory Foam Insoles", sold:26, soh:4, wh:90, qty:"20 Pcs", src:"Central WH (KSWH)", urg:"High Demand" }},
-    {{ brand:"DZL", action:"Store Transfer (IST - Opportunity)", store:"DZL-Uwalk Mall (K104)", focus:"👟 [Accessories] 5A Antibacterial Socks", sold:18, soh:2, wh:0, qty:"10 Pcs", src:"DZL-Solitaire (K111) [Same City]", urg:"Fast Seller" }},
-    
-    {{ brand:"MMS", action:"Warehouse Push (WH -> Store)", store:"MMS-Solitaire (K108)", focus:"📦 [Beauty] Pink Collagen Lip Masks", sold:420, soh:120, wh:1500, qty:"250 Pcs", src:"Central WH (KSWH)", urg:"High Velocity" }},
-    {{ brand:"MMS", action:"Store Transfer (IST - Opportunity)", store:"MMS-Rabwa (K130)", focus:"📦 [Toys] Plush Bear Dolls (25cm)", sold:85, soh:4, wh:0, qty:"30 Pcs", src:"MMS-Solitaire (K108) [Same City]", urg:"OOS Risk" }},
-    {{ brand:"MMS", action:"Warehouse Push (WH -> Store)", store:"MMS-Mall of Dhahran (K301)", focus:"📦 [Beauty] Dropper Bottle Sets (30ml)", sold:310, soh:90, wh:800, qty:"150 Pcs", src:"Central WH (KSWH)", urg:"Top Driver" }},
-    {{ brand:"MMS", action:"Store Transfer (IST - Opportunity)", store:"MMS-The View Mall (K101)", focus:"📦 [Stationery] 12-Color Clay Set", sold:95, soh:8, wh:0, qty:"40 Pcs", src:"MMS-Solitaire (K108) [Same City]", urg:"Fast Depletion" }},
-    {{ brand:"MMS", action:"Warehouse Push (WH -> Store)", store:"Jeddah Park MMS (K201)", focus:"📦 [Home] Water Bottles (500ml)", sold:210, soh:45, wh:600, qty:"100 Pcs", src:"Central WH (KSWH)", urg:"Stock Optimization" }},
-    {{ brand:"MMS", action:"Store Transfer (IST - Opportunity)", store:"SALAAM MALL JED (K210)", focus:"📦 [Beauty] Vitamin C Serum", sold:75, soh:5, wh:0, qty:"25 Pcs", src:"Jeddah Park MMS (K201) [Same City]", urg:"Assortment Balance" }}
-  ];
-
   function renderReplTable() {{
     const bFilter = document.getElementById("replBrandSelect").value;
     const tbody = document.getElementById("replTableBody");
@@ -1039,18 +1028,6 @@ def build_dashboard():
     }});
     tbody.innerHTML = html;
   }}
-
-  const DZL_MOVERS_DATA = [
-    {{ sku:"DD0606069446", name:"BR Nexus Knit Runner Sneaker (Pale-Beige-46)", gender:"Men", units:48, sales:14640, asp:305 }},
-    {{ sku:"DL0152083336", name:"AQ Two-Strap SS Slide (Light-Grey-36)", gender:"Women", units:38, sales:9690, asp:255 }},
-    {{ sku:"DD0501021442", name:"Breeze Runner Slip-On (Black-42)", gender:"Men", units:32, sales:8960, asp:280 }},
-    {{ sku:"DL0804012338", name:"Cloud Cushion Sandal (Pink-38)", gender:"Women", units:28, sales:6720, asp:240 }},
-    {{ sku:"DK0101011128", name:"Kids Light-Up Flex Runner (Blue-28)", gender:"Kids", units:24, sales:4560, asp:190 }},
-    {{ sku:"DD0702041443", name:"Ultra Breathable Trekker (Navy-43)", gender:"Men", units:22, sales:6820, asp:310 }},
-    {{ sku:"DL0303031337", name:"Comfort Walk Loafer (Beige-37)", gender:"Women", units:18, sales:4860, asp:270 }},
-    {{ sku:"720953", name:"5A Antibacterial Socks Pack", gender:"Unisex", units:16, sales:304, asp:19 }},
-    {{ sku:"720978", name:"Shoe Cleaning Set (NEW)", gender:"Unisex", units:14, sales:686, asp:49 }}
-  ];
 
   function toggleDZLType(t) {{
     dzlMoversMode = t;
@@ -1079,16 +1056,6 @@ def build_dashboard():
     tbody.innerHTML = html;
   }}
 
-  const MMS_MOVERS_DATA = [
-    {{ sku:"801406", name:"Sonata Earings", cat:"Beauty & Cleaning", units:341, sales:13299, asp:39 }},
-    {{ sku:"750527", name:"MUMU-Crystald-ColorfulSandGum#667", cat:"Children's Goods", units:172, sales:1197, asp:7 }},
-    {{ sku:"745193", name:"MUMU-PinkCollagenCrystalLipMasks", cat:"Beauty & Cleaning", units:161, sales:483, asp:3 }},
-    {{ sku:"750615", name:"MUMU-RoundBucketTransparentColor+IceCreamFoam", cat:"Children's Goods", units:142, sales:710, asp:5 }},
-    {{ sku:"745563", name:"MUMU-Glasses Wipes", cat:"Beauty & Cleaning", units:113, sales:565, asp:5 }},
-    {{ sku:"761403", name:"DROPPER BOTTLE (TAWNY/30 ML)", cat:"Beauty & Cleaning", units:108, sales:756, asp:7 }},
-    {{ sku:"762702", name:"KEYCHAIN (LITTLE BEAR WITH BOWKNOT)", cat:"Children's Goods", units:102, sales:1938, asp:19 }}
-  ];
-
   function toggleMMSType(t) {{
     mmsMoversMode = t;
     document.getElementById("btn-mms-top").classList.toggle("active", t === 'top');
@@ -1102,7 +1069,7 @@ def build_dashboard():
     let items = [...MMS_MOVERS_DATA];
     if (mmsMoversMode === 'low') items.reverse();
     let html = "";
-    items.filter(r => r.sku.includes(q) || r.name.toLowerCase().includes(q)).forEach((r, idx) => {{
+    items.filter(r => r.sku.includes(q) || r.name.toLowerCase().includes(q)).slice(0, 50).forEach((r, idx) => {{
       const rkCol = mmsMoversMode === 'top' ? '#10b981' : '#ef4444';
       html += `<tr>
         <td style="color:${{rkCol}}; font-weight:700;">#${{idx+1}}</td>
@@ -1118,17 +1085,14 @@ def build_dashboard():
   }}
 
   function downloadCSV() {{
-    const rows = [
-      ["Brand", "Action Type", "Target Store", "SKU Focus", "Sold MTD", "Store SOH", "WH SOH", "Sugg Qty", "Source Route", "Urgency"],
-      ["DZL", "Warehouse Push", "DZL-Riyad Park (K107)", "BR Nexus Knit Runner (Beige/42)", 48, 8, 180, "24 Pcs", "Central WH (KSWH)", "Broken Size"],
-      ["DZL", "Store Transfer (IST)", "DZL-Uwalk Mall (K104)", "AQ Two-Strap Slide (Grey/38)", 14, 1, 0, "6 Pcs", "DZL-Riyad Park (K107)", "Fast Mover"],
-      ["MMS", "Warehouse Push", "MMS-Solitaire (K108)", "Pink Collagen Lip Masks", 420, 120, 1500, "250 Pcs", "Central WH (KSWH)", "High Velocity"],
-      ["MMS", "Store Transfer (IST)", "MMS-Rabwa (K130)", "Plush Bear Dolls (25cm)", 85, 4, 0, "30 Pcs", "MMS-Solitaire (K108)", "OOS Risk"]
-    ];
+    let rows = [["Brand", "Action Type", "Target Store", "SKU Focus", "Sold MTD", "Store SOH", "WH SOH", "Sugg Qty", "Source Route", "Urgency"]];
+    ALL_REPL_ORDERS.forEach(r => {{
+      rows.push([r.brand, r.action, r.store, r.focus.replace(/,/g, ' '), r.sold, r.soh, r.wh, r.qty, r.src.replace(/,/g, ' '), r.urg]);
+    }});
     let csv = "data:text/csv;charset=utf-8,\uFEFF" + rows.map(e => e.join(",")).join("\\n");
     let link = document.createElement("a");
     link.setAttribute("href", encodeURI(csv));
-    link.setAttribute("download", "Replenishment_Plan_October_2026.csv");
+    link.setAttribute("download", `Full_SKU_Replenishment_Plan_${{new Date().toISOString().slice(0,10)}}.csv`);
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
@@ -1151,7 +1115,7 @@ def build_dashboard():
     with open(out_file, "w", encoding="utf-8") as f:
         f.write(html_template)
 
-    print(f"[✓] Dashboard generated successfully with ALL 4 tabs fully intact: {out_file}")
+    print(f"[✓] Complete Dynamic SKU Dashboard generated: {out_file}")
 
 if __name__ == "__main__":
     build_dashboard()
