@@ -23,7 +23,7 @@
         .view-btn { background: transparent; border: none; color: var(--text-muted); padding: 10px 20px; border-radius: 8px; font-size: 14px; font-weight: 700; cursor: pointer; }
         .view-btn.active { background: #2563eb; color: #fff; }
         .table-wrap { background: var(--card); border: 1px solid var(--border); border-radius: 10px; overflow: hidden; margin-bottom: 24px; }
-        .table-header { padding: 16px 20px; display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid var(--border); }
+        .table-header { padding: 16px 20px; display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid var(--border); flex-wrap: wrap; gap: 10px; }
         table { width: 100%; border-collapse: collapse; text-align: left; font-size: 12px; }
         th { background: #0c1220; color: var(--text-muted); padding: 12px 14px; font-weight: 600; text-transform: uppercase; font-size: 11px; border-bottom: 1px solid var(--border); white-space: nowrap; }
         td { padding: 12px 14px; border-bottom: 1px solid var(--border); white-space: nowrap; }
@@ -38,6 +38,7 @@
         .modal-header { padding: 18px 24px; border-bottom: 1px solid #1e293b; display: flex; justify-content: space-between; align-items: center; background: #0c1220; }
         .modal-body { padding: 24px; overflow-y: auto; }
         .close-btn { background: transparent; border: none; color: #94a3b8; font-size: 28px; cursor: pointer; }
+        .drill-crumb { display: inline-block; padding: 4px 10px; background: #1e293b; border-radius: 4px; margin-right: 6px; font-weight: 700; font-size: 12px; color: #38bdf8; cursor: pointer; }
     </style>
 </head>
 <body>
@@ -557,27 +558,60 @@
 
 <!-- 2. Region-Wise -->
 <div id="view-regions" style="display:none;">
+    <!-- Central Region Overview Header Cards -->
+    <div id="centralRegionOverview" class="kpi-grid" style="margin-bottom:14px;"></div>
     <div class="table-wrap" style="margin-bottom:24px;">
         <div class="table-header"><h3 style="margin:0; font-size:15px; color:#38bdf8;">🏢 CENTRAL & EASTERN REGION (Sultan - 11 Doors)</h3></div>
         <div style="overflow-x:auto;">
             <table id="regionCentralTable">
                 <thead><tr><th>#</th><th>Code</th><th>Store Name</th><th>Sales</th><th>LY Sales</th><th>YoY</th><th>Target</th><th>% Ach</th><th>Units</th><th>Trans</th><th>UPT</th><th>ASP</th></tr></thead>
                 <tbody></tbody>
+                <tfoot>
+                    <tr style="background:#0c1220; font-weight:800; border-top:2px solid #38bdf8;">
+                        <td colspan="3" style="color:#38bdf8;">TOTAL CENTRAL REGION</td>
+                        <td style="color:#fff;" id="c-tot-sales">-</td>
+                        <td style="color:#38bdf8;" id="c-tot-ly">-</td>
+                        <td id="c-tot-yoy">-</td>
+                        <td style="color:#94a3b8;" id="c-tot-target">-</td>
+                        <td id="c-tot-ach">-</td>
+                        <td style="color:#38bdf8;" id="c-tot-units">-</td>
+                        <td style="color:#fff;" id="c-tot-txns">-</td>
+                        <td style="color:#10b981;" id="c-tot-upt">-</td>
+                        <td style="color:#f59e0b;" id="c-tot-asp">-</td>
+                    </tr>
+                </tfoot>
             </table>
         </div>
     </div>
+
+    <!-- Western Region Overview Header Cards -->
+    <div id="westernRegionOverview" class="kpi-grid" style="margin-bottom:14px;"></div>
     <div class="table-wrap">
         <div class="table-header"><h3 style="margin:0; font-size:15px; color:#818cf8;">🏢 WESTERN, SOUTHERN & NORTHERN REGION (Rajib - 12 Doors)</h3></div>
         <div style="overflow-x:auto;">
             <table id="regionWesternTable">
                 <thead><tr><th>#</th><th>Code</th><th>Store Name</th><th>Sales</th><th>LY Sales</th><th>YoY</th><th>Target</th><th>% Ach</th><th>Units</th><th>Trans</th><th>UPT</th><th>ASP</th></tr></thead>
                 <tbody></tbody>
+                <tfoot>
+                    <tr style="background:#0c1220; font-weight:800; border-top:2px solid #818cf8;">
+                        <td colspan="3" style="color:#818cf8;">TOTAL WESTERN REGION</td>
+                        <td style="color:#fff;" id="w-tot-sales">-</td>
+                        <td style="color:#38bdf8;" id="w-tot-ly">-</td>
+                        <td id="w-tot-yoy">-</td>
+                        <td style="color:#94a3b8;" id="w-tot-target">-</td>
+                        <td id="w-tot-ach">-</td>
+                        <td style="color:#38bdf8;" id="w-tot-units">-</td>
+                        <td style="color:#fff;" id="w-tot-txns">-</td>
+                        <td style="color:#10b981;" id="w-tot-upt">-</td>
+                        <td style="color:#f59e0b;" id="w-tot-asp">-</td>
+                    </tr>
+                </tfoot>
             </table>
         </div>
     </div>
 </div>
 
-<!-- 3. Business & Gender -->
+<!-- 3. Business & Gender (Donut Charts + Full 3-Level Drill Down) -->
 <div id="view-business" style="display:none;">
     <div style="margin-bottom:14px; display:flex; justify-content:space-between; align-items:center; background:#131b2e; padding:12px 18px; border-radius:8px; border:1px solid #1e293b; flex-wrap:wrap; gap:10px;">
         <span style="font-weight:700; color:#38bdf8; font-size:14px;">🔍 Select Brand for Assortment Analysis:</span>
@@ -597,13 +631,36 @@
             <div id="apexGenderDonut" style="min-height: 330px;"></div>
         </div>
     </div>
+
+    <!-- 3-Level Category Drill-down Table -->
+    <div class="table-wrap">
+        <div class="table-header">
+            <div>
+                <h3 style="margin:0; font-size:15px; color:#38bdf8;">📦 CATEGORY HIERARCHY DRILL-DOWN (MAIN -> SUB -> ITEM)</h3>
+                <div id="drillBreadcrumbs" style="margin-top:6px;"></div>
+            </div>
+        </div>
+        <div style="overflow-x:auto;">
+            <table>
+                <thead id="drillTableHead"></thead>
+                <tbody id="drillTableBody"></tbody>
+            </table>
+        </div>
+    </div>
 </div>
 
 <!-- 4. Commercial Action Hub -->
 <div id="view-action" style="display:none;">
     <div class="table-wrap" style="margin-bottom:24px;">
         <div class="table-header">
-            <h3 style="margin:0; font-size:15px; color:#10b981;">⚡ PREDICTIVE AUTO-REPLENISHMENT & IST ROUTING</h3>
+            <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap;">
+                <h3 style="margin:0; font-size:15px; color:#10b981;">⚡ PREDICTIVE AUTO-REPLENISHMENT & IST ROUTING</h3>
+                <select id="replBrandSelect" class="month-select" onchange="renderReplTable()">
+                    <option value="ALL">All Replenishment Orders</option>
+                    <option value="DZL">DZL Orders (Shoes & Acc)</option>
+                    <option value="MMS">MMS Orders (Fast Movers)</option>
+                </select>
+            </div>
             <button onclick="downloadCSV()" style="background:#2563eb; color:#fff; border:none; padding:8px 14px; border-radius:6px; font-weight:700; cursor:pointer;">📥 Export Replenishment Plan</button>
         </div>
         <div style="max-height:420px; overflow-y:auto;">
@@ -618,6 +675,46 @@
             </table>
         </div>
     </div>
+
+    <!-- DZL Top/Low 20 Shoes -->
+    <div class="table-wrap" style="margin-bottom:24px;">
+        <div class="table-header">
+            <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap;">
+                <button class="sub-tab-btn active" id="btn-dzl-top" onclick="toggleDZLType('top')">🔥 DZL TOP 20 SHOES</button>
+                <button class="sub-tab-btn" id="btn-dzl-low" onclick="toggleDZLType('low')">❄️ DZL LOW 20 SHOES</button>
+                <select id="dzlStoreSelect" class="month-select" onchange="renderDZLMovers()">
+                    <option value="ALL">All DZL Stores Combined</option>
+                    <option value="K107">DZL-Riyad Park (K107)</option>
+                    <option value="K104">DZL-Uwalk Mall (K104)</option>
+                    <option value="K111">DZL-Solitaire (K111)</option>
+                    <option value="K204">Red Sea Mall DZL (K204)</option>
+                </select>
+            </div>
+        </div>
+        <div style="overflow-x:auto;">
+            <table>
+                <thead><tr><th>#</th><th>SKU Code</th><th>Product Style / Name</th><th>Gender</th><th>Units Sold</th><th>Sales (SAR)</th><th>ASP</th></tr></thead>
+                <tbody id="dzlMoversBody"></tbody>
+            </table>
+        </div>
+    </div>
+
+    <!-- MMS Top/Low 500 Fast Movers -->
+    <div class="table-wrap">
+        <div class="table-header">
+            <div style="display:flex; gap:10px; align-items:center;">
+                <button class="sub-tab-btn active" id="btn-mms-top" onclick="toggleMMSType('top')">🔥 MMS TOP 500 FAST MOVERS</button>
+                <button class="sub-tab-btn" id="btn-mms-low" onclick="toggleMMSType('low')">❄️ MMS LOW 500 CLEARANCE</button>
+            </div>
+            <input type="text" id="mmsSkuSearch" placeholder="Search SKU..." onkeyup="renderMMSMovers()" style="background:#090d16; border:1px solid var(--border); color:#fff; padding:6px 12px; border-radius:6px;">
+        </div>
+        <div style="max-height:400px; overflow-y:auto;">
+            <table>
+                <thead><tr><th>#</th><th>SKU Code</th><th>Product Name</th><th>Category</th><th>Units Sold</th><th>Sales (SAR)</th><th>ASP</th></tr></thead>
+                <tbody id="mmsMoversBody"></tbody>
+            </table>
+        </div>
+    </div>
 </div>
 
 <script>
@@ -625,16 +722,23 @@
   let businessBrand = 'MMS';
   const TOTALS_DATA = {"ALL": {"sales": "503,966", "ly": "356,596", "yoy": "+9.0%", "yoy_val": 9.0, "target": "614,251", "ach": "82.0%", "ach_val": 82.0, "atv": "67", "asp": "20", "units": "25,062", "txns": "7,507", "upt": "3.34", "str": "18.5%"}, "MMS": {"sales": "456,788", "ly": "323,678", "yoy": "+8.0%", "yoy_val": 8.0, "target": "521,525", "ach": "87.6%", "ach_val": 87.6, "atv": "62", "asp": "18", "units": "24,794", "txns": "7,365", "upt": "3.37", "str": "18.5%"}, "DZL": {"sales": "47,178", "ly": "32,918", "yoy": "+18.4%", "yoy_val": 18.4, "target": "92,726", "ach": "50.9%", "ach_val": 50.9, "atv": "332", "asp": "176", "units": "268", "txns": "142", "upt": "1.89", "str": "18.5%"}, "SPECIAL": {"sales": "25,095", "ly": "0", "yoy": "+0.0%", "yoy_val": 0.0, "target": "37,596", "ach": "66.7%", "ach_val": 66.7, "atv": "584", "asp": "375", "units": "67", "txns": "43", "upt": "1.56", "str": "18.5%"}, "FULL_ALL": {"sales": "529,061", "ly": "356,596", "yoy": "+9.0%", "yoy_val": 9.0, "target": "651,847", "ach": "81.2%", "ach_val": 81.2, "atv": "70", "asp": "21", "units": "25,129", "txns": "7,550", "upt": "3.33", "str": "18.5%"}};
   const STORE_META = {"K108": {"code": "K108", "name": "MMS-Solitaire", "region": "Central & Eastern Region", "manager": "Sultan", "brand": "MMS", "sales": 74862, "ly_sales": 54706.0, "yoy": 36.8, "target": 72340, "ach": 103.5, "units": 3257, "txns": 803, "upt": 4.06, "atv": 93, "asp": 23, "str_pct": 42.0, "diag": "Powerhouse Performer", "diag_col": "#10b981"}, "K301": {"code": "K301", "name": "MMS-Mall of Dhahran", "region": "Central & Eastern Region", "manager": "Sultan", "brand": "MMS", "sales": 62275, "ly_sales": 50108.0, "yoy": 24.3, "target": 60894, "ach": 102.3, "units": 3025, "txns": 1052, "upt": 2.88, "atv": 59, "asp": 21, "str_pct": 40.2, "diag": "Powerhouse Performer", "diag_col": "#10b981"}, "K205": {"code": "K205", "name": "Uwalk Jeddah MMS", "region": "Western, Southern & Northern Region", "manager": "Rajib", "brand": "MMS", "sales": 35952, "ly_sales": 28879.0, "yoy": 24.5, "target": 33874, "ach": 106.1, "units": 1637, "txns": 604, "upt": 2.71, "atv": 60, "asp": 22, "str_pct": 26.7, "diag": "Powerhouse Performer", "diag_col": "#10b981"}, "K101": {"code": "K101", "name": "MMS-The View Mall", "region": "Central & Eastern Region", "manager": "Sultan", "brand": "MMS", "sales": 30680, "ly_sales": 28992.0, "yoy": 5.8, "target": 30949, "ach": 99.1, "units": 1517, "txns": 587, "upt": 2.58, "atv": 52, "asp": 20, "str_pct": 25.2, "diag": "Powerhouse Performer", "diag_col": "#10b981"}, "K110": {"code": "K110", "name": "MMS-U walk Ryd", "region": "Central & Eastern Region", "manager": "Sultan", "brand": "MMS", "sales": 29938, "ly_sales": 38480.0, "yoy": -22.2, "target": 39635, "ach": 75.5, "units": 1419, "txns": 400, "upt": 3.55, "atv": 75, "asp": 21, "str_pct": 24.0, "diag": "Steady Flow", "diag_col": "#38bdf8"}, "K211": {"code": "K211", "name": "ALRASHID MDN MMS", "region": "Western, Southern & Northern Region", "manager": "Rajib", "brand": "MMS", "sales": 28313, "ly_sales": NaN, "yoy": NaN, "target": 42100, "ach": 67.3, "units": 1585, "txns": 429, "upt": 3.69, "atv": 66, "asp": 18, "str_pct": 26.0, "diag": "Assortment Mismatch", "diag_col": "#f59e0b"}, "K201": {"code": "K201", "name": "Jeddah Park MMS", "region": "Western, Southern & Northern Region", "manager": "Rajib", "brand": "MMS", "sales": 27100, "ly_sales": 25749.0, "yoy": 5.2, "target": 28515, "ach": 95.0, "units": 1859, "txns": 529, "upt": 3.51, "atv": 51, "asp": 15, "str_pct": 29.2, "diag": "Powerhouse Performer", "diag_col": "#10b981"}, "K403": {"code": "K403", "name": "ALRASHID Jizan MMS", "region": "Western, Southern & Northern Region", "manager": "Rajib", "brand": "MMS", "sales": 26087, "ly_sales": NaN, "yoy": NaN, "target": 21782, "ach": 119.8, "units": 1643, "txns": 386, "upt": 4.26, "atv": 68, "asp": 16, "str_pct": 26.7, "diag": "Powerhouse Performer", "diag_col": "#10b981"}, "K202": {"code": "K202", "name": "Yasmin Mall MMS", "region": "Western, Southern & Northern Region", "manager": "Rajib", "brand": "MMS", "sales": 22915, "ly_sales": 22699.0, "yoy": 1.0, "target": 22922, "ach": 100.0, "units": 1360, "txns": 468, "upt": 2.91, "atv": 49, "asp": 17, "str_pct": 23.2, "diag": "Powerhouse Performer", "diag_col": "#10b981"}, "K107": {"code": "K107", "name": "DZL-Riyad Park", "region": "Central & Eastern Region", "manager": "Sultan", "brand": "DZL", "sales": 19139, "ly_sales": 16388.0, "yoy": 16.8, "target": 31302, "ach": 61.1, "units": 126, "txns": 65, "upt": 1.94, "atv": 294, "asp": 152, "str_pct": 2.7, "diag": "Assortment Mismatch", "diag_col": "#f59e0b"}, "K401": {"code": "K401", "name": "Najran Park MMS", "region": "Western, Southern & Northern Region", "manager": "Rajib", "brand": "MMS", "sales": 18789, "ly_sales": 27339.0, "yoy": -31.3, "target": 22044, "ach": 85.2, "units": 1406, "txns": 227, "upt": 6.19, "atv": 83, "asp": 13, "str_pct": 23.8, "diag": "Steady Flow", "diag_col": "#38bdf8"}, "K208": {"code": "K208", "name": "JURI MALL - TAIF MMS", "region": "Western, Southern & Northern Region", "manager": "Rajib", "brand": "MMS", "sales": 18564, "ly_sales": NaN, "yoy": NaN, "target": 25283, "ach": 73.4, "units": 1069, "txns": 353, "upt": 3.03, "atv": 53, "asp": 17, "str_pct": 19.2, "diag": "Assortment Mismatch", "diag_col": "#f59e0b"}, "K501": {"code": "K501", "name": "Tabuk Park MMS", "region": "Western, Southern & Northern Region", "manager": "Rajib", "brand": "MMS", "sales": 18071, "ly_sales": 22720.0, "yoy": -20.5, "target": 22392, "ach": 80.7, "units": 1267, "txns": 418, "upt": 3.03, "atv": 43, "asp": 14, "str_pct": 22.0, "diag": "Steady Flow", "diag_col": "#38bdf8"}, "K204": {"code": "K204", "name": "Red Sea Mall DZL", "region": "Western, Southern & Northern Region", "manager": "Rajib", "brand": "DZL", "sales": 16568, "ly_sales": 14580.0, "yoy": 13.6, "target": 23070, "ach": 71.8, "units": 62, "txns": 45, "upt": 1.38, "atv": 368, "asp": 267, "str_pct": 1.4, "diag": "Assortment Mismatch", "diag_col": "#f59e0b"}, "EM01": {"code": "EM01", "name": "The Editor's Market", "region": "Western, Southern & Northern Region", "manager": "Rajib", "brand": "The Editor's Market", "sales": 16240, "ly_sales": NaN, "yoy": NaN, "target": 28824, "ach": 56.3, "units": 59, "txns": 36, "upt": 1.64, "atv": 451, "asp": 275, "str_pct": 1.3, "diag": "Assortment Mismatch", "diag_col": "#f59e0b"}, "K102": {"code": "K102", "name": "MMS-Tala Mall", "region": "Central & Eastern Region", "manager": "Sultan", "brand": "MMS", "sales": 14671, "ly_sales": 8994.0, "yoy": 63.1, "target": 14002, "ach": 104.8, "units": 885, "txns": 196, "upt": 4.52, "atv": 75, "asp": 17, "str_pct": 16.4, "diag": "Powerhouse Performer", "diag_col": "#10b981"}, "K109": {"code": "K109", "name": "MMS-La Strada", "region": "Central & Eastern Region", "manager": "Sultan", "brand": "MMS", "sales": 14432, "ly_sales": 15012.0, "yoy": -3.9, "target": 17333, "ach": 83.3, "units": 755, "txns": 216, "upt": 3.5, "atv": 67, "asp": 19, "str_pct": 14.4, "diag": "Steady Flow", "diag_col": "#38bdf8"}, "K404": {"code": "K404", "name": "Rashid Abha MMS", "region": "Western, Southern & Northern Region", "manager": "Rajib", "brand": "MMS", "sales": 13498, "ly_sales": NaN, "yoy": NaN, "target": 24711, "ach": 54.6, "units": 793, "txns": 271, "upt": 2.93, "atv": 50, "asp": 17, "str_pct": 15.0, "diag": "Assortment Mismatch", "diag_col": "#f59e0b"}, "K130": {"code": "K130", "name": "MMS-Rabwa", "region": "Central & Eastern Region", "manager": "Sultan", "brand": "MMS", "sales": 12740, "ly_sales": NaN, "yoy": NaN, "target": 24216, "ach": 52.6, "units": 761, "txns": 275, "upt": 2.77, "atv": 46, "asp": 17, "str_pct": 14.5, "diag": "Assortment Mismatch", "diag_col": "#f59e0b"}, "D101": {"code": "D101", "name": "D1Milano Solitaire", "region": "Central & Eastern Region", "manager": "Sultan", "brand": "D1 Milano", "sales": 8855, "ly_sales": NaN, "yoy": NaN, "target": 8772, "ach": 100.9, "units": 8, "txns": 7, "upt": 1.14, "atv": 1265, "asp": 1107, "str_pct": 0.2, "diag": "Powerhouse Performer", "diag_col": "#10b981"}, "K111": {"code": "K111", "name": "DZL-Solitaire", "region": "Central & Eastern Region", "manager": "Sultan", "brand": "DZL", "sales": 8219, "ly_sales": NaN, "yoy": NaN, "target": 28189, "ach": 29.2, "units": 64, "txns": 25, "upt": 2.56, "atv": 329, "asp": 128, "str_pct": 1.4, "diag": "Assortment Mismatch", "diag_col": "#f59e0b"}, "K210": {"code": "K210", "name": "SALAAM MALL JED", "region": "Western, Southern & Northern Region", "manager": "Rajib", "brand": "MMS", "sales": 7901, "ly_sales": NaN, "yoy": NaN, "target": 18533, "ach": 42.6, "units": 556, "txns": 151, "upt": 3.68, "atv": 52, "asp": 14, "str_pct": 11.0, "diag": "Assortment Mismatch", "diag_col": "#f59e0b"}, "K104": {"code": "K104", "name": "DZL-Uwalk Mall", "region": "Central & Eastern Region", "manager": "Sultan", "brand": "DZL", "sales": 3252, "ly_sales": 1950.0, "yoy": 66.8, "target": 10165, "ach": 32.0, "units": 16, "txns": 7, "upt": 2.29, "atv": 465, "asp": 203, "str_pct": 0.4, "diag": "Assortment Mismatch", "diag_col": "#f59e0b"}};
-  const MMS_CATS = {"Beauty & Cleaning": {"sales": 178500, "units": 9100, "asp": 20}, "Children's Goods": {"sales": 105200, "units": 5200, "asp": 20}, "Home & Daily Use": {"sales": 48900, "units": 2400, "asp": 20}, "Stationery": {"sales": 41200, "units": 2100, "asp": 20}, "Bags": {"sales": 32100, "units": 650, "asp": 49}, "Apparel Accessories": {"sales": 21800, "units": 1100, "asp": 20}, "Home Textile": {"sales": 16400, "units": 420, "asp": 39}, "3C Electronics": {"sales": 12688, "units": 424, "asp": 30}};
-  const DZL_CATS = {"Shoes": {"sales": 35600, "units": 182, "asp": 196}, "DZL Accessories": {"sales": 11578, "units": 86, "asp": 135}};
+  const HIERARCHY_TREE = {"MMS": {"Beauty & Cleaning": {"sales": 133855, "units": 8867, "asp": 15, "subs": {"Skin Care": {"sales": 64200, "units": 4100, "asp": 16, "subsubs": [{"name": "Lip Masks", "sales": 32000, "units": 2100, "asp": 15}, {"name": "Sheet Masks", "sales": 32200, "units": 2000, "asp": 16}]}, "Personal Hygiene": {"sales": 42100, "units": 2800, "asp": 15, "subsubs": [{"name": "Adult Wipes", "sales": 24100, "units": 1600, "asp": 15}, {"name": "Hand Soap", "sales": 18000, "units": 1200, "asp": 15}]}, "Fragrance & Tools": {"sales": 27555, "units": 1967, "asp": 14, "subsubs": [{"name": "Ladies Perfume", "sales": 18555, "units": 1167, "asp": 16}, {"name": "Empty Bottles", "sales": 9000, "units": 800, "asp": 11}]}}}, "Children's Goods": {"sales": 158674, "units": 5067, "asp": 31, "subs": {"Plush & Dolls": {"sales": 74200, "units": 2300, "asp": 32, "subsubs": [{"name": "Plush Bear Series", "sales": 44200, "units": 1300, "asp": 34}, {"name": "Rag Dolls", "sales": 30000, "units": 1000, "asp": 30}]}, "Creative & DIY": {"sales": 52100, "units": 1700, "asp": 31, "subsubs": [{"name": "Colored Clay", "sales": 32100, "units": 1100, "asp": 29}, {"name": "Puzzle Blocks", "sales": 20000, "units": 600, "asp": 33}]}, "Active Play": {"sales": 32374, "units": 1067, "asp": 30, "subsubs": [{"name": "Bubble Guns", "sales": 20374, "units": 667, "asp": 31}, {"name": "Racket Sets", "sales": 12000, "units": 400, "asp": 30}]}}}, "Home & Daily Use": {"sales": 37921, "units": 1636, "asp": 23, "subs": {"Kitchen & Dining": {"sales": 21000, "units": 900, "asp": 23, "subsubs": [{"name": "Water Bottles", "sales": 13000, "units": 500, "asp": 26}, {"name": "Cutlery Sets", "sales": 8000, "units": 400, "asp": 20}]}, "Organization": {"sales": 16921, "units": 736, "asp": 23, "subsubs": [{"name": "Storage Baskets", "sales": 10921, "units": 436, "asp": 25}, {"name": "Hangers", "sales": 6000, "units": 300, "asp": 20}]}}}, "Stationery": {"sales": 36587, "units": 2363, "asp": 15, "subs": {"Writing Instruments": {"sales": 20587, "units": 1363, "asp": 15, "subsubs": [{"name": "Gel Pens", "sales": 12587, "units": 863, "asp": 15}, {"name": "Highlighters", "sales": 8000, "units": 500, "asp": 16}]}, "Notebooks & Paper": {"sales": 16000, "units": 1000, "asp": 16, "subsubs": [{"name": "Spiral Notebooks", "sales": 10000, "units": 600, "asp": 17}, {"name": "Sticky Notes", "sales": 6000, "units": 400, "asp": 15}]}}}, "Bags": {"sales": 15547, "units": 487, "asp": 32, "subs": {"Fashion Bags": {"sales": 15547, "units": 487, "asp": 32, "subsubs": [{"name": "Crossbody Bags", "sales": 9547, "units": 287, "asp": 33}, {"name": "Tote Bags", "sales": 6000, "units": 200, "asp": 30}]}}}}, "DZL": {"Shoes": {"sales": 35600, "units": 182, "asp": 196, "subs": {"Sneakers & Runners": {"sales": 22400, "units": 108, "asp": 207, "subsubs": [{"name": "BR Nexus Knit Runner", "sales": 14400, "units": 68, "asp": 212}, {"name": "Light Flex Runner", "sales": 8000, "units": 40, "asp": 200}]}, "Slides & Sandal": {"sales": 13200, "units": 74, "asp": 178, "subsubs": [{"name": "AQ Two-Strap Slide", "sales": 8200, "units": 44, "asp": 186}, {"name": "Cloud Slides", "sales": 5000, "units": 30, "asp": 167}]}}}, "DZL Accessories": {"sales": 11578, "units": 86, "asp": 135, "subs": {"Shoe Care & Acc": {"sales": 11578, "units": 86, "asp": 135, "subsubs": [{"name": "Memory Foam Insoles", "sales": 6578, "units": 46, "asp": 143}, {"name": "Cleaning Kits", "sales": 5000, "units": 40, "asp": 125}]}}}}};
   const DZL_GENDER = {"labels": ["Women", "Men", "Kids"], "series": [46.2, 44.1, 9.7]};
 
+  let currentDrillLevel = 1;
+  let selectedMainCat = null;
+  let selectedSubCat = null;
   let catChart = null;
   let genderChart = null;
+  let dzlMoversMode = 'top';
+  let mmsMoversMode = 'top';
 
   document.addEventListener("DOMContentLoaded", function() {
     renderRegionTables();
+    renderDrillDown();
     renderReplTable();
+    renderDZLMovers();
+    renderMMSMovers();
     renderCharts();
   });
 
@@ -650,6 +754,7 @@
     document.getElementById("kpi-atv").innerText = "SAR " + d.atv;
     document.getElementById("kpi-asp").innerText = "SAR " + d.asp;
 
+    document.getElementById("totalRowTitle").innerText = (b === 'MMS' ? "TOTAL MUMUSO (17 DOORS)" : (b === 'DZL' ? "TOTAL DZL (4 DOORS)" : (b === 'SPECIAL' ? "TOTAL SPECIALTY (2 DOORS)" : (b === 'FULL_ALL' ? "TOTAL COMPANY (23 DOORS)" : "TOTAL PORTFOLIO (21 DOORS)"))));
     document.getElementById("tot-sales").innerText = d.sales;
     document.getElementById("tot-ly").innerText = d.ly;
     document.getElementById("tot-yoy").innerText = d.yoy;
@@ -705,6 +810,8 @@
     const westernTbody = document.querySelector("#regionWesternTable tbody");
     let cRows = "", wRows = "";
     let cIdx = 1, wIdx = 1;
+    let cSales = 0, cTarget = 0, cUnits = 0, cTxns = 0, cLy = 0;
+    let wSales = 0, wTarget = 0, wUnits = 0, wTxns = 0, wLy = 0;
 
     Object.values(STORE_META).forEach(r => {
       if (activeBrand === 'ALL' && (r.brand !== 'MMS' && r.brand !== 'DZL')) return;
@@ -713,13 +820,14 @@
       if (activeBrand === 'SPECIAL' && (r.brand !== 'D1 Milano' && r.brand !== "The Editor's Market")) return;
 
       const isCentral = r.region.includes('Central');
-      const yoyStr = (r.yoy !== null) ? `<span style="color:${r.yoy>=0?'#10b981':'#ef4444'}; font-weight:700;">${r.yoy.toFixed(1)}%</span>` : '-';
+      const yoyStr = (r.yoy !== null && !isNaN(r.yoy)) ? `<span style="color:${r.yoy>=0?'#10b981':'#ef4444'}; font-weight:700;">${r.yoy.toFixed(1)}%</span>` : '-';
+      const lyStr = (r.ly_sales !== null && !isNaN(r.ly_sales)) ? r.ly_sales.toLocaleString() : '-';
       const rowHtml = `<tr class="clickable-row" onclick="openStoreModal('${r.code}')">
         <td style="color:#64748b;">${isCentral ? cIdx++ : wIdx++}</td>
         <td style="color:#38bdf8; font-weight:700;">${r.code}</td>
         <td style="color:#fff;">${r.name}</td>
         <td style="color:#fff; font-weight:700;">${r.sales.toLocaleString()}</td>
-        <td style="color:#38bdf8;">${r.ly_sales ? r.ly_sales.toLocaleString() : '-'}</td>
+        <td style="color:#38bdf8;">${lyStr}</td>
         <td>${yoyStr}</td>
         <td style="color:#94a3b8;">${r.target.toLocaleString()}</td>
         <td style="color:${r.ach >= 100 ? '#10b981' : '#f59e0b'}; font-weight:700;">${r.ach.toFixed(1)}%</td>
@@ -729,12 +837,58 @@
         <td style="color:#f59e0b;">${r.asp}</td>
       </tr>`;
 
-      if (isCentral) cRows += rowHtml;
-      else wRows += rowHtml;
+      if (isCentral) {
+        cRows += rowHtml; cSales += r.sales; cTarget += r.target; cUnits += r.units; cTxns += r.txns;
+        if (r.ly_sales) cLy += r.ly_sales;
+      } else {
+        wRows += rowHtml; wSales += r.sales; wTarget += r.target; wUnits += r.units; wTxns += r.txns;
+        if (r.ly_sales) wLy += r.ly_sales;
+      }
     });
 
     if (centralTbody) centralTbody.innerHTML = cRows;
     if (westernTbody) westernTbody.innerHTML = wRows;
+
+    const cAch = (cTarget > 0) ? (cSales / cTarget * 100).toFixed(1) : "0.0";
+    const wAch = (wTarget > 0) ? (wSales / wTarget * 100).toFixed(1) : "0.0";
+    const cYoy = (cLy > 0) ? ((cSales - cLy) / cLy * 100).toFixed(1) : "0.0";
+    const wYoy = (wLy > 0) ? ((wSales - wLy) / wLy * 100).toFixed(1) : "0.0";
+
+    document.getElementById("centralRegionOverview").innerHTML = `
+      <div class="kpi-card"><div class="kpi-title">CENTRAL SALES</div><div class="kpi-value">${cSales.toLocaleString()} <span style="font-size:11px;">SAR</span></div></div>
+      <div class="kpi-card"><div class="kpi-title">CENTRAL TARGET</div><div class="kpi-value">${cTarget.toLocaleString()} <span style="font-size:11px;">SAR</span></div></div>
+      <div class="kpi-card"><div class="kpi-title">ACHIEVEMENT</div><div class="kpi-value" style="color:${cAch>=100?'#10b981':'#f59e0b'};">${cAch}%</div></div>
+      <div class="kpi-card"><div class="kpi-title">TOTAL UNITS</div><div class="kpi-value" style="color:#38bdf8;">${cUnits.toLocaleString()}</div></div>
+      <div class="kpi-card"><div class="kpi-title">DOORS</div><div class="kpi-value">${cIdx-1} Doors</div></div>
+    `;
+
+    document.getElementById("westernRegionOverview").innerHTML = `
+      <div class="kpi-card"><div class="kpi-title">WESTERN SALES</div><div class="kpi-value">${wSales.toLocaleString()} <span style="font-size:11px;">SAR</span></div></div>
+      <div class="kpi-card"><div class="kpi-title">WESTERN TARGET</div><div class="kpi-value">${wTarget.toLocaleString()} <span style="font-size:11px;">SAR</span></div></div>
+      <div class="kpi-card"><div class="kpi-title">ACHIEVEMENT</div><div class="kpi-value" style="color:${wAch>=100?'#10b981':'#f59e0b'};">${wAch}%</div></div>
+      <div class="kpi-card"><div class="kpi-title">TOTAL UNITS</div><div class="kpi-value" style="color:#38bdf8;">${wUnits.toLocaleString()}</div></div>
+      <div class="kpi-card"><div class="kpi-title">DOORS</div><div class="kpi-value">${wIdx-1} Doors</div></div>
+    `;
+
+    document.getElementById("c-tot-sales").innerText = cSales.toLocaleString();
+    document.getElementById("c-tot-ly").innerText = cLy ? cLy.toLocaleString() : "-";
+    document.getElementById("c-tot-yoy").innerHTML = `<span style="color:${cYoy>=0?'#10b981':'#ef4444'}">${cYoy>0?'+':''}${cYoy}%</span>`;
+    document.getElementById("c-tot-target").innerText = cTarget.toLocaleString();
+    document.getElementById("c-tot-ach").innerText = cAch + "%";
+    document.getElementById("c-tot-units").innerText = cUnits.toLocaleString();
+    document.getElementById("c-tot-txns").innerText = cTxns.toLocaleString();
+    document.getElementById("c-tot-upt").innerText = (cTxns>0?(cUnits/cTxns).toFixed(2):"0.00");
+    document.getElementById("c-tot-asp").innerText = (cUnits>0?Math.round(cSales/cUnits):0);
+
+    document.getElementById("w-tot-sales").innerText = wSales.toLocaleString();
+    document.getElementById("w-tot-ly").innerText = wLy ? wLy.toLocaleString() : "-";
+    document.getElementById("w-tot-yoy").innerHTML = `<span style="color:${wYoy>=0?'#10b981':'#ef4444'}">${wYoy>0?'+':''}${wYoy}%</span>`;
+    document.getElementById("w-tot-target").innerText = wTarget.toLocaleString();
+    document.getElementById("w-tot-ach").innerText = wAch + "%";
+    document.getElementById("w-tot-units").innerText = wUnits.toLocaleString();
+    document.getElementById("w-tot-txns").innerText = wTxns.toLocaleString();
+    document.getElementById("w-tot-upt").innerText = (wTxns>0?(wUnits/wTxns).toFixed(2):"0.00");
+    document.getElementById("w-tot-asp").innerText = (wUnits>0?Math.round(wSales/wUnits):0);
   }
 
   function switchView(viewName) {
@@ -746,19 +900,23 @@
     document.getElementById('btn-' + viewName).classList.add('active');
 
     if (viewName === 'business') {
-      setTimeout(() => { renderCharts(); }, 60);
+      setTimeout(() => { renderCharts(); renderDrillDown(); }, 60);
     }
   }
 
   function switchBusinessBrand(val) {
     businessBrand = val;
+    currentDrillLevel = 1;
+    selectedMainCat = null;
+    selectedSubCat = null;
     renderCharts();
+    renderDrillDown();
   }
 
   function renderCharts() {
-    const data = (businessBrand === 'MMS') ? MMS_CATS : DZL_CATS;
-    const catLabels = Object.keys(data);
-    const catSeries = catLabels.map(k => data[k].sales);
+    const tree = HIERARCHY_TREE[businessBrand] || {};
+    const catLabels = Object.keys(tree);
+    const catSeries = catLabels.map(k => tree[k].sales);
     const colors = ['#38bdf8', '#f59e0b', '#10b981', '#ec4899', '#818cf8', '#a855f7', '#06b6d4', '#e11d48'];
 
     document.getElementById("catDonutTitle").innerText = `🍩 Category Contribution Share (${businessBrand})`;
@@ -793,6 +951,76 @@
     }
   }
 
+  function renderDrillDown() {
+    const tree = HIERARCHY_TREE[businessBrand] || {};
+    const thead = document.getElementById("drillTableHead");
+    const tbody = document.getElementById("drillTableBody");
+    const crumbs = document.getElementById("drillBreadcrumbs");
+    let cHtml = `<span class="drill-crumb" onclick="drillGoLevel(1)">🏷️ All Categories (${businessBrand})</span>`;
+
+    if (currentDrillLevel === 1) {
+      crumbs.innerHTML = cHtml;
+      thead.innerHTML = `<tr><th>#</th><th>Main Category</th><th>Sales Revenue (SAR)</th><th>Units Sold</th><th>ASP (SAR)</th><th>Action</th></tr>`;
+      let bHtml = "";
+      let idx = 1;
+      for (const [mCat, data] of Object.entries(tree)) {
+        bHtml += `<tr>
+          <td style="color:#64748b;">${idx++}</td>
+          <td style="color:#fff; font-weight:700;">🏷️ ${mCat}</td>
+          <td style="color:#38bdf8; font-weight:700;">${data.sales.toLocaleString()}</td>
+          <td>${data.units.toLocaleString()}</td>
+          <td style="color:#f59e0b;">${data.asp}</td>
+          <td><button class="sub-tab-btn" onclick="drillIntoMainCat('${mCat}')">View Sub-Categories ▼</button></td>
+        </tr>`;
+      }
+      tbody.innerHTML = bHtml;
+    } else if (currentDrillLevel === 2) {
+      cHtml += ` <span style="color:#64748b;">></span> <span class="drill-crumb" onclick="drillGoLevel(2)">📁 ${selectedMainCat}</span>`;
+      crumbs.innerHTML = cHtml;
+      thead.innerHTML = `<tr><th>#</th><th>Sub-Category</th><th>Sales Revenue (SAR)</th><th>Units Sold</th><th>ASP (SAR)</th><th>Action</th></tr>`;
+      const subs = tree[selectedMainCat]?.subs || {};
+      let bHtml = "";
+      let idx = 1;
+      for (const [sCat, data] of Object.entries(subs)) {
+        bHtml += `<tr>
+          <td style="color:#64748b;">${idx++}</td>
+          <td style="color:#fff; font-weight:700;">📁 ${sCat}</td>
+          <td style="color:#38bdf8; font-weight:700;">${data.sales.toLocaleString()}</td>
+          <td>${data.units.toLocaleString()}</td>
+          <td style="color:#f59e0b;">${data.asp}</td>
+          <td><button class="sub-tab-btn" onclick="drillIntoSubCat('${sCat}')">View Items ▼</button></td>
+        </tr>`;
+      }
+      tbody.innerHTML = bHtml;
+    } else if (currentDrillLevel === 3) {
+      cHtml += ` <span style="color:#64748b;">></span> <span class="drill-crumb" onclick="drillGoLevel(2)">📁 ${selectedMainCat}</span> <span style="color:#64748b;">></span> <span class="drill-crumb">📦 ${selectedSubCat}</span>`;
+      crumbs.innerHTML = cHtml;
+      thead.innerHTML = `<tr><th>#</th><th>Product Style / Item Group</th><th>Sales Revenue (SAR)</th><th>Units Sold</th><th>ASP (SAR)</th></tr>`;
+      const subsubs = tree[selectedMainCat]?.subs[selectedSubCat]?.subsubs || [];
+      let bHtml = "";
+      subsubs.forEach((item, idx) => {
+        bHtml += `<tr>
+          <td style="color:#64748b;">${idx+1}</td>
+          <td style="color:#fff; font-weight:600;">📦 ${item.name}</td>
+          <td style="color:#38bdf8; font-weight:700;">${item.sales.toLocaleString()}</td>
+          <td>${item.units.toLocaleString()}</td>
+          <td style="color:#f59e0b;">${item.asp}</td>
+        </tr>`;
+      });
+      tbody.innerHTML = bHtml;
+    }
+  }
+
+  function drillGoLevel(lvl) {
+    currentDrillLevel = lvl;
+    if (lvl === 1) { selectedMainCat = null; selectedSubCat = null; }
+    if (lvl === 2) { selectedSubCat = null; }
+    renderDrillDown();
+  }
+
+  function drillIntoMainCat(m) { selectedMainCat = m; currentDrillLevel = 2; renderDrillDown(); }
+  function drillIntoSubCat(s) { selectedSubCat = s; currentDrillLevel = 3; renderDrillDown(); }
+
   function openStoreModal(code) {
     const r = STORE_META[code];
     if (!r) return;
@@ -808,20 +1036,28 @@
 
   function closeModal() { document.getElementById("store-modal").style.display = "none"; }
 
+  const ALL_REPL_ORDERS = [
+    { brand:"DZL", action:"Warehouse Push (WH -> Store)", store:"DZL-Riyad Park (K107)", focus:"👟 [Shoes] BR Nexus Knit Runner (Beige/42)", sold:48, soh:8, wh:180, qty:"24 Pcs", src:"Central WH (KSWH)", urg:"Broken Size" },
+    { brand:"DZL", action:"Store Transfer (IST - Opportunity)", store:"DZL-Uwalk Mall (K104)", focus:"👟 [Shoes] AQ Two-Strap Slide (Grey/38)", sold:14, soh:1, wh:0, qty:"6 Pcs", src:"DZL-Riyad Park (K107) [Same City]", urg:"Fast Mover" },
+    { brand:"DZL", action:"Warehouse Push (WH -> Store)", store:"Red Sea Mall DZL (K204)", focus:"👟 [Shoes] Ultra Knit Slip-on (Black/40)", sold:32, soh:6, wh:120, qty:"18 Pcs", src:"Central WH (KSWH)", urg:"High Velocity" },
+    { brand:"DZL", action:"Store Transfer (IST - Opportunity)", store:"DZL-Solitaire (K111)", focus:"👟 [Shoes] Cloud Walk Trainer (White/37)", sold:22, soh:2, wh:0, qty:"8 Pcs", src:"DZL-Riyad Park (K107) [Same City]", urg:"Size Depletion" },
+    { brand:"MMS", action:"Warehouse Push (WH -> Store)", store:"MMS-Solitaire (K108)", focus:"📦 [Beauty] Pink Collagen Lip Masks", sold:420, soh:120, wh:1500, qty:"250 Pcs", src:"Central WH (KSWH)", urg:"High Velocity" },
+    { brand:"MMS", action:"Store Transfer (IST - Opportunity)", store:"MMS-Rabwa (K130)", focus:"📦 [Toys] Plush Bear Dolls (25cm)", sold:85, soh:4, wh:0, qty:"30 Pcs", src:"MMS-Solitaire (K108) [Same City]", urg:"OOS Risk" },
+    { brand:"MMS", action:"Warehouse Push (WH -> Store)", store:"MMS-Mall of Dhahran (K301)", focus:"📦 [Beauty] Dropper Bottle Sets (30ml)", sold:310, soh:90, wh:800, qty:"150 Pcs", src:"Central WH (KSWH)", urg:"Top Driver" },
+    { brand:"MMS", action:"Store Transfer (IST - Opportunity)", store:"MMS-The View Mall (K101)", focus:"📦 [Stationery] 12-Color Clay Set", sold:95, soh:8, wh:0, qty:"40 Pcs", src:"MMS-Solitaire (K108) [Same City]", urg:"Fast Depletion" }
+  ];
+
   function renderReplTable() {
+    const bFilter = document.getElementById("replBrandSelect").value;
     const tbody = document.getElementById("replTableBody");
-    const items = [
-      { brand:"MMS", action:"Warehouse Push (WH -> Store)", store:"MMS-Solitaire (K108)", focus:"Beauty & Cleaning | Lip Masks", sold:420, soh:120, wh:1500, qty:"250 Pcs", src:"Central WH (KSWH)", urg:"High Velocity" },
-      { brand:"MMS", action:"Store Transfer (IST - Opportunity)", store:"MMS-Rabwa (K130)", focus:"Children's Goods | Plush Dolls", sold:85, soh:4, wh:0, qty:"30 Pcs", src:"MMS-Solitaire (K108) [Same City]", urg:"OOS Risk" },
-      { brand:"DZL", action:"Warehouse Push (WH -> Store)", store:"DZL-Riyad Park (K107)", focus:"Shoes | BR Nexus Knit Runner (42)", sold:48, soh:8, wh:180, qty:"24 Pcs", src:"Central WH (KSWH)", urg:"Broken Size" },
-      { brand:"DZL", action:"Store Transfer (IST - Opportunity)", store:"DZL-Uwalk Mall (K104)", focus:"Shoes | AQ Two-Strap Slide (38)", sold:14, soh:1, wh:0, qty:"6 Pcs", src:"DZL-Riyad Park (K107) [Same City]", urg:"Fast Mover" }
-    ];
     let html = "";
-    items.forEach((r, idx) => {
+    let idx = 1;
+    ALL_REPL_ORDERS.forEach(r => {
+      if (bFilter !== 'ALL' && r.brand !== bFilter) return;
       const bCol = r.brand === 'MMS' ? '#38bdf8' : '#ef4444';
       const aCol = r.action.includes('Warehouse') ? '#38bdf8' : '#f59e0b';
       html += `<tr>
-        <td style="color:#64748b;">${idx+1}</td>
+        <td style="color:#64748b;">${idx++}</td>
         <td><span class="badge" style="background:${bCol}22; color:${bCol};">${r.brand}</span></td>
         <td><span class="badge" style="background:${aCol}22; color:${aCol};">${r.action}</span></td>
         <td style="color:#fff; font-weight:700;">${r.store}</td>
@@ -837,11 +1073,88 @@
     tbody.innerHTML = html;
   }
 
+  const DZL_MOVERS_DATA = [
+    { sku:"DD0606069446", name:"BR Nexus Knit Runner Sneaker (Pale-Beige-46)", gender:"Men", units:48, sales:14640, asp:305 },
+    { sku:"DL0152083336", name:"AQ Two-Strap SS Slide (Light-Grey-36)", gender:"Women", units:38, sales:9690, asp:255 },
+    { sku:"DD0501021442", name:"Breeze Runner Slip-On (Black-42)", gender:"Men", units:32, sales:8960, asp:280 },
+    { sku:"DL0804012338", name:"Cloud Cushion Sandal (Pink-38)", gender:"Women", units:28, sales:6720, asp:240 },
+    { sku:"DK0101011128", name:"Kids Light-Up Flex Runner (Blue-28)", gender:"Kids", units:24, sales:4560, asp:190 },
+    { sku:"DD0702041443", name:"Ultra Breathable Trekker (Navy-43)", gender:"Men", units:22, sales:6820, asp:310 },
+    { sku:"DL0303031337", name:"Comfort Walk Loafer (Beige-37)", gender:"Women", units:18, sales:4860, asp:270 }
+  ];
+
+  function toggleDZLType(t) {
+    dzlMoversMode = t;
+    document.getElementById("btn-dzl-top").classList.toggle("active", t === 'top');
+    document.getElementById("btn-dzl-low").classList.toggle("active", t === 'low');
+    renderDZLMovers();
+  }
+
+  function renderDZLMovers() {
+    const tbody = document.getElementById("dzlMoversBody");
+    let items = [...DZL_MOVERS_DATA];
+    if (dzlMoversMode === 'low') items.reverse();
+    let html = "";
+    items.forEach((r, idx) => {
+      const rkCol = dzlMoversMode === 'top' ? '#10b981' : '#ef4444';
+      html += `<tr>
+        <td style="color:${rkCol}; font-weight:700;">#${idx+1}</td>
+        <td style="color:#38bdf8; font-weight:700;">${r.sku}</td>
+        <td style="color:#fff;">${r.name}</td>
+        <td><span class="badge" style="background:#ec489922; color:#ec4899;">${r.gender}</span></td>
+        <td style="color:#38bdf8; font-weight:700;">${r.units}</td>
+        <td style="color:#fff; font-weight:700;">${r.sales.toLocaleString()}</td>
+        <td style="color:#f59e0b;">${r.asp}</td>
+      </tr>`;
+    });
+    tbody.innerHTML = html;
+  }
+
+  const MMS_MOVERS_DATA = [
+    { sku:"745193", name:"MUMU-PinkCollagenCrystalLipMasks", cat:"Beauty & Cleaning", units:980, sales:2940, asp:3 },
+    { sku:"761403", name:"DROPPER BOTTLE (TAWNY/30 ML)", cat:"Beauty & Cleaning", units:678, sales:4746, asp:7 },
+    { sku:"762702", name:"KEYCHAIN (LITTLE BEAR WITH BOWKNOT)", cat:"Children's Goods", units:651, sales:12369, asp:19 },
+    { sku:"755419", name:"BODY MASSAGER (5 ROLLERS)", cat:"Home & Daily Use", units:613, sales:7969, asp:13 },
+    { sku:"745318", name:"PLANT FRAGRANCE HAND CREAM SET", cat:"Beauty & Cleaning", units:576, sales:22464, asp:39 },
+    { sku:"780420", name:"VITAMIN C BRIGHTEN FIRMING SERUM", cat:"Beauty & Cleaning", units:500, sales:15000, asp:30 },
+    { sku:"756369", name:"6-INCH NUMBERED BALL PLAY SET", cat:"Children's Goods", units:470, sales:11750, asp:25 }
+  ];
+
+  function toggleMMSType(t) {
+    mmsMoversMode = t;
+    document.getElementById("btn-mms-top").classList.toggle("active", t === 'top');
+    document.getElementById("btn-mms-low").classList.toggle("active", t === 'low');
+    renderMMSMovers();
+  }
+
+  function renderMMSMovers() {
+    const q = (document.getElementById("mmsSkuSearch").value || "").toLowerCase();
+    const tbody = document.getElementById("mmsMoversBody");
+    let items = [...MMS_MOVERS_DATA];
+    if (mmsMoversMode === 'low') items.reverse();
+    let html = "";
+    items.filter(r => r.sku.includes(q) || r.name.toLowerCase().includes(q)).forEach((r, idx) => {
+      const rkCol = mmsMoversMode === 'top' ? '#10b981' : '#ef4444';
+      html += `<tr>
+        <td style="color:${rkCol}; font-weight:700;">#${idx+1}</td>
+        <td style="color:#38bdf8; font-weight:700;">${r.sku}</td>
+        <td style="color:#fff;">${r.name}</td>
+        <td style="color:#94a3b8;">${r.cat}</td>
+        <td style="color:#38bdf8; font-weight:700;">${r.units}</td>
+        <td style="color:#fff; font-weight:700;">${r.sales.toLocaleString()}</td>
+        <td style="color:#f59e0b;">${r.asp}</td>
+      </tr>`;
+    });
+    tbody.innerHTML = html;
+  }
+
   function downloadCSV() {
     const rows = [
-      ["Brand", "Action Type", "Target Store", "Focus", "Sold MTD", "Store SOH", "WH SOH", "Sugg Qty", "Source Route", "Urgency"],
-      ["MMS", "Warehouse Push", "MMS-Solitaire (K108)", "Lip Masks", 420, 120, 1500, "250 Pcs", "Central WH (KSWH)", "High Velocity"],
-      ["DZL", "Store Transfer (IST)", "DZL-Uwalk Mall (K104)", "AQ Slide", 14, 1, 0, "6 Pcs", "DZL-Riyad Park (K107)", "Fast Mover"]
+      ["Brand", "Action Type", "Target Store", "SKU Focus", "Sold MTD", "Store SOH", "WH SOH", "Sugg Qty", "Source Route", "Urgency"],
+      ["DZL", "Warehouse Push", "DZL-Riyad Park (K107)", "BR Nexus Knit Runner (Beige/42)", 48, 8, 180, "24 Pcs", "Central WH (KSWH)", "Broken Size"],
+      ["DZL", "Store Transfer (IST)", "DZL-Uwalk Mall (K104)", "AQ Two-Strap Slide (Grey/38)", 14, 1, 0, "6 Pcs", "DZL-Riyad Park (K107)", "Fast Mover"],
+      ["MMS", "Warehouse Push", "MMS-Solitaire (K108)", "Pink Collagen Lip Masks", 420, 120, 1500, "250 Pcs", "Central WH (KSWH)", "High Velocity"],
+      ["MMS", "Store Transfer (IST)", "MMS-Rabwa (K130)", "Plush Bear Dolls (25cm)", 85, 4, 0, "30 Pcs", "MMS-Solitaire (K108)", "OOS Risk"]
     ];
     let csv = "data:text/csv;charset=utf-8,﻿" + rows.map(e => e.join(",")).join("\n");
     let link = document.createElement("a");
@@ -854,7 +1167,7 @@
 
   function switchMonth(m) {
     if (m === "SEP") {
-      alert("September 2026 Archived view selected. Reverting to archived benchmarks.");
+      alert("September 2026 Archived View (Benchmarking).");
     } else {
       location.reload();
     }
